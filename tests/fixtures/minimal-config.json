@@ -1,0 +1,6 @@
+{
+  "name": "TestProject",
+  "services": [
+    { "name": "api-a", "cwd": ".", "cmd": "node", "args": ["index.js"], "type": "api", "port": 3000, "phase": 0 }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "name": "@gachlab/devup",
+  "version": "0.1.0",
+  "description": "Dev stack runner with TUI, lazy proxy, and reverse proxy support",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "devup": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "dev",
+    "monorepo",
+    "microservices",
+    "tui",
+    "terminal",
+    "process-manager",
+    "lazy-proxy",
+    "traefik",
+    "ink",
+    "devtools"
+  ],
+  "author": "gachlab",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gachlab/devup.git"
+  },
+  "homepage": "https://github.com/gachlab/devup#readme",
+  "bugs": {
+    "url": "https://github.com/gachlab/devup/issues"
+  },
+  "scripts": {
+    "build": "tsup && tsc --emitDeclarationOnly",
+    "dev": "tsup --watch",
+    "prepublishOnly": "npm run build",
+    "test": "node --import tsx --test 'tests/**/*.test.ts'",
+    "test:unit": "node --import tsx --test 'tests/unit/**/*.test.ts'",
+    "test:integration": "node --import tsx --test 'tests/integration/**/*.test.ts'",
+    "test:watch": "node --import tsx --test --watch 'tests/**/*.test.ts'",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage 'tests/**/*.test.ts'"
+  },
+  "dependencies": {
+    "ink": "7.0.1",
+    "react": "19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/react": "19.2.14",
+    "tsup": "8.5.1",
+    "tsx": "4.19.4",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

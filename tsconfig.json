@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "tests"]
+}
