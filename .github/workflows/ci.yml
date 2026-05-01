@@ -19,6 +19,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm run build
-      - run: npm run test:unit
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests
+        if: runner.os == 'Linux'
+        run: npm run test:integration

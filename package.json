@@ -44,11 +44,11 @@
     "build": "tsup && tsc --emitDeclarationOnly",
     "dev": "tsup --watch",
     "prepublishOnly": "npm run build",
-    "test": "node --import tsx --test 'tests/**/*.test.ts'",
-    "test:unit": "node --import tsx --test 'tests/unit/**/*.test.ts'",
-    "test:integration": "node --import tsx --test 'tests/integration/**/*.test.ts'",
-    "test:watch": "node --import tsx --test --watch 'tests/**/*.test.ts'",
-    "test:coverage": "node --import tsx --test --experimental-test-coverage 'tests/**/*.test.ts'"
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "test:unit": "node --import tsx --test \"tests/unit/**/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"tests/integration/**/*.test.ts\"",
+    "test:watch": "node --import tsx --test --watch \"tests/**/*.test.ts\"",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "ink": "7.0.1",
