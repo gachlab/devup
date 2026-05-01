@@ -1,5 +1,7 @@
 # devup
 
+[![CI](https://github.com/gachlab/devup/actions/workflows/ci.yml/badge.svg)](https://github.com/gachlab/devup/actions/workflows/ci.yml)
+
 A terminal UI dev stack runner for Node.js monorepos. Define your services in a config file, and devup handles the rest: phased startup, health checks, lazy on-demand proxies, process stats, and reverse proxy config generation — all in a single TUI dashboard.
 
 Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (uses `node:test` natively).
