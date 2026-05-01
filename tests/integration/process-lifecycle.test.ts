@@ -9,10 +9,9 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, '..', 'fixtures');
 
-// Only run on Linux (uses LinuxPlatform directly)
-const isLinux = process.platform === 'linux';
+const isUnix = process.platform === 'linux' || process.platform === 'darwin';
 
-describe('process-lifecycle integration', { skip: !isLinux }, () => {
+describe('process-lifecycle integration', { skip: !isUnix }, () => {
   it('starts a real server and detects health', async () => {
     const logs: string[] = [];
     const mgr = new ProcessManager({
