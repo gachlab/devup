@@ -2,22 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, '**']
   pull_request:
     branches: [main]
 
 jobs:
-  test:
+  unit:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [22]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
       - run: npm ci
       - name: Type check
         run: npx tsc --noEmit
@@ -25,6 +24,19 @@ jobs:
         run: npm run build
       - name: Unit tests
         run: npm run test:unit
+
+  integration:
+    if: github.ref == 'refs/heads/main'
+    needs: unit
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
       - name: Integration tests
-        if: runner.os == 'Linux'
         run: npm run test:integration
