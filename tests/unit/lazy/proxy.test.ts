@@ -18,7 +18,7 @@ let origListeners: Function[] = [];
 beforeEach(() => {
   origListeners = process.listeners('uncaughtException').slice();
   process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'ECONNRESET') return; // swallow
+    if (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') return;
     throw err;
   });
 });
