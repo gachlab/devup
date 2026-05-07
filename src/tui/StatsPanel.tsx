@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Box, Text } from 'ink';
 import type { ProcessState } from '../process/types.js';
 import type { ServiceStats } from './hooks/useProcessManager.js';
@@ -12,6 +12,8 @@ interface Props {
   maxNameLen: number;
   height: number;
   focused: boolean;
+  scrollOffset: number;
+  resetScroll: () => void;
 }
 
 const H: Record<string, { c: string; color: string }> = {
@@ -35,7 +37,7 @@ function ColHeader({ ml }: { ml: number }) {
   return <Text bold>H {'Service'.padEnd(ml)} {'Port'.padStart(5)} {'Status'.padEnd(8)} {'CPU'.padStart(6)} {'Mem'.padStart(8)} Err Rst {'Up'.padStart(6)}</Text>;
 }
 
-export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focused }: Props) {
+export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focused, scrollOffset, resetScroll }: Props) {
   const names = [...states.keys()];
   const stObj = Object.fromEntries([...states].map(([k, v]) => [k, { errors: v.errors }]));
   const statsObj = Object.fromEntries([...stats].map(([k, v]) => [k, v]));
@@ -64,11 +66,39 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
 
   const ml = maxNameLen;
   const contentHeight = height - 2;
+  
+  // Calcular el índice de inicio basado en el scroll offset para cada columna
+  const maxApiRows = Math.max(0, apis.length - (contentHeight - 2));
+  const maxWebRows = Math.max(0, webs.length - (contentHeight - 2));
+  
+  let apiStartIndex = 0;
+  let webStartIndex = 0;
+  
+  if (scrollOffset === Number.MAX_SAFE_INTEGER) {
+    // Ir al final
+    apiStartIndex = maxApiRows;
+    webStartIndex = maxWebRows;
+  } else if (scrollOffset > 0) {
+    // Desplazamiento manual
+    apiStartIndex = Math.min(scrollOffset, maxApiRows);
+    webStartIndex = Math.min(scrollOffset, maxWebRows);
+  }
+  
+  const visibleApis = apis.slice(apiStartIndex, apiStartIndex + contentHeight - 2);
+  const visibleWebs = webs.slice(webStartIndex, webStartIndex + contentHeight - 2);
+  
+  // Resetear el scroll cuando cambia el modo de ordenamiento
+  useEffect(() => {
+    resetScroll();
+  }, [sortMode, resetScroll]);
+
+  const totalServices = apis.length + webs.length;
+  const positionInfo = focused ? `(${Math.max(apiStartIndex, webStartIndex) + 1}-${Math.max(apiStartIndex, webStartIndex) + contentHeight - 2}/${totalServices})` : '';
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'green' : 'gray'} height={height}>
       <Box>
-        <Text bold color="green"> Stats </Text>
+        <Text bold color="green"> Stats {positionInfo}</Text>
         <Text dimColor>System: {cpus}c Load {load} RAM {usedGB}/{totalGB}GB</Text>
         <Text dimColor> │ </Text>
         <Text dimColor>Stack: CPU {totalCpu.toFixed(1)}% RAM {stackMem} Err {totalErrors} Rst {totalRestarts} Svcs {names.length}</Text>
@@ -79,7 +109,7 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
         <Box flexDirection="column" flexGrow={1} flexBasis={0}>
           <Text bold color="cyan"> APIs ({apis.length})</Text>
           <ColHeader ml={ml} />
-          {apis.slice(0, contentHeight - 2).map(n => (
+          {visibleApis.map(n => (
             <Row key={n} name={n} st={states.get(n)!} stat={stats.get(n)} ml={ml} />
           ))}
         </Box>
@@ -91,7 +121,7 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
         <Box flexDirection="column" flexGrow={1} flexBasis={0}>
           <Text bold color="magenta"> Webs ({webs.length})</Text>
           <ColHeader ml={ml} />
-          {webs.slice(0, contentHeight - 2).map(n => (
+          {visibleWebs.map(n => (
             <Row key={n} name={n} st={states.get(n)!} stat={stats.get(n)} ml={ml} />
           ))}
         </Box>

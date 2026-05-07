@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Box, Text } from 'ink';
 import type { LogEntry } from './hooks/useProcessManager.js';
 import { tagColors } from '../utils.js';
@@ -12,12 +12,35 @@ interface Props {
   maxNameLen: number;
   height: number;
   focused: boolean;
+  scrollOffset: number;
+  resetScroll: () => void;
 }
 
-export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused }: Props) {
+export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll }: Props) {
   const filtered = filter ? logs.filter(l => l.svcName === filter) : logs;
   const contentHeight = height - 2;
-  const visible = filtered.slice(-contentHeight);
+  
+  // Calcular el índice de inicio basado en el scroll offset
+  const totalLines = filtered.length;
+  let startIndex = 0;
+  
+  if (scrollOffset === Number.MAX_SAFE_INTEGER) {
+    // Ir al final
+    startIndex = Math.max(0, totalLines - contentHeight);
+  } else if (scrollOffset > 0) {
+    // Desplazamiento manual
+    startIndex = Math.min(scrollOffset, Math.max(0, totalLines - contentHeight));
+  } else {
+    // Comportamiento original: mostrar las últimas líneas
+    startIndex = Math.max(0, totalLines - contentHeight);
+  }
+  
+  const visible = filtered.slice(startIndex, startIndex + contentHeight);
+  
+  // Resetear el scroll cuando cambia el filtro o búsqueda
+  useEffect(() => {
+    resetScroll();
+  }, [filter, searchTerm, resetScroll]);
 
   const label = [
     'Logs',
@@ -25,6 +48,7 @@ export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, ma
     searchTerm ? `/${searchTerm}` : '',
     paused ? '[PAUSED]' : '',
     `${filtered.length} lines`,
+    focused ? `(${startIndex + 1}-${Math.min(startIndex + contentHeight, totalLines)}/${totalLines})` : '',
   ].filter(Boolean).join(' ');
 
   return (

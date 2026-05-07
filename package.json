@@ -44,19 +44,24 @@
     "build": "tsup && tsc --emitDeclarationOnly",
     "dev": "tsup --watch",
     "prepublishOnly": "npm run build",
-    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
-    "test:unit": "node --import tsx --test \"tests/unit/**/*.test.ts\"",
-    "test:integration": "node --import tsx --test \"tests/integration/**/*.test.ts\"",
-    "test:watch": "node --import tsx --test --watch \"tests/**/*.test.ts\"",
-    "test:coverage": "node --import tsx --test --experimental-test-coverage \"tests/**/*.test.ts\""
+    "test": "node --import tsx --test \"tests/**/*.test.ts\" \"tests/**/*.test.tsx\"",
+    "test:unit": "node --import tsx --test --experimental-test-coverage \"tests/unit/**/*.test.ts\" \"tests/unit/**/*.test.tsx\"",
+    "test:integration": "node --import tsx --test --experimental-test-coverage \"tests/integration/**/*.test.ts\"",
+    "test:watch": "node --import tsx --test --watch \"tests/**/*.test.ts\" \"tests/**/*.test.tsx\"",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage \"tests/**/*.test.ts\" \"tests/**/*.test.tsx\""
   },
   "dependencies": {
     "ink": "7.0.1",
     "react": "19.2.5"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/jest": "^30.0.0",
     "@types/node": "22.15.3",
     "@types/react": "19.2.14",
+    "ink-testing-library": "^4.0.0",
+    "react-dom": "^19.2.5",
     "tsup": "8.5.1",
     "tsx": "4.19.4",
     "typescript": "6.0.3"

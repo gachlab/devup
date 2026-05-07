@@ -164,11 +164,13 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         logs={pm.logs} filter={kb.logFilter} searchTerm={kb.searchTerm}
         paused={kb.logsPaused} showTimestamps={kb.showTimestamps}
         maxNameLen={maxNameLen} height={logsHeight} focused={kb.panel === 'logs'}
+        scrollOffset={kb.logsScrollOffset} resetScroll={kb.resetLogsScroll}
       />
 
       <StatsPanel
         states={pm.states} stats={pm.stats} sortMode={kb.sortMode}
         maxNameLen={maxNameLen} height={statsHeight} focused={kb.panel === 'stats'}
+        scrollOffset={kb.statsScrollOffset} resetScroll={kb.resetStatsScroll}
       />
 
       {kb.modal === 'filter' && (
