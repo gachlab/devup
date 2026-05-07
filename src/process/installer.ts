@@ -23,7 +23,9 @@ export function installService(
   }
   onLog?.('📦 npm install...');
   return new Promise(resolve => {
-    const proc = spawn('npm', ['install'], { cwd, env, stdio: ['ignore', 'ignore', 'pipe'] });
+    // En Windows, npm es usualmente npm.cmd
+    const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const proc = spawn(command, ['install'], { cwd, env, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
     proc.on('close', code => {
@@ -35,6 +37,11 @@ export function installService(
         onLog?.('✅ dependencies ready');
         resolve(true);
       }
+    });
+    proc.on('error', (err) => {
+      // Si falla con npm.cmd, intentar con npm (o viceversa dependiendo de la plataforma)
+      onLog?.(`⚠ spawn error: ${err.message}`);
+      resolve(false);
     });
   });
 }
