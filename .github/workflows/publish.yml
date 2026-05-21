@@ -35,6 +35,6 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run build
+      # Trusted publishing via OIDC: relies on a Trusted Publisher configured at
+      # https://www.npmjs.com/package/@gachlab/devup/access  →  no NODE_AUTH_TOKEN needed.
       - run: npm publish --access public --provenance
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
