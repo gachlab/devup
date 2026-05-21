@@ -1,8 +1,12 @@
 import type { ProxyConfigProvider } from './types.js';
 import { TraefikProvider } from './traefik.js';
+import { NginxProvider } from './nginx.js';
+import { CaddyProvider } from './caddy.js';
 
 const providers: Record<string, () => ProxyConfigProvider> = {
   traefik: () => new TraefikProvider(),
+  nginx: () => new NginxProvider(),
+  caddy: () => new CaddyProvider(),
 };
 
 export function detectProxyProvider(name: string): ProxyConfigProvider {

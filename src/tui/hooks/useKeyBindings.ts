@@ -1,5 +1,5 @@
 import { useInput } from 'ink';
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 
 export type Modal = 'none' | 'filter' | 'restart' | 'open' | 'search';
 export type Panel = 'logs' | 'stats';
@@ -18,6 +18,30 @@ export interface KeyState {
 }
 
 const SORT_MODES = ['name', 'mem', 'errors'] as const;
+
+// delta < 0 = mover vista hacia arriba; delta > 0 = hacia abajo.
+// Para logs el offset crece hacia atrás (más viejo), para stats crece hacia abajo (siguientes filas).
+function scrollBy(setState: React.Dispatch<React.SetStateAction<KeyState>>, delta: number) {
+  setState(s => {
+    if (s.panel === 'logs') {
+      // up visual → más viejas → bottomOffset + |delta|
+      const next = s.logsScrollOffset - delta;
+      return { ...s, logsScrollOffset: Math.max(0, next) };
+    }
+    const next = s.statsScrollOffset + delta;
+    return { ...s, statsScrollOffset: Math.max(0, next) };
+  });
+}
+
+function scrollTo(setState: React.Dispatch<React.SetStateAction<KeyState>>, target: 'top' | 'bottom') {
+  setState(s => {
+    if (s.panel === 'logs') {
+      // top visual = línea más vieja = bottomOffset máximo
+      return { ...s, logsScrollOffset: target === 'top' ? Number.MAX_SAFE_INTEGER : 0 };
+    }
+    return { ...s, statsScrollOffset: target === 'top' ? 0 : Number.MAX_SAFE_INTEGER };
+  });
+}
 
 export function useKeyBindings(opts: {
   onQuit: () => void;
@@ -40,6 +64,16 @@ export function useKeyBindings(opts: {
     if (state.modal !== 'none') return;
 
     if (input === 'q' || (key.ctrl && input === 'c')) opts.onQuit();
+    // ── Scroll (ctrl + tecla evaluado primero para no chocar con letras simples) ──
+    else if (key.ctrl && input === 'a') scrollTo(setState, 'top');
+    else if (key.ctrl && input === 'e') scrollTo(setState, 'bottom');
+    else if (key.ctrl && input === 'b') scrollBy(setState, -10); // PgUp
+    else if (key.ctrl && input === 'f') scrollBy(setState, +10); // PgDn
+    else if (key.upArrow)               scrollBy(setState, -1);
+    else if (key.downArrow)             scrollBy(setState, +1);
+    else if (input === '[')             scrollBy(setState, -10);
+    else if (input === ']')             scrollBy(setState, +10);
+    // ── Acciones ──
     else if (input === 'c') opts.onClearLogs();
     else if (key.tab) setState(s => ({ ...s, panel: s.panel === 'logs' ? 'stats' : 'logs' }));
     else if (input === 'f') setModal('filter');
@@ -51,69 +85,6 @@ export function useKeyBindings(opts: {
     else if (input === 't') setState(s => ({ ...s, showTimestamps: !s.showTimestamps }));
     else if (input === 's') setState(s => ({ ...s, sortIdx: (s.sortIdx + 1) % SORT_MODES.length }));
     else if (input === 'T') { opts.onToggleProxy(); setState(s => ({ ...s, proxyEnabled: !s.proxyEnabled })); }
-    // Navegación con flechas
-    else if (key.upArrow) {
-      setState(s => {
-        if (s.panel === 'logs') {
-          return { ...s, logsScrollOffset: Math.max(0, s.logsScrollOffset - 1) };
-        } else if (s.panel === 'stats') {
-          return { ...s, statsScrollOffset: Math.max(0, s.statsScrollOffset - 1) };
-        }
-        return s;
-      });
-    }
-    else if (key.downArrow) {
-      setState(s => {
-        if (s.panel === 'logs') {
-          return { ...s, logsScrollOffset: s.logsScrollOffset + 1 };
-        } else if (s.panel === 'stats') {
-          return { ...s, statsScrollOffset: s.statsScrollOffset + 1 };
-        }
-        return s;
-      });
-    }
-    // Teclas de página (Page Up/Page Down)
-    else if (input === '[' || (key.ctrl && input === 'b')) { // Page Up
-      setState(s => {
-        if (s.panel === 'logs') {
-          return { ...s, logsScrollOffset: Math.max(0, s.logsScrollOffset - 10) };
-        } else if (s.panel === 'stats') {
-          return { ...s, statsScrollOffset: Math.max(0, s.statsScrollOffset - 10) };
-        }
-        return s;
-      });
-    }
-    else if (input === ']' || (key.ctrl && input === 'f')) { // Page Down
-      setState(s => {
-        if (s.panel === 'logs') {
-          return { ...s, logsScrollOffset: s.logsScrollOffset + 10 };
-        } else if (s.panel === 'stats') {
-          return { ...s, statsScrollOffset: s.statsScrollOffset + 10 };
-        }
-        return s;
-      });
-    }
-    // Ir al inicio/fin
-    else if (key.ctrl && input === 'a') { // Home
-      setState(s => {
-        if (s.panel === 'logs') {
-          return { ...s, logsScrollOffset: 0 };
-        } else if (s.panel === 'stats') {
-          return { ...s, statsScrollOffset: 0 };
-        }
-        return s;
-      });
-    }
-    else if (key.ctrl && input === 'e') { // End
-      setState(s => {
-        if (s.panel === 'logs') {
-          return { ...s, logsScrollOffset: Number.MAX_SAFE_INTEGER };
-        } else if (s.panel === 'stats') {
-          return { ...s, statsScrollOffset: Number.MAX_SAFE_INTEGER };
-        }
-        return s;
-      });
-    }
   }, { isActive });
 
   return { 

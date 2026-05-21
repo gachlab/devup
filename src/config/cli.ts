@@ -12,9 +12,15 @@ export interface CliArgs {
   proxyConf?: string;
   proxyTls: boolean;
   proxyEntrypoint: string;
+  dryRun: boolean;
+  once: boolean;
+  onceTimeout: number;
+  logFile: boolean;
+  logDir?: string;
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
+const DEFAULT_ONCE_TIMEOUT = 90;
 
 export function parseCliArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
@@ -24,6 +30,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
     proxy: false,
     proxyTls: true,
     proxyEntrypoint: 'websecure',
+    dryRun: false,
+    once: false,
+    onceTimeout: DEFAULT_ONCE_TIMEOUT,
+    logFile: true,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -44,6 +54,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--proxy-tls':        args.proxyTls = true; break;
       case '--no-proxy-tls':     args.proxyTls = false; break;
       case '--proxy-entrypoint': args.proxyEntrypoint = next ?? 'websecure'; i++; break;
+      case '--dry-run':          args.dryRun = true; break;
+      case '--once':             args.once = true; break;
+      case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
+      case '--no-log-file':      args.logFile = false; break;
+      case '--log-dir':          args.logDir = next; i++; break;
     }
   }
 

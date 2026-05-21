@@ -79,4 +79,25 @@ describe('validateConfig', () => {
     const errors = validateConfig(cfg, tmp);
     assert.ok(errors.some(e => e.message.includes('Directory not found')));
   });
+
+  it('accepts valid http healthCheck', () => {
+    const cfg = minimal();
+    cfg.services[0]!.healthCheck = { type: 'http', path: '/healthz' };
+    const errors = validateConfig(cfg, tmp);
+    assert.equal(errors.filter(e => e.field.includes('healthCheck')).length, 0);
+  });
+
+  it('rejects invalid healthCheck.type', () => {
+    const cfg = minimal();
+    (cfg.services[0] as any).healthCheck = { type: 'grpc' };
+    const errors = validateConfig(cfg, tmp);
+    assert.ok(errors.some(e => e.message.includes('Invalid healthCheck.type')));
+  });
+
+  it('rejects healthCheck.path without leading slash', () => {
+    const cfg = minimal();
+    cfg.services[0]!.healthCheck = { type: 'http', path: 'healthz' };
+    const errors = validateConfig(cfg, tmp);
+    assert.ok(errors.some(e => e.message.includes('must start with "/"')));
+  });
 });

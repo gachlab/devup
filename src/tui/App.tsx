@@ -4,6 +4,7 @@ import type { Platform } from '../platform/types.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
 import type { ProxyConfigProvider, ProxyOpts } from '../proxy-config/types.js';
+import type { LogSink } from '../process/log-sink.js';
 import { useProcessManager } from './hooks/useProcessManager.js';
 import { useKeyBindings } from './hooks/useKeyBindings.js';
 import { useProxySync } from './hooks/useProxySync.js';
@@ -27,28 +28,45 @@ interface Props {
   baseCwd: string;
   proxyProvider: ProxyConfigProvider | null;
   proxyOpts: ProxyOpts | null;
+  logSink: LogSink | null;
 }
 
-export function App({ config, services, cliArgs, platform, env, baseCwd, proxyProvider, proxyOpts }: Props) {
+export function App({ config, services, cliArgs, platform, env, baseCwd, proxyProvider, proxyOpts, logSink }: Props) {
   const { stdout } = useStdout();
-  const rows = stdout?.rows ?? 40;
+  const [rows, setRows] = useState(stdout?.rows ?? 40);
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => setRows(stdout.rows ?? 40);
+    stdout.on('resize', onResize);
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
   const logsHeight = Math.floor(rows * 0.65);
   const statsHeight = rows - logsHeight - 2; // 2 for header + statusbar
   const maxNameLen = Math.max(...services.map(s => s.name.length), 10);
 
-  const pm = useProcessManager(platform, baseCwd, env);
+  const pm = useProcessManager(platform, baseCwd, env, logSink);
   const [booted, setBooted] = useState(false);
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
 
   const kb = useKeyBindings({
     onQuit: () => {
-      lazyProxies.current.forEach(p => p.destroy());
-      pm.cleanup();
-      process.exit(0);
+      void shutdown();
     },
-    onClearLogs: () => {},
+    onClearLogs: pm.clearLogs,
     onToggleProxy: () => {},
   });
+
+  const shutdown = useCallback(async () => {
+    lazyProxies.current.forEach(p => p.destroy());
+    await pm.cleanup();
+    await logSink?.close();
+    process.exit(0);
+  }, [pm, logSink]);
+
+  // Propagar pausa al sink de logs (incluye auto-pausa cuando el usuario scrolleó arriba).
+  useEffect(() => {
+    pm.setPaused(kb.logsPaused || kb.logsScrollOffset > 0);
+  }, [kb.logsPaused, kb.logsScrollOffset, pm]);
 
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
 
@@ -72,8 +90,9 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         for (const num of Object.keys(aoPhases).map(Number).sort((a, b) => a - b)) {
           const svcs = aoPhases[num]!;
           for (const svc of svcs) {
-            await mgr.install(svc);
-            await mgr.start(svc, colorIdx++);
+            const ci = colorIdx++;
+            await mgr.install(svc, ci);
+            await mgr.start(svc, ci);
           }
           const apis = svcs.filter(s => s.type === 'api');
           if (apis.length) await Promise.all(apis.map(s => waitForPort(s.port, { timeout: 45000 })));
@@ -102,7 +121,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
             targetPort: rewritten.realPort,
             timeoutMin: lazyTimeout,
             onDemandStart: async () => {
-              await mgr.install(rewritten);
+              await mgr.install(rewritten, ci);
               await mgr.start(rewritten, ci);
               const ok = await waitForPort(rewritten.realPort, { timeout: 45000 });
               const st = mgr.state.get(svc.name);
@@ -131,8 +150,9 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         for (const num of Object.keys(phases).map(Number).sort((a, b) => a - b)) {
           const svcs = phases[num]!;
           for (const svc of svcs) {
-            await mgr.install(svc);
-            await mgr.start(svc, colorIdx++);
+            const ci = colorIdx++;
+            await mgr.install(svc, ci);
+            await mgr.start(svc, ci);
           }
           const apis = svcs.filter(s => s.type === 'api');
           if (apis.length) await Promise.all(apis.map(s => waitForPort(s.port, { timeout: 45000 })));

@@ -4,12 +4,30 @@ import type { ChildProcess } from 'node:child_process';
 import type { Platform } from '../platform/types.js';
 import type { ServiceConfig } from '../config/types.js';
 import type { ProcessState, ProcessManagerEvents } from './types.js';
-import { checkPort, deriveHealth } from './health.js';
+import { checkHealth, deriveHealth, checkPort } from './health.js';
 import { installService } from './installer.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 
 const MAX_RESTARTS = 3;
 const BACKOFF_BASE_MS = 2000;
+
+function lineBuffer(onLine: (line: string) => void) {
+  let buf = '';
+  return {
+    push(chunk: Buffer) {
+      buf += chunk.toString();
+      let idx;
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, idx).replace(/\r$/, '');
+        buf = buf.slice(idx + 1);
+        if (line.length) onLine(line);
+      }
+    },
+    flush() {
+      if (buf.length) { onLine(buf); buf = ''; }
+    },
+  };
+}
 
 export class ProcessManager {
   readonly state = new Map<string, ProcessState>();
@@ -31,9 +49,10 @@ export class ProcessManager {
     this.events = opts.events;
   }
 
-  async install(svc: ServiceConfig): Promise<boolean> {
+  async install(svc: ServiceConfig, colorIdx?: number): Promise<boolean> {
     const cwd = join(this.baseCwd, svc.cwd);
-    return installService(cwd, this.env, msg => this.log(svc.name, msg, this.getColorIdx(svc.name)));
+    const idx = colorIdx ?? this.state.get(svc.name)?.colorIdx ?? 0;
+    return installService(cwd, this.env, msg => this.log(svc.name, msg, idx));
   }
 
   async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
@@ -66,11 +85,16 @@ export class ProcessManager {
     this.procs.add(proc);
     this.events.onStateChange(svc.name, state);
 
-    proc.stdout?.on('data', (d: Buffer) => this.log(svc.name, d.toString(), colorIdx));
-    proc.stderr?.on('data', (d: Buffer) => {
-      state.errors += d.toString().split('\n').filter(Boolean).length;
-      this.log(svc.name, d.toString(), colorIdx);
+    const stdoutBuf = lineBuffer(line => this.log(svc.name, line, colorIdx));
+    const stderrBuf = lineBuffer(line => {
+      state.errors += 1;
+      this.log(svc.name, line, colorIdx);
     });
+
+    proc.stdout?.on('data', (d: Buffer) => stdoutBuf.push(d));
+    proc.stderr?.on('data', (d: Buffer) => stderrBuf.push(d));
+    proc.stdout?.on('end', () => stdoutBuf.flush());
+    proc.stderr?.on('end', () => stderrBuf.flush());
 
     proc.on('close', code => {
       this.procs.delete(proc);
@@ -108,7 +132,8 @@ export class ProcessManager {
     const st = this.state.get(name);
     if (!st) return;
     this.stop(name);
-    st.restarts++;
+    // Manual restart: reset auto-restart counter so user gets a fresh budget
+    st.restarts = 0;
     const delay = st.proc ? 1500 : 100;
     await new Promise(r => setTimeout(r, delay));
     await this.start(st.svc, st.colorIdx, true);
@@ -121,8 +146,7 @@ export class ProcessManager {
         st.health = st.status === 'idle' ? 'idle' : 'down';
         continue;
       }
-      const port = st.svc.port;
-      const isUp = await checkPort(port);
+      const isUp = await checkHealth(st.svc.port, st.svc.healthCheck);
       const prev = st.health;
       st.health = deriveHealth(isUp, st.status);
       if (st.health === 'up' && st.status === 'starting') st.status = 'running';
@@ -130,23 +154,48 @@ export class ProcessManager {
     }
   }
 
-  cleanup(): void {
-    for (const proc of this.procs) {
+  async cleanup(opts: { gracePeriodMs?: number } = {}): Promise<void> {
+    const grace = opts.gracePeriodMs ?? 3000;
+    const procs = [...this.procs];
+    if (!procs.length) return;
+
+    for (const proc of procs) {
+      const st = this.findStateByProc(proc);
+      if (st) st.intentionalStop = true;
       if (proc.pid) this.platform.killTree(proc.pid);
     }
-    // Force kill after 3s
-    setTimeout(() => {
-      for (const proc of this.procs) {
-        if (proc.pid) this.platform.killTree(proc.pid, 'SIGKILL');
+
+    const waits = procs.map(p =>
+      p.exitCode !== null || p.signalCode !== null
+        ? Promise.resolve()
+        : new Promise<void>(resolve => p.once('close', () => resolve())),
+    );
+
+    let timedOut = false;
+    await Promise.race([
+      Promise.all(waits),
+      new Promise<void>(resolve => setTimeout(() => { timedOut = true; resolve(); }, grace)),
+    ]);
+
+    if (timedOut) {
+      for (const proc of procs) {
+        if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
+          this.platform.killTree(proc.pid, 'SIGKILL');
+        }
       }
-    }, 3000);
+      await Promise.race([
+        Promise.all(waits),
+        new Promise<void>(resolve => setTimeout(resolve, 1000)),
+      ]);
+    }
+  }
+
+  private findStateByProc(proc: ChildProcess): ProcessState | undefined {
+    for (const st of this.state.values()) if (st.proc === proc) return st;
+    return undefined;
   }
 
   private log(name: string, text: string, colorIdx: number): void {
     this.events.onLog(name, text, colorIdx);
-  }
-
-  private getColorIdx(name: string): number {
-    return this.state.get(name)?.colorIdx ?? 0;
   }
 }

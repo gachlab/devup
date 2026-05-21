@@ -18,37 +18,32 @@ interface Props {
 
 export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll }: Props) {
   const filtered = filter ? logs.filter(l => l.svcName === filter) : logs;
-  const contentHeight = height - 2;
-  
-  // Calcular el índice de inicio basado en el scroll offset
+  const contentHeight = Math.max(1, height - 2);
   const totalLines = filtered.length;
-  let startIndex = 0;
-  
-  if (scrollOffset === Number.MAX_SAFE_INTEGER) {
-    // Ir al final
-    startIndex = Math.max(0, totalLines - contentHeight);
-  } else if (scrollOffset > 0) {
-    // Desplazamiento manual
-    startIndex = Math.min(scrollOffset, Math.max(0, totalLines - contentHeight));
-  } else {
-    // Comportamiento original: mostrar las últimas líneas
-    startIndex = Math.max(0, totalLines - contentHeight);
-  }
-  
-  const visible = filtered.slice(startIndex, startIndex + contentHeight);
-  
-  // Resetear el scroll cuando cambia el filtro o búsqueda
+
+  // scrollOffset = "líneas por encima del fondo": 0 = follow latest, N = N líneas atrás.
+  const maxOffset = Math.max(0, totalLines - contentHeight);
+  const effectiveOffset = scrollOffset === Number.MAX_SAFE_INTEGER
+    ? maxOffset
+    : Math.min(scrollOffset, maxOffset);
+  const startIndex = Math.max(0, totalLines - contentHeight - effectiveOffset);
+  const endIndex = Math.min(startIndex + contentHeight, totalLines);
+  const visible = filtered.slice(startIndex, endIndex);
+
+  // Reset scroll cuando cambia el filtro o búsqueda — vuelve a seguir lo último.
   useEffect(() => {
     resetScroll();
   }, [filter, searchTerm, resetScroll]);
 
+  const scrolled = effectiveOffset > 0;
   const label = [
     'Logs',
     filter ? `[${filter}]` : '',
     searchTerm ? `/${searchTerm}` : '',
     paused ? '[PAUSED]' : '',
+    scrolled ? '[SCROLL]' : '',
     `${filtered.length} lines`,
-    focused ? `(${startIndex + 1}-${Math.min(startIndex + contentHeight, totalLines)}/${totalLines})` : '',
+    focused && totalLines > 0 ? `(${startIndex + 1}-${endIndex}/${totalLines})` : '',
   ].filter(Boolean).join(' ');
 
   return (

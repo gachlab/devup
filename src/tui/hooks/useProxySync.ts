@@ -8,25 +8,29 @@ export function useProxySync(
   states: Map<string, ProcessState>,
   enabled: boolean,
 ) {
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statesRef = useRef(states);
+  const lastContentRef = useRef<string | null>(null);
+  statesRef.current = states;
 
   useEffect(() => {
-    if (!provider || !opts || !enabled) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
+    if (!provider || !opts || !enabled) return;
 
     const sync = () => {
       const svcStates = new Map<string, ServiceState>();
-      for (const [name, st] of states) {
+      for (const [name, st] of statesRef.current) {
         svcStates.set(name, { port: st.svc.port, health: st.health, realPort: (st.svc as any).realPort });
       }
       const content = provider.generate(svcStates, opts);
+      if (content === lastContentRef.current) return;
+      lastContentRef.current = content;
       provider.write(content, opts);
     };
 
     sync();
-    intervalRef.current = setInterval(sync, 3000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [provider, opts, enabled, states]);
+    const id = setInterval(sync, 3000);
+    return () => {
+      clearInterval(id);
+      lastContentRef.current = null;
+    };
+  }, [provider, opts, enabled]);
 }

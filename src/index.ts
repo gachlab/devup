@@ -10,6 +10,9 @@ import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
 import { App } from './tui/App.js';
+import { LogSink } from './process/log-sink.js';
+import { runDryRun } from './orchestrator/dry-run.js';
+import { runOnce } from './orchestrator/once.js';
 import type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
 
 // Re-export for config files
@@ -74,12 +77,33 @@ async function main() {
     };
   }
 
+  // --dry-run: imprime plan y sale
+  if (cliArgs.dryRun) {
+    runDryRun({ config, services, cliArgs, env, baseCwd: cwd, proxyProvider, proxyOpts });
+    return;
+  }
+
+  // Log sink (a disco). Desactivable con --no-log-file.
+  let logSink: LogSink | null = null;
+  if (cliArgs.logFile) {
+    logSink = new LogSink({ projectName: config.name, rootDir: cliArgs.logDir });
+  }
+
+  // --once: arranca, espera ready, sale 0/1 (sin TUI)
+  if (cliArgs.once) {
+    const code = await runOnce({
+      config, services, cliArgs, platform, env, baseCwd: cwd, logSink,
+    });
+    await logSink?.close();
+    process.exit(code);
+  }
+
   // Render TUI
   const isInteractive = process.stdin.isTTY ?? false;
   const { waitUntilExit } = render(
     React.createElement(App, {
       config, services, cliArgs, platform, env, baseCwd: cwd,
-      proxyProvider, proxyOpts,
+      proxyProvider, proxyOpts, logSink,
     }),
     { exitOnCtrlC: false, patchConsole: isInteractive, interactive: isInteractive },
   );

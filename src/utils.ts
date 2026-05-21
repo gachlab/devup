@@ -33,57 +33,9 @@ export function fmtUptime(ms: number): string {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m${s % 60}s`;
   const h = Math.floor(m / 60);
-  return `${h}h${m % 60}m`;
-}
-
-// ── Search / highlight ──
-
-export function highlightSearch(text: string, term: string | null, escapeFn?: (s: string) => string): string {
-  const escaped = escapeFn ? escapeFn(text) : text;
-  if (!term) return escaped;
-  const idx = escaped.toLowerCase().indexOf(term.toLowerCase());
-  if (idx === -1) return escaped;
-  return `${escaped.slice(0, idx)}{black-fg}{yellow-bg}${escaped.slice(idx, idx + term.length)}{/yellow-bg}{/black-fg}${escaped.slice(idx + term.length)}`;
-}
-
-export function findSearchMatch(
-  lines: string[], term: string, currentScroll: number,
-  direction: 'next' | 'prev', stripTagsFn?: (s: string) => string,
-): number {
-  if (!term || !lines.length) return -1;
-  const lower = term.toLowerCase();
-  const len = lines.length;
-  const start = direction === 'next' ? currentScroll + 1 : currentScroll - 1;
-  for (let i = 0; i < len; i++) {
-    const idx = direction === 'next' ? (start + i) % len : (start - i + len) % len;
-    const raw = stripTagsFn ? stripTagsFn(lines[idx] ?? '') : (lines[idx] ?? '');
-    if (raw.toLowerCase().includes(lower)) return idx;
-  }
-  return -1;
-}
-
-// ── Log formatting ──
-
-export function formatLogLine(
-  svcName: string, line: string, colorTag: string, maxNameLen: number,
-  showTimestamps: boolean, searchTerm: string | null, escapeFn?: (s: string) => string,
-): string {
-  const padded = svcName.padEnd(maxNameLen);
-  const ts = showTimestamps ? `{#666666-fg}[${new Date().toLocaleTimeString('en-GB')}]{/#666666-fg} ` : '';
-  const highlighted = highlightSearch(line, searchTerm, escapeFn);
-  return `${ts}{${colorTag}-fg}[${padded}]{/${colorTag}-fg} ${highlighted}`;
-}
-
-export function shouldLogLine(svcName: string, filter: string | null): boolean {
-  return !filter || filter === svcName;
-}
-
-export function buildLogsLabel(filter: string | null, searchTerm: string | null, paused: boolean): string {
-  const parts = [' {bold}Logs{/bold}'];
-  if (filter) parts.push(`[${filter}]`);
-  if (searchTerm) parts.push(`{yellow-fg}/${searchTerm}{/yellow-fg}`);
-  if (paused) parts.push('{red-fg}[PAUSED]{/red-fg}');
-  return parts.join(' ') + ' ';
+  if (h < 24) return `${h}h${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d${h % 24}h`;
 }
 
 // ── npm install stamps ──
