@@ -44,7 +44,13 @@ async function main() {
   }
 
   // Filter services
-  const services = filterServices(config.services, cliArgs);
+  let services: ReturnType<typeof filterServices>;
+  try {
+    services = filterServices(config.services, cliArgs, config);
+  } catch (e: any) {
+    console.error(`❌ ${e.message}`);
+    process.exit(1);
+  }
   if (!services.length) {
     console.error('❌ No services to run after filtering');
     process.exit(1);

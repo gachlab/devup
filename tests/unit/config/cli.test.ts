@@ -71,4 +71,43 @@ describe('filterServices', () => {
     const result = filterServices(all, parseCliArgs(['--services', 'app-api,app-web']));
     assert.equal(result.length, 2);
   });
+
+  describe('--profile', () => {
+    const profiles = { 'check-in': ['app-api', 'app-web'] };
+
+    it('parses --profile flag', () => {
+      assert.equal(parseCliArgs(['--profile', 'check-in']).profile, 'check-in');
+    });
+
+    it('filters by profile members', () => {
+      const result = filterServices(all, parseCliArgs(['--profile', 'check-in']), { profiles });
+      assert.equal(result.length, 2);
+      assert.deepEqual(result.map(s => s.name).sort(), ['app-api', 'app-web']);
+    });
+
+    it('composes with --skip', () => {
+      const result = filterServices(all, parseCliArgs(['--profile', 'check-in', '--skip', 'app-web']), { profiles });
+      assert.equal(result.length, 1);
+      assert.equal(result[0]!.name, 'app-api');
+    });
+
+    it('throws on unknown profile name with helpful hint', () => {
+      assert.throws(
+        () => filterServices(all, parseCliArgs(['--profile', 'mystery']), { profiles }),
+        /Unknown profile: "mystery".*Available: check-in/,
+      );
+    });
+
+    it('throws when no profiles defined and one is requested', () => {
+      assert.throws(
+        () => filterServices(all, parseCliArgs(['--profile', 'mystery']), {}),
+        /No profiles defined/,
+      );
+    });
+
+    it('takes precedence over --services when both passed', () => {
+      const result = filterServices(all, parseCliArgs(['--profile', 'check-in', '--services', 'tasks-api']), { profiles });
+      assert.deepEqual(result.map(s => s.name).sort(), ['app-api', 'app-web']);
+    });
+  });
 });

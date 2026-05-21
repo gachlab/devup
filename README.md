@@ -85,6 +85,24 @@ npx devup
 | `services` | `ServiceConfig[]` | ✅ | List of services to manage |
 | `lazy` | `LazyConfig` | | Lazy mode configuration |
 | `proxy` | `ProxyConfig` | | Reverse proxy config generation |
+| `profiles` | `Record<string, string[]>` | | Named lists of services to boot. Select with `--profile <name>` |
+
+#### Profiles
+
+A profile is a named subset of `services`. Instead of memorising service names for `--services`, you give your common workflows a name:
+
+```typescript
+export default defineConfig({
+  // ...
+  profiles: {
+    'check-in':  ['configurations-api', 'authorization-api', 'app-api', 'check-in-api', 'app-web'],
+    'pickup':    ['configurations-api', 'pickup-api', 'pickup-drivers-web'],
+    'frontends': ['app-web', 'admin-web', 'staff-web'],
+  },
+});
+```
+
+Then `devup --profile check-in` boots that subset. Composable with `--skip`. The validator catches typos at config-load time. Unknown profile names produce a friendly error listing what's available.
 
 ### `ServiceConfig`
 
@@ -157,6 +175,7 @@ devup [options]
 | `--only apis` | Only start API services |
 | `--only webs` | Only start web services |
 | `--services api,web,auth` | Start only the named services |
+| `--profile <name>` | Start the services in the named profile (see `profiles` in the config) |
 | `--skip tasks-api,pickup-api` | Start everything except these |
 | `--config path/to/config.ts` | Use a custom config file |
 

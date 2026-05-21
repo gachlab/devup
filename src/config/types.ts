@@ -49,6 +49,8 @@ export interface DevStackConfig {
   services: ServiceConfig[];
   lazy?: LazyConfig;
   proxy?: ProxyConfig;
+  /** Named lists of service names — selectable with --profile <name>. */
+  profiles?: Record<string, string[]>;
 }
 
 export function defineConfig(config: DevStackConfig): DevStackConfig {
