@@ -30,6 +30,17 @@ describe('parseCliArgs', () => {
     assert.equal(args.proxyTls, false);
     assert.equal(args.proxyEntrypoint, 'web');
   });
+
+  it('--dry-run', () => assert.equal(parseCliArgs(['--dry-run']).dryRun, true));
+  it('--once + --once-timeout', () => {
+    const a = parseCliArgs(['--once', '--once-timeout', '30']);
+    assert.equal(a.once, true);
+    assert.equal(a.onceTimeout, 30);
+  });
+  it('--once default timeout is 90s', () => assert.equal(parseCliArgs(['--once']).onceTimeout, 90));
+  it('--no-log-file disables log file', () => assert.equal(parseCliArgs(['--no-log-file']).logFile, false));
+  it('--log-dir sets custom path', () => assert.equal(parseCliArgs(['--log-dir', '/tmp/devup-logs']).logDir, '/tmp/devup-logs'));
+  it('log file enabled by default', () => assert.equal(parseCliArgs([]).logFile, true));
 });
 
 describe('filterServices', () => {

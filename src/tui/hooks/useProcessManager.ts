@@ -3,7 +3,8 @@ import { ProcessManager } from '../../process/manager.js';
 import type { ProcessState } from '../../process/types.js';
 import type { Platform } from '../../platform/types.js';
 import type { ServiceConfig } from '../../config/types.js';
-import { calcCpuPercent, tagColors } from '../../utils.js';
+import { calcCpuPercent } from '../../utils.js';
+import { LogSink } from '../../process/log-sink.js';
 
 export interface LogEntry {
   svcName: string;
@@ -17,21 +18,38 @@ export interface ServiceStats {
   mem: string;
 }
 
-export function useProcessManager(platform: Platform, baseCwd: string, env: Record<string, string>) {
+export function useProcessManager(
+  platform: Platform,
+  baseCwd: string,
+  env: Record<string, string>,
+  logSink: LogSink | null = null,
+) {
   const [states, setStates] = useState<Map<string, ProcessState>>(new Map());
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [stats, setStats] = useState<Map<string, ServiceStats>>(new Map());
   const mgrRef = useRef<ProcessManager | null>(null);
   const prevCpu = useRef<Map<string, { time: number; cpu: number }>>(new Map());
+  const pausedRef = useRef(false);
+  const pendingLogsRef = useRef<LogEntry[]>([]);
+  const sinkRef = useRef<LogSink | null>(logSink);
+  sinkRef.current = logSink;
 
   useEffect(() => {
     const mgr = new ProcessManager({
       baseCwd, env, platform,
       events: {
         onLog: (svcName, text, colorIdx) => {
-          const lines = text.split('\n').filter(Boolean);
+          sinkRef.current?.write(svcName, text);
+          const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now() };
+          if (pausedRef.current) {
+            pendingLogsRef.current.push(entry);
+            if (pendingLogsRef.current.length > 5000) {
+              pendingLogsRef.current = pendingLogsRef.current.slice(-5000);
+            }
+            return;
+          }
           setLogs(prev => {
-            const next = [...prev, ...lines.map(l => ({ svcName, text: l, colorIdx, ts: Date.now() }))];
+            const next = prev.concat(entry);
             return next.length > 5000 ? next.slice(-5000) : next;
           });
         },
@@ -74,13 +92,29 @@ export function useProcessManager(platform: Platform, baseCwd: string, env: Reco
 
   const mgr = mgrRef.current;
 
+  const clearLogs = useCallback(() => { pendingLogsRef.current = []; setLogs([]); }, []);
+
+  const setPaused = useCallback((paused: boolean) => {
+    pausedRef.current = paused;
+    if (!paused && pendingLogsRef.current.length) {
+      const flush = pendingLogsRef.current;
+      pendingLogsRef.current = [];
+      setLogs(prev => {
+        const next = prev.concat(flush);
+        return next.length > 5000 ? next.slice(-5000) : next;
+      });
+    }
+  }, []);
+
   return {
     states, logs, stats,
     start: useCallback((svc: ServiceConfig, colorIdx: number) => mgr?.start(svc, colorIdx), [mgr]),
     stop: useCallback((name: string) => mgr?.stop(name), [mgr]),
     restart: useCallback((name: string) => mgr?.restart(name), [mgr]),
-    install: useCallback((svc: ServiceConfig) => mgr?.install(svc), [mgr]),
+    install: useCallback((svc: ServiceConfig, colorIdx: number) => mgr?.install(svc, colorIdx), [mgr]),
     cleanup: useCallback(() => mgr?.cleanup(), [mgr]),
+    clearLogs,
+    setPaused,
     manager: mgr,
   };
 }

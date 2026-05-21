@@ -282,7 +282,7 @@ test('LogsPanel - handles empty logs', () => {
   assert.ok(output.includes('0 lines'));
 });
 
-test('LogsPanel - scroll offset works correctly', () => {
+test('LogsPanel - default (scrollOffset=0) follows the latest lines', () => {
   const logs = Array.from({ length: 20 }, (_, i) => ({
     ts: Date.now(),
     svcName: 'api',
@@ -300,20 +300,49 @@ test('LogsPanel - scroll offset works correctly', () => {
       maxNameLen={10}
       height={10}
       focused={true}
+      scrollOffset={0}
+      resetScroll={() => {}}
+    />
+  );
+
+  const output = stdout.lastFrame() || '';
+  assert.ok(output.includes('Log line 20'), `expected last line visible, got: ${output}`);
+  assert.ok(!output.includes('Log line 1 '), 'oldest line should not be visible');
+});
+
+test('LogsPanel - bottomOffset shifts view backwards', () => {
+  const logs = Array.from({ length: 20 }, (_, i) => ({
+    ts: Date.now(),
+    svcName: 'api',
+    colorIdx: 0,
+    text: `Log line ${i + 1}`,
+  }));
+
+  // height=10 → contentHeight=8. bottomOffset=5 → startIndex = 20 - 8 - 5 = 7
+  // visibles: logs[7..14] = "Log line 8" .. "Log line 15"
+  const { stdout } = render(
+    <LogsPanel
+      logs={logs}
+      filter={null}
+      searchTerm={null}
+      paused={false}
+      showTimestamps={false}
+      maxNameLen={10}
+      height={10}
+      focused={true}
       scrollOffset={5}
       resetScroll={() => {}}
     />
   );
 
   const output = stdout.lastFrame() || '';
-  assert.ok(output.includes('Log line 6'));
-  // With scrollOffset=5, we should see lines 6-15, so line 1 should not be visible
-  // But the component might show different lines depending on implementation
-  // Just check that line 6 is visible
-  assert.ok(output.includes('Log line 6'));
+  assert.ok(output.includes('Log line 8'), `expected line 8 visible, got: ${output}`);
+  assert.ok(output.includes('Log line 15'), 'expected line 15 visible');
+  assert.ok(!output.includes('Log line 20'), 'last line must not be visible while scrolled up');
+  assert.ok(output.includes('[SCROLL]'), 'should show SCROLL indicator when off bottom');
 });
 
-test('LogsPanel - scroll to end', () => {
+test('LogsPanel - MAX_SAFE_INTEGER scrolls to the oldest lines', () => {
   const logs = Array.from({ length: 20 }, (_, i) => ({
     ts: Date.now(),
     svcName: 'api',
@@ -337,6 +366,7 @@ test('LogsPanel - scroll to end', () => {
   );
 
   const output = stdout.lastFrame() || '';
-  assert.ok(output.includes('Log line 15'));
-  assert.ok(output.includes('Log line 20'));
+  // Con bottomOffset máximo → startIndex = 0 → primeras líneas visibles
+  assert.ok(output.includes('Log line 1'), `expected first line visible, got: ${output}`);
+  assert.ok(!output.includes('Log line 20'), 'last line must not be visible at top');
 });

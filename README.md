@@ -9,14 +9,17 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 ## Features
 
 - **Phased startup** — boot services in dependency order with automatic port readiness detection
-- **Lazy mode** — only start services when they receive traffic. Idle services shut down after a configurable timeout
-- **TUI dashboard** — live logs and process stats (CPU, memory, health, errors, restarts) in a split-panel terminal UI
+- **Lazy mode** — only start services when they receive traffic. Idle services shut down after a configurable timeout (respects active connections, no killing mid-WebSocket)
+- **TUI dashboard** — live logs and process stats (CPU, memory, health, errors, restarts) in a split-panel terminal UI with scrolling, search, filter, and auto-pause when you scroll up
 - **Cross-platform** — Linux, macOS, and Windows. Platform-specific process management, stats collection, and browser opening
-- **Reverse proxy config** — generate Traefik (or other) dynamic config from running services. Health-aware: only routes to healthy services
+- **HTTP or TCP health checks** — per-service `healthCheck` config: TCP probe (default) or HTTP GET with configurable path and status codes
+- **Reverse proxy config** — generate Traefik, Nginx, or Caddy config from running services. Health-aware: only routes to healthy services
+- **Persistent logs** — every line streamed to `~/.devup/logs/<project>/<svc>.log` with rotation on each launch
+- **CI-ready** — `--dry-run` prints the boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI
 - **Project-agnostic** — works with any Node.js monorepo. Your project defines a `devup.config.ts`, devup does the rest
 - **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs
-- **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts
-- **Port conflict detection** — checks if a port is already in use before starting a service
+- **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter
+- **Port conflict detection** — checks if a port is already in use before starting a service; also validates lazy `port + 10000` collisions at config-load time
 
 ## Quick start
 
@@ -99,6 +102,25 @@ npx devup
 | `watchBuild` | `string` | | Watch command to run alongside the service (e.g., `npx tsup --watch`) |
 | `nodeArgs` | `string[]` | | Extra Node.js arguments |
 | `extraEnv` | `Record<string, string>` | | Extra environment variables for this service |
+| `healthCheck` | `HealthCheckConfig` | | Override the readiness check for this service. Default: TCP probe on `port` |
+
+### `HealthCheckConfig`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `'tcp' \| 'http'` | ✅ | `tcp` (default) just opens a socket; `http` issues an HTTP GET and inspects the status code |
+| `path` | `string` | | HTTP-only request path. Default: `/`. Must start with `/` |
+| `expect` | `number \| number[]` | | HTTP-only acceptable status code(s). Default: any 2xx (200-299) |
+| `host` | `string` | | Override target host for the HTTP check. Default: `127.0.0.1` |
+| `timeoutMs` | `number` | | Per-check socket/request timeout in ms. Default: `2000` |
+
+```typescript
+// Wait for /healthz to return 200 before considering the service up
+{ name: 'api', /* ... */, healthCheck: { type: 'http', path: '/healthz' } }
+
+// Accept 200 or 204
+{ name: 'api', /* ... */, healthCheck: { type: 'http', path: '/health', expect: [200, 204] } }
+```
 
 ### `LazyConfig`
 
@@ -113,7 +135,7 @@ When lazy mode is active (default), services not in `alwaysOn` start a TCP proxy
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `provider` | `string` | ✅ | Proxy provider name. Currently: `'traefik'` |
+| `provider` | `string` | ✅ | Proxy provider name. One of: `'traefik'`, `'nginx'`, `'caddy'` |
 | `routes` | `Record<string, string>` | ✅ | Map of service name → subdomain. Empty string = root domain |
 | `confPath` | `string` | | Path to write the config file. Default: `~/.traefik/traefik_conf.yaml` |
 | `host` | `string` | | Target host for proxy URLs. Default: auto-detected per platform |
@@ -155,7 +177,24 @@ devup [options]
 | `--proxy-conf /path/to/file` | Override config file path |
 | `--proxy-tls` | Enable TLS (default) |
 | `--no-proxy-tls` | Disable TLS |
-| `--proxy-entrypoint web` | Override entrypoint name |
+| `--proxy-entrypoint web` | Override entrypoint name (Traefik-only) |
+
+### CI / scripting
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Print the resolved boot plan (phases, commands, proxy YAML) and exit. Doesn't start any process |
+| `--once` | Boot services, wait until every API is healthy, then exit `0` (or `1` on timeout). Skips the TUI — meant for CI smoke tests |
+| `--once-timeout 60` | Max seconds to wait in `--once` mode. Default: `90` |
+
+### Log files
+
+| Flag | Description |
+|---|---|
+| `--no-log-file` | Disable persistent log files |
+| `--log-dir /path` | Override log root. Default: `~/.devup/logs/<project>/<service>.log` |
+
+devup writes a separate `.log` file per service to disk. Lines are prefixed with an ISO timestamp. On each fresh launch the previous file is rotated to `<service>.log.prev`, so you always have at most two runs of history per service.
 
 ## TUI keybindings
 
@@ -163,16 +202,21 @@ devup [options]
 |---|---|
 | `q` / `Ctrl+C` | Quit and stop all services |
 | `Tab` | Switch focus between Logs and Stats panels |
+| `↑` / `↓` | Scroll the focused panel by 1 line/row |
+| `[` / `]` (or `Ctrl+B` / `Ctrl+F`) | Page up / page down |
+| `Ctrl+A` / `Ctrl+E` | Jump to top / bottom of the focused panel |
 | `f` | Filter logs by service |
 | `a` | Show all logs (clear filter) |
 | `/` | Search in logs |
-| `p` | Pause/resume log output |
+| `p` | Pause/resume log output (auto-engaged when you scroll up) |
 | `t` | Toggle timestamps |
 | `c` | Clear logs |
 | `s` | Cycle sort mode (name → memory → errors) |
 | `r` | Restart a service |
 | `o` | Open a web service in browser |
 | `T` | Toggle reverse proxy config sync |
+
+When you scroll the Logs panel up, devup auto-pauses the log stream so new lines don't push your reading position. New lines are buffered and replay when you return to the bottom (`Ctrl+E` or scroll all the way down).
 
 ## Config file formats
 
@@ -227,7 +271,7 @@ Services listed in `lazy.alwaysOn` skip the proxy and start normally.
 
 ## Reverse proxy providers
 
-devup generates dynamic config for reverse proxies. Currently supported:
+devup generates dynamic config for reverse proxies. Three providers are built in: **Traefik**, **Nginx**, and **Caddy**. Only services with `health === 'up'` are included — flapping services are silently dropped from the generated config and re-added when they recover.
 
 ### Traefik
 
@@ -245,7 +289,39 @@ services:
 devup --proxy --proxy-host 172.17.0.1
 ```
 
-Adding a new provider (Nginx, Caddy, etc.) requires implementing the `ProxyConfigProvider` interface:
+### Nginx
+
+Generates an Nginx file with one `server { }` block per healthy service. Drop it into `/etc/nginx/conf.d/` (or `include` it from your main config) and reload Nginx — devup rewrites the file in place every 3 seconds.
+
+```typescript
+proxy: {
+  provider: 'nginx',
+  confPath: '/etc/nginx/conf.d/devup.conf',
+  routes: { 'app-web': '', 'api': 'api' },
+}
+```
+
+With `tls: true` (default) each block listens on `:443 ssl` and points to `/etc/nginx/certs/<server_name>.crt` and `.key`. With `tls: false` it listens on `:80`. WebSocket / HTTP-upgrade headers are forwarded by default.
+
+> **Note:** Nginx doesn't watch files automatically — you'll need `nginx -s reload` (or `nginx-reload` sidecar) to pick up devup's updates. For a watch-and-reload workflow, prefer Traefik or Caddy.
+
+### Caddy
+
+Generates a Caddyfile with one `reverse_proxy` directive per healthy service. Caddy auto-reloads its file on change (`caddy run --watch`), so devup's updates take effect without intervention.
+
+```typescript
+proxy: {
+  provider: 'caddy',
+  confPath: '/etc/caddy/devup.Caddyfile',
+  routes: { 'app-web': '', 'api': 'api' },
+}
+```
+
+With `tls: true` (default) Caddy provisions TLS automatically (Let's Encrypt or local CA). With `tls: false` each site is prefixed with `http://`.
+
+### Adding a custom provider
+
+Implement the `ProxyConfigProvider` interface and register it manually before calling `render(<App />)`:
 
 ```typescript
 interface ProxyConfigProvider {
@@ -323,7 +399,7 @@ git clone https://github.com/gachlab/devup.git
 cd devup
 npm install
 npm run build
-npm test              # 112 tests, node:test native
+npm test              # 200 tests, node:test native
 npm run test:coverage # coverage report
 ```
 

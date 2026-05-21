@@ -11,6 +11,20 @@ export interface ServiceConfig {
   watchBuild?: string;
   nodeArgs?: string[];
   extraEnv?: Record<string, string>;
+  healthCheck?: HealthCheckConfig;
+}
+
+export interface HealthCheckConfig {
+  /** 'tcp' (default) checks that the port accepts connections. 'http' makes an HTTP GET. */
+  type: 'tcp' | 'http';
+  /** HTTP-only: request path. Default: '/' */
+  path?: string;
+  /** HTTP-only: acceptable status code(s). Default: 200-299 */
+  expect?: number | number[];
+  /** Override host for the HTTP check. Default: 127.0.0.1 */
+  host?: string;
+  /** Per-check socket timeout in ms. Default: 2000 */
+  timeoutMs?: number;
 }
 
 export interface LazyConfig {

@@ -65,41 +65,37 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
   const stackMem = totalMemMB >= 1024 ? (totalMemMB / 1024).toFixed(2) + ' GB' : totalMemMB.toFixed(1) + ' MB';
 
   const ml = maxNameLen;
-  const contentHeight = height - 2;
-  
-  // Calcular el índice de inicio basado en el scroll offset para cada columna
-  const maxApiRows = Math.max(0, apis.length - (contentHeight - 2));
-  const maxWebRows = Math.max(0, webs.length - (contentHeight - 2));
-  
-  let apiStartIndex = 0;
-  let webStartIndex = 0;
-  
-  if (scrollOffset === Number.MAX_SAFE_INTEGER) {
-    // Ir al final
-    apiStartIndex = maxApiRows;
-    webStartIndex = maxWebRows;
-  } else if (scrollOffset > 0) {
-    // Desplazamiento manual
-    apiStartIndex = Math.min(scrollOffset, maxApiRows);
-    webStartIndex = Math.min(scrollOffset, maxWebRows);
-  }
-  
-  const visibleApis = apis.slice(apiStartIndex, apiStartIndex + contentHeight - 2);
-  const visibleWebs = webs.slice(webStartIndex, webStartIndex + contentHeight - 2);
-  
-  // Resetear el scroll cuando cambia el modo de ordenamiento
+  const contentHeight = Math.max(1, height - 2);
+  const rowsPerCol = Math.max(1, contentHeight - 2); // header row + col header
+
+  // scrollOffset = topOffset (filas por debajo de la primera, 0 = primera fila)
+  const maxRows = Math.max(0, Math.max(apis.length, webs.length) - rowsPerCol);
+  const effectiveOffset = scrollOffset === Number.MAX_SAFE_INTEGER
+    ? maxRows
+    : Math.min(scrollOffset, maxRows);
+  const apiStartIndex = Math.min(effectiveOffset, Math.max(0, apis.length - rowsPerCol));
+  const webStartIndex = Math.min(effectiveOffset, Math.max(0, webs.length - rowsPerCol));
+
+  const visibleApis = apis.slice(apiStartIndex, apiStartIndex + rowsPerCol);
+  const visibleWebs = webs.slice(webStartIndex, webStartIndex + rowsPerCol);
+
+  // Reset scroll cuando cambia el modo de ordenamiento
   useEffect(() => {
     resetScroll();
   }, [sortMode, resetScroll]);
 
-  const totalServices = apis.length + webs.length;
-  const positionInfo = focused ? `(${Math.max(apiStartIndex, webStartIndex) + 1}-${Math.max(apiStartIndex, webStartIndex) + contentHeight - 2}/${totalServices})` : '';
+  const totalRowsLong = Math.max(apis.length, webs.length);
+  const positionInfo = focused && totalRowsLong > 0
+    ? `(${effectiveOffset + 1}-${Math.min(effectiveOffset + rowsPerCol, totalRowsLong)}/${totalRowsLong})`
+    : '';
+  const scrolled = effectiveOffset > 0;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'green' : 'gray'} height={height}>
       <Box>
         <Text bold color="green"> Stats {positionInfo}</Text>
-        <Text dimColor>System: {cpus}c Load {load} RAM {usedGB}/{totalGB}GB</Text>
+        {scrolled && <Text color="yellow"> [SCROLL]</Text>}
+        <Text dimColor> System: {cpus}c Load {load} RAM {usedGB}/{totalGB}GB</Text>
         <Text dimColor> │ </Text>
         <Text dimColor>Stack: CPU {totalCpu.toFixed(1)}% RAM {stackMem} Err {totalErrors} Rst {totalRestarts} Svcs {names.length}</Text>
         {sortMode !== 'name' && <Text dimColor> │ Sort: {sortMode}</Text>}

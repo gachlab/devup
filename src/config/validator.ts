@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DevStackConfig } from './types.js';
+import { LAZY_PORT_OFFSET } from '../lazy/classifier.js';
 
 export interface ValidationError {
   field: string;
@@ -57,6 +58,17 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     if (svc.cwd && !existsSync(resolve(cwd, svc.cwd))) {
       errors.push({ field: `services[${svc.name}].cwd`, message: `Directory not found: ${svc.cwd}` });
     }
+
+    // healthCheck
+    if (svc.healthCheck) {
+      const hc = svc.healthCheck;
+      if (hc.type !== 'tcp' && hc.type !== 'http') {
+        errors.push({ field: `services[${svc.name}].healthCheck.type`, message: `Invalid healthCheck.type: ${hc.type} (must be "tcp" or "http")` });
+      }
+      if (hc.type === 'http' && hc.path && !hc.path.startsWith('/')) {
+        errors.push({ field: `services[${svc.name}].healthCheck.path`, message: `healthCheck.path must start with "/": got "${hc.path}"` });
+      }
+    }
   }
 
   // Lazy refs
@@ -64,6 +76,24 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     for (const ref of config.lazy.alwaysOn) {
       if (!names.has(ref)) {
         errors.push({ field: `lazy.alwaysOn`, message: `Unknown service: ${ref}` });
+      }
+    }
+  }
+
+  // Lazy port collisions: in lazy mode each non-always-on service also listens on port + LAZY_PORT_OFFSET
+  if (config.lazy) {
+    const alwaysOn = new Set(config.lazy.alwaysOn ?? []);
+    const portToSvc = new Map<number, string>();
+    for (const svc of config.services) portToSvc.set(svc.port, svc.name);
+    for (const svc of config.services) {
+      if (alwaysOn.has(svc.name)) continue;
+      const realPort = svc.port + LAZY_PORT_OFFSET;
+      const conflict = portToSvc.get(realPort);
+      if (conflict && conflict !== svc.name) {
+        errors.push({
+          field: `services[${svc.name}].port`,
+          message: `Lazy real port ${realPort} (= ${svc.port}+${LAZY_PORT_OFFSET}) collides with service ${conflict}`,
+        });
       }
     }
   }

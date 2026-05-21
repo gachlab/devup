@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseEnvFile, fmtUptime, highlightSearch, findSearchMatch,
-  shouldLogLine, buildLogsLabel, calcCpuPercent, sortServiceNames,
+  parseEnvFile, fmtUptime, calcCpuPercent, sortServiceNames,
   groupByPhase, buildProcessArgs, buildProcessEnv,
 } from '../../src/utils.js';
 
@@ -11,35 +10,7 @@ describe('fmtUptime', () => {
   it('formats seconds', () => assert.equal(fmtUptime(45000), '45s'));
   it('formats minutes', () => assert.equal(fmtUptime(125000), '2m5s'));
   it('formats hours', () => assert.equal(fmtUptime(3725000), '1h2m'));
-});
-
-describe('highlightSearch', () => {
-  it('returns text when no term', () => assert.equal(highlightSearch('hello', null), 'hello'));
-  it('highlights match', () => assert.ok(highlightSearch('hello world', 'world').includes('{yellow-bg}')));
-  it('case insensitive', () => assert.ok(highlightSearch('Hello', 'hello').includes('{yellow-bg}')));
-  it('no match returns text', () => assert.equal(highlightSearch('hello', 'xyz'), 'hello'));
-});
-
-describe('findSearchMatch', () => {
-  const lines = ['foo', 'bar', 'baz foo', 'qux'];
-  it('finds next', () => assert.equal(findSearchMatch(lines, 'foo', 0, 'next'), 2));
-  it('finds prev', () => assert.equal(findSearchMatch(lines, 'foo', 3, 'prev'), 2));
-  it('wraps around', () => assert.equal(findSearchMatch(lines, 'foo', 2, 'next'), 0));
-  it('returns -1 when not found', () => assert.equal(findSearchMatch(lines, 'xyz', 0, 'next'), -1));
-  it('returns -1 for empty', () => assert.equal(findSearchMatch([], 'foo', 0, 'next'), -1));
-});
-
-describe('shouldLogLine', () => {
-  it('passes all when no filter', () => assert.equal(shouldLogLine('any', null), true));
-  it('passes matching filter', () => assert.equal(shouldLogLine('app-api', 'app-api'), true));
-  it('blocks non-matching', () => assert.equal(shouldLogLine('app-api', 'app-web'), false));
-});
-
-describe('buildLogsLabel', () => {
-  it('basic', () => assert.ok(buildLogsLabel(null, null, false).includes('Logs')));
-  it('with filter', () => assert.ok(buildLogsLabel('app-api', null, false).includes('app-api')));
-  it('with search', () => assert.ok(buildLogsLabel(null, 'error', false).includes('/error')));
-  it('paused', () => assert.ok(buildLogsLabel(null, null, true).includes('PAUSED')));
+  it('formats days', () => assert.equal(fmtUptime(2 * 24 * 3600_000 + 3 * 3600_000), '2d3h'));
 });
 
 describe('calcCpuPercent', () => {
