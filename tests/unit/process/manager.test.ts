@@ -139,7 +139,12 @@ describe('ProcessManager', () => {
     await new Promise(r => setTimeout(r, 100));
   });
 
-  describe('preBuild', () => {
+  // Shell-dependent tests skipped on Windows: cmd.exe handles quoting differently
+  // than sh, and there's no portable `sleep` equivalent without per-platform tricks.
+  // The non-test code path uses sh -c / cmd /c so the feature itself works on both.
+  const skipOnWindows = process.platform === 'win32';
+
+  describe('preBuild', { skip: skipOnWindows }, () => {
     it('runs preBuild successfully then starts the service', { timeout: 5000 }, async () => {
       const { mgr, logs } = makeManager();
       const svc = makeSvc({
@@ -172,7 +177,7 @@ describe('ProcessManager', () => {
     });
   });
 
-  describe('watchBuild', () => {
+  describe('watchBuild', { skip: skipOnWindows }, () => {
     it('spawns a side-car alongside the service and kills it on stop', { timeout: 5000 }, async () => {
       const { mgr, logs } = makeManager();
       const svc = makeSvc({
