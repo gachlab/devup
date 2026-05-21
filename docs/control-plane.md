@@ -1,0 +1,183 @@
+# Control plane
+
+devup exposes a local JSON-RPC server over a Unix-domain socket. It's the foundation for IDE plugins, custom shells, and anything that wants to programmatically poke at a running devup instance.
+
+> **Scope**: strictly local. The socket is bound to the user's home directory with `chmod 0600`. There is no TCP exposure, no remote auth, no remote management. By design.
+
+## Socket location
+
+```
+~/.devup/sock-<project-name>.sock
+```
+
+The project name is sanitised (`/`, spaces, etc. replaced with `_`). The socket is created when devup boots and deleted when devup exits cleanly. A stale socket left by a crashed previous run is removed before the new server binds.
+
+If `listen()` fails (perms, missing parent directory, port-already-in-use on the inode), devup logs a single warning and keeps running without the control plane.
+
+## Protocol
+
+Newline-delimited JSON. One JSON object per line, both for requests and responses.
+
+**Request:**
+```json
+{ "id": <anything>, "method": "<name>", "params": <object> }
+```
+
+`id` is optional but echoed in the response — use it to correlate concurrent requests.
+
+**Response:**
+```json
+{ "id": <same as request>, "result": <object> }
+```
+
+or
+
+```json
+{ "id": <same>, "error": { "code": <number>, "message": "<string>" } }
+```
+
+Error codes follow JSON-RPC conventions:
+
+- `-32700` — parse error (malformed JSON)
+- `-32600` — invalid request (missing `method`)
+- `-32603` — internal error (method threw)
+
+## Methods
+
+### `ping`
+
+Liveness check. Returns the server's local timestamp.
+
+```json
+{ "id": 1, "method": "ping" }
+→ { "id": 1, "result": { "ok": true, "ts": 1716279183421 } }
+```
+
+### `status`
+
+Snapshot of every service.
+
+```json
+{ "method": "status" }
+→ {
+    "result": {
+      "services": [
+        {
+          "name": "app-api",
+          "status": "running",
+          "health": "up",
+          "port": 3000,
+          "type": "api",
+          "errors": 0,
+          "restarts": 0,
+          "pid": 12345,
+          "startedAt": 1716279183421
+        },
+        ...
+      ]
+    }
+  }
+```
+
+Fields per service mirror `ProcessState`:
+
+- `name`: from config
+- `status`: `starting` | `running` | `stopped` | `crashed` | `idle` | `timeout`
+- `health`: `up` | `down` | `wait` | `idle`
+- `port`: from config
+- `type`: `api` | `web`
+- `errors`: cumulative since spawn
+- `restarts`: cumulative since spawn
+- `pid`: OS pid, `null` if not currently running
+- `startedAt`: epoch ms of the current spawn, `null` if not running
+
+### `restart`
+
+```json
+{ "method": "restart", "params": { "svc": "app-api" } }
+→ { "result": { "ok": true } }
+```
+
+Calls `ProcessManager.restart(name)` — stops the current process (kill-tree), resets the auto-restart counter to 0, and spawns it again. The respawn is async; query `status` afterwards to confirm.
+
+Errors:
+
+- Missing `svc` param → `{ error: { code: -32603, message: "param \"svc\" must be a non-empty string" } }`
+- Unknown service → silently no-op (devup ignores restarts of unknown services); the `result: { ok: true }` does NOT prove the service exists. Best practice: call `status` first to verify.
+
+### `stop`
+
+```json
+{ "method": "stop", "params": { "svc": "app-api" } }
+→ { "result": { "ok": true } }
+```
+
+Calls `ProcessManager.stop(name)`. Sends SIGTERM to the process tree. The service's intentionalStop flag is set so the auto-restart logic doesn't kick in.
+
+### `logs.tail`
+
+Read the last N lines of a service's persistent log file:
+
+```json
+{ "method": "logs.tail", "params": { "svc": "app-api", "lines": 50 } }
+→ { "result": { "lines": [
+    "2026-05-21T22:14:32.123Z [api] Listening on port 3000",
+    "2026-05-21T22:14:33.041Z [api] Connected to mongo",
+    ...
+  ] } }
+```
+
+- `lines` defaults to 100, capped at 10 000.
+- Returns `[]` when the LogSink is disabled (`--no-log-file`) or the file doesn't exist yet.
+- Reads from disk — works the same as `devup logs <svc>` would, just over the socket.
+
+## Auth model
+
+The socket file is bound with `chmod 0600`. That means:
+
+- Only the same uid can read/write it.
+- No tokens, no signatures, no rate-limiting are needed inside the protocol because filesystem perms already enforce the policy.
+
+Don't loosen those perms unless you have a very specific reason.
+
+For multi-user setups (rare in dev) you'd need a different model entirely; that's deliberately out of scope.
+
+## Talking to it from the shell
+
+```bash
+# Quick status check (requires socat or nc with -U)
+echo '{"method":"status"}' | socat - UNIX-CONNECT:$HOME/.devup/sock-MyProject.sock
+```
+
+Or netcat with Unix-domain support:
+
+```bash
+echo '{"method":"ping"}' | nc -U $HOME/.devup/sock-MyProject.sock
+```
+
+## From Node
+
+```javascript
+import { createConnection } from 'node:net';
+import { createInterface } from 'node:readline';
+
+const socket = createConnection('/home/me/.devup/sock-MyProject.sock');
+const rl = createInterface({ input: socket });
+rl.on('line', l => console.log(JSON.parse(l)));
+socket.write(JSON.stringify({ method: 'status' }) + '\n');
+```
+
+## What's NOT there
+
+By design:
+
+- **No remote / TCP** exposure.
+- **No notifications** (server-pushed events). One request → one response. If you want `logs.follow` style streaming, use `tail -f ~/.devup/logs/<proj>/<svc>.log` or call `devup logs <svc> --follow` instead.
+- **No long-poll**. Each call returns a fresh snapshot.
+- **No transaction support** (multi-method atomic ops).
+
+Some of these may be added later if there's clear demand. Open an issue.
+
+## Compatibility
+
+The protocol is plain text JSON over a Unix socket — any language with a JSON library and a Unix socket client can talk to it. There's no client SDK in devup itself; the protocol is small enough that you don't need one.
