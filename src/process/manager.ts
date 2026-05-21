@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Platform } from '../platform/types.js';
 import type { ServiceConfig } from '../config/types.js';
@@ -21,6 +22,26 @@ export function compileReadyPattern(pattern: string | undefined): RegExp | null 
   } catch {
     return null;
   }
+}
+
+/** Extracts the value tokens of `--watch` / `--watch-path` / `--watch=X` / `--watch-path=X`
+ *  from a command's args list. Accepts both `--flag value` and `--flag=value` forms. */
+export function extractWatchPaths(args: string[]): string[] {
+  const watchFlags = new Set(['--watch', '--watch-path']);
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (watchFlags.has(a)) {
+      const v = args[i + 1];
+      if (v && !v.startsWith('-')) { out.push(v); i++; }
+      continue;
+    }
+    const eq = a.indexOf('=');
+    if (eq > 0 && watchFlags.has(a.slice(0, eq))) {
+      out.push(a.slice(eq + 1));
+    }
+  }
+  return out;
 }
 
 function lineBuffer(onLine: (line: string) => void) {
@@ -90,6 +111,18 @@ export class ProcessManager {
     }
 
     const args = buildProcessArgs(svc);
+
+    // Pre-flight: every --watch / --watch-path must resolve to an existing path.
+    // Catches stale config after a rebase that renamed directories — Node 22 watch
+    // would die with a cryptic message buried in stderr.
+    const missingWatchPaths = extractWatchPaths(args)
+      .filter(p => !existsSync(resolve(cwd, p)));
+    if (missingWatchPaths.length) {
+      this.log(svc.name, `⚠ missing watch paths: ${missingWatchPaths.join(', ')}`, colorIdx);
+      this.recordCrashedState(svc, colorIdx);
+      return;
+    }
+
     const env = buildProcessEnv(svc, this.env);
     const proc = spawn(svc.cmd, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 

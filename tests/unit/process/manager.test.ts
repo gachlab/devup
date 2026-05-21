@@ -203,4 +203,17 @@ describe('ProcessManager', () => {
       }
     });
   });
+
+  it('refuses to start a service whose --watch-path does not exist', { timeout: 3000 }, async () => {
+    const { mgr, logs } = makeManager();
+    const svc = makeSvc({
+      name: 'broken-watch', port: 19884,
+      args: ['--watch-path', 'this/does/not/exist', '-e', 'setTimeout(()=>{}, 30000)'],
+    });
+    await mgr.start(svc, 0);
+    const st = mgr.state.get('broken-watch')!;
+    assert.equal(st.status, 'crashed', 'service should be marked crashed before spawn');
+    assert.equal(st.pid, null);
+    assert.ok(logs.some(l => l.includes('missing watch paths') && l.includes('this/does/not/exist')));
+  });
 });

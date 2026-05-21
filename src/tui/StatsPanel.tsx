@@ -21,14 +21,25 @@ const H: Record<string, { c: string; color: string }> = {
   down: { c: '●', color: 'red' }, idle: { c: '○', color: 'blue' },
 };
 
+/** Matches the constant in ProcessManager — kept in sync manually. */
+export const MAX_RESTARTS = 3;
+
+export function isCrashLooped(st: ProcessState): boolean {
+  return st.status === 'crashed' && st.restarts >= MAX_RESTARTS;
+}
+
 function Row({ name, st, stat, ml }: { name: string; st: ProcessState; stat?: ServiceStats; ml: number }) {
-  const h = H[st.health] ?? H['down']!;
+  const looped = isCrashLooped(st);
+  const indicator = looped
+    ? <Text color="red" bold>✖</Text>
+    : <Text color={(H[st.health] ?? H['down']!).color}>{(H[st.health] ?? H['down']!).c}</Text>;
   const color = tagColors[st.colorIdx % tagColors.length]!;
-  const sc = st.status === 'running' ? 'green' : st.status === 'starting' ? 'yellow' : st.status === 'idle' ? 'blue' : 'red';
+  const sc = looped ? 'red' : st.status === 'running' ? 'green' : st.status === 'starting' ? 'yellow' : st.status === 'idle' ? 'blue' : 'red';
+  const statusLabel = looped ? 'looping' : st.status;
   const up = st.startedAt ? fmtUptime(Date.now() - st.startedAt) : '-';
   return (
     <Text>
-      <Text color={h.color}>{h.c}</Text> <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc}>{st.status.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+      {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
     </Text>
   );
 }
@@ -89,12 +100,14 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
     ? `(${effectiveOffset + 1}-${Math.min(effectiveOffset + rowsPerCol, totalRowsLong)}/${totalRowsLong})`
     : '';
   const scrolled = effectiveOffset > 0;
+  const loopedCount = [...states.values()].filter(isCrashLooped).length;
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'green' : 'gray'} height={height}>
       <Box>
         <Text bold color="green"> Stats {positionInfo}</Text>
         {scrolled && <Text color="yellow"> [SCROLL]</Text>}
+        {loopedCount > 0 && <Text color="red" bold> ⚠ {loopedCount} need attention</Text>}
         <Text dimColor> System: {cpus}c Load {load} RAM {usedGB}/{totalGB}GB</Text>
         <Text dimColor> │ </Text>
         <Text dimColor>Stack: CPU {totalCpu.toFixed(1)}% RAM {stackMem} Err {totalErrors} Rst {totalRestarts} Svcs {names.length}</Text>
