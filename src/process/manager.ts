@@ -292,6 +292,12 @@ export class ProcessManager {
         st.health = st.status === 'idle' ? 'idle' : 'down';
         continue;
       }
+      // Grace period: suppress probes during the first N seconds after startedAt.
+      // Keeps state.errors clean during slow boots (Angular cold-start, etc.).
+      const startPeriodMs = (st.svc.healthCheck?.startPeriod ?? 0) * 1000;
+      if (startPeriodMs > 0 && st.startedAt && Date.now() - st.startedAt < startPeriodMs) {
+        continue; // status stays 'starting', health stays 'wait'
+      }
       const isUp = await checkHealth(st.svc.port, st.svc.healthCheck);
       const prev = st.health;
       st.health = deriveHealth(isUp, st.status);

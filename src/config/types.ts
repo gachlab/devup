@@ -30,6 +30,10 @@ export interface HealthCheckConfig {
   host?: string;
   /** Per-check socket timeout in ms. Default: 2000 */
   timeoutMs?: number;
+  /** Grace period (seconds) before the first probe runs. Useful for slow boots
+   *  (Angular cold-start, big webpack builds) so failed probes during boot don't
+   *  pollute state.errors. Default: 0 (no grace). */
+  startPeriod?: number;
 }
 
 export interface LazyConfig {

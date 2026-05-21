@@ -204,6 +204,23 @@ describe('ProcessManager', () => {
     });
   });
 
+  it('healthCheck.startPeriod suppresses probes during the grace window', { timeout: 4000 }, async () => {
+    const { mgr } = makeManager();
+    const svc = makeSvc({
+      name: 'graceful', port: 19885,
+      args: ['-e', 'setTimeout(()=>{}, 30000)'],
+      healthCheck: { type: 'tcp', startPeriod: 3 }, // 3 s grace
+    });
+    await mgr.start(svc, 0);
+    // First probe immediately — should be suppressed (status stays 'starting').
+    await mgr.checkAllHealth();
+    const st = mgr.state.get('graceful')!;
+    assert.equal(st.status, 'starting');
+    assert.equal(st.health, 'wait');
+    mgr.stop('graceful');
+    await new Promise(r => setTimeout(r, 100));
+  });
+
   it('refuses to start a service whose --watch-path does not exist', { timeout: 3000 }, async () => {
     const { mgr, logs } = makeManager();
     const svc = makeSvc({

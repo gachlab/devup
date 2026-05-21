@@ -88,6 +88,9 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
       if (hc.type !== 'tcp' && hc.type !== 'http') {
         errors.push({ field: `services[${svc.name}].healthCheck.type`, message: `Invalid healthCheck.type: ${hc.type} (must be "tcp" or "http")` });
       }
+      if (hc.startPeriod !== undefined && (typeof hc.startPeriod !== 'number' || hc.startPeriod < 0)) {
+        errors.push({ field: `services[${svc.name}].healthCheck.startPeriod`, message: `startPeriod must be a non-negative number (seconds), got ${hc.startPeriod}` });
+      }
       if (hc.type === 'http' && hc.path && !hc.path.startsWith('/')) {
         errors.push({ field: `services[${svc.name}].healthCheck.path`, message: `healthCheck.path must start with "/": got "${hc.path}"` });
       }
