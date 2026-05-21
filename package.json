@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "devup": "./dist/index.js"
+    "devup": "dist/index.js"
   },
   "exports": {
     ".": {
@@ -36,7 +36,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gachlab/devup.git"
+    "url": "git+https://github.com/gachlab/devup.git"
   },
   "homepage": "https://github.com/gachlab/devup#readme",
   "bugs": {
@@ -45,6 +45,7 @@
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly",
     "dev": "tsup --watch",
+    "prepack": "npm pkg fix",
     "prepublishOnly": "npm run build",
     "test": "node --import tsx --test \"tests/**/*.test.ts\" \"tests/**/*.test.tsx\"",
     "test:unit": "node --import tsx --test --experimental-test-coverage \"tests/unit/**/*.test.ts\" \"tests/unit/**/*.test.tsx\"",
