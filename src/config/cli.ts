@@ -23,6 +23,45 @@ export interface CliArgs {
 const DEFAULT_LAZY_TIMEOUT = 10;
 const DEFAULT_ONCE_TIMEOUT = 90;
 
+export const USAGE = `devup — terminal UI dev stack runner
+
+Usage: devup [options]
+
+Service selection:
+  --only apis | webs       Start only APIs or only webs
+  --services a,b,c         Start only the named services
+  --profile <name>         Start the services in a named profile (see ROADMAP)
+  --skip a,b,c             Start everything except these
+  --config <path>          Use a custom config file
+
+Lazy mode:
+  --lazy                   Enable lazy mode (default)
+  --no-lazy                Start every service immediately
+  --timeout <minutes>      Idle timeout for lazy services. Default: 10
+
+Reverse proxy:
+  --proxy                  Enable proxy config generation
+  --proxy-host <host>      Override the target host (Docker/local)
+  --proxy-conf <path>      Override the generated config file path
+  --proxy-tls              Enable TLS in the generated config (default)
+  --no-proxy-tls           Disable TLS
+  --proxy-entrypoint <n>   Override entrypoint name (Traefik only)
+
+CI / scripting:
+  --dry-run                Print the resolved boot plan and exit
+  --once                   Boot, wait for readiness, exit 0/1 (no TUI)
+  --once-timeout <s>       Max seconds to wait in --once mode. Default: 90
+
+Log files:
+  --no-log-file            Disable persistent log files
+  --log-dir <path>         Override log root (default: ~/.devup/logs)
+
+Other:
+  -h, --help               Show this help and exit
+  -v, --version            Show version and exit
+
+See https://github.com/gachlab/devup for the full documentation.`;
+
 export function parseCliArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     skip: [],

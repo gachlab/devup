@@ -1,11 +1,13 @@
 import React from 'react';
 import { render } from 'ink';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors } from './config/validator.js';
-import { parseCliArgs, filterServices } from './config/cli.js';
+import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -21,9 +23,30 @@ export type { DevStackConfig, ServiceConfig, LazyConfig, ProxyConfig } from './c
 export type { Platform, ProcessStats } from './platform/types.js';
 export type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
 
+function readVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkgPath = join(here, '..', 'package.json');
+    return JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function main() {
+  const raw = process.argv.slice(2);
+  // --version / --help short-circuit before any config loading
+  if (raw.includes('-v') || raw.includes('--version')) {
+    console.log(readVersion());
+    return;
+  }
+  if (raw.includes('-h') || raw.includes('--help')) {
+    console.log(USAGE);
+    return;
+  }
+
   const cwd = process.cwd();
-  const cliArgs = parseCliArgs(process.argv.slice(2));
+  const cliArgs = parseCliArgs(raw);
 
   // Load config
   let configPath: string;

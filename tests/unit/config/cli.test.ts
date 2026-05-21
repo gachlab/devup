@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCliArgs, filterServices } from '../../../src/config/cli.js';
+import { parseCliArgs, filterServices, USAGE } from '../../../src/config/cli.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 
 const svc = (name: string, type: 'api' | 'web' = 'api'): ServiceConfig => ({
@@ -29,6 +29,16 @@ describe('parseCliArgs', () => {
     assert.equal(args.proxyHost, '127.0.0.1');
     assert.equal(args.proxyTls, false);
     assert.equal(args.proxyEntrypoint, 'web');
+  });
+
+  it('USAGE includes service-selection, lazy, proxy, CI, and log-file sections', () => {
+    assert.ok(USAGE.includes('Service selection'));
+    assert.ok(USAGE.includes('Lazy mode'));
+    assert.ok(USAGE.includes('Reverse proxy'));
+    assert.ok(USAGE.includes('CI / scripting'));
+    assert.ok(USAGE.includes('Log files'));
+    assert.ok(USAGE.includes('--version'));
+    assert.ok(USAGE.includes('--help'));
   });
 
   it('--dry-run', () => assert.equal(parseCliArgs(['--dry-run']).dryRun, true));
