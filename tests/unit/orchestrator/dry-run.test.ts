@@ -74,4 +74,19 @@ describe('renderDryRun', () => {
     const out = renderDryRun({ config, services: config.services, cliArgs: { ...baseCli, lazy: false }, env: {}, baseCwd: '.', proxyProvider: null, proxyOpts: null });
     assert.match(out, /health=http \/healthz/);
   });
+
+  it('renders externals section when configured', () => {
+    const config: DevStackConfig = {
+      name: 'D',
+      services: [svc({ name: 'api', port: 3000, phase: 0 })],
+      external: [
+        { name: 'mongo', cmd: 'docker compose up -d mongo', port: 27017, healthCheck: { type: 'tcp' } },
+        { name: 'redis', cmd: 'docker compose up -d redis' },
+      ],
+    };
+    const out = renderDryRun({ config, services: config.services, cliArgs: { ...baseCli, lazy: false }, env: {}, baseCwd: '.', proxyProvider: null, proxyOpts: null });
+    assert.match(out, /Externals \(2\):/);
+    assert.match(out, /mongo.*docker compose.*health=tcp :27017/);
+    assert.match(out, /redis.*docker compose/);
+  });
 });
