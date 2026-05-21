@@ -1,69 +1,63 @@
 # devup
 
 [![CI](https://github.com/gachlab/devup/actions/workflows/ci.yml/badge.svg)](https://github.com/gachlab/devup/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@gachlab/devup.svg)](https://www.npmjs.com/package/@gachlab/devup)
 
-A terminal UI dev stack runner for Node.js monorepos. Define your services in a config file, and devup handles the rest: phased startup, health checks, lazy on-demand proxies, process stats, and reverse proxy config generation — all in a single TUI dashboard.
+A terminal UI dev-stack runner for Node.js monorepos. Define your services in a config file; devup handles **phased startup, health checks, lazy on-demand proxies, build hooks, persistent logs, reverse-proxy config generation, and a JSON-RPC control plane** — all from a single TUI dashboard.
 
 Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (uses `node:test` natively).
 
 ## Features
 
 ### Orchestration
-- **Phased startup** — boot services in dependency order with automatic port readiness detection
-- **Lazy mode** — only start services when they receive traffic; idle services shut down after a configurable timeout (respects active connections, no killing mid-WebSocket)
-- **Profiles** — name common service subsets in config; boot with `devup --profile check-in`
-- **External hooks** — start `docker compose` (DBs, queues) before phase 0, with health gating + `stopCmd` on shutdown
-- **Build hooks** — `preBuild` runs before spawn (output `[build]`); `watchBuild` runs as a side-car (output `[watch]`); both managed by devup
-- **Hot reload** — `--watch-config` diffs `devup.config.*` on save and applies add/remove/restart without killing the TUI
-- **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter; crash-loop badge surfaces services that need attention
-- **Pre-flight validation** — `--watch-path` arguments are checked against disk before spawn so a stale config after a rebase fails loudly instead of silently
-- **Port conflict detection** — checks if a port is already in use before starting a service; also validates lazy `port + 10000` collisions at config-load time
-- **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs
+- **Phased startup** — boot services in dependency order with automatic port readiness detection.
+- **Lazy mode** — only start services when they receive traffic; idle services shut down after a configurable timeout (respects active connections, no killing mid-WebSocket).
+- **Profiles** — name common service subsets in config; boot with `devup --profile check-in`.
+- **External hooks** — start `docker compose` (DBs, queues) before phase 0, with health gating and `stopCmd` on shutdown.
+- **Build hooks** — `preBuild` (must succeed before spawn) and `watchBuild` (runs alongside the service), both managed by devup with kill-tree cleanup.
+- **Hot reload** — `--watch-config` diffs `devup.config.*` on save and applies add/remove/restart without killing the TUI.
+- **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter; crash-loop badge surfaces services that need attention.
+- **Pre-flight validation** — `--watch-path` arguments are checked against disk before spawn so a stale config after a rebase fails loudly instead of silently.
+- **Port-conflict detection** — refuses to boot when ports collide, including lazy-mode `port + 10000` clashes.
+- **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs.
 
 ### Readiness
-- **HTTP or TCP health checks** — per-service `healthCheck` config: TCP probe (default) or HTTP GET with configurable path, status codes, timeout, and `startPeriod` grace window
-- **`readyPattern`** — regex matched against stdout/stderr; the first match flips the service to `up`, short-circuiting the next health poll (Vite's `ready in 423 ms`, Angular's `Compiled successfully`)
-- **`errorPattern`** — only matching stderr lines bump the error counter (filters out info-on-stderr noise from Angular CLI etc.)
+- **TCP or HTTP health checks** — per-service `healthCheck` with configurable path, status codes, timeout, and `startPeriod` grace window.
+- **`readyPattern`** — regex matched against stdout/stderr; the first match flips the service to `up`, short-circuiting the next health poll.
+- **`errorPattern`** — only matching stderr lines bump the error counter (filters info-on-stderr noise).
 
 ### TUI
-- **Live logs and process stats** — CPU, memory, health, errors, restarts in a split-panel terminal UI
-- **Scrolling, search, filter** — ↑/↓/PgUp/PgDn/Home/End; auto-pause when you scroll up
-- **Regex search** — `/pattern/flags` accepted by the search input (case-insensitive by default; invalid regex surfaced in the header)
-- **Level filter** — `L` cycles all → error → warn+error
-- **Verbose stats** — `v` expands rows to show resolved `cmd`/args/env (secrets redacted)
-- **Fuzzy filter** — service-picker modals (`f`/`r`/`o`) filter as you type
-- **Contextual tips** — one-liner nudges at teachable moments (high log volume, crash loop, etc.), once per session
-- **RAM watchdog** — banner surfaces when system RAM crosses 80 % with top consumers (hysteresis: clears below 75 %)
-- **TLS-aware open** — `o` opens `https://<sub>.<domain>` when `--proxy` is active and TLS is on
+- **Live logs and process stats** — CPU, memory, health, errors, restarts in a split-panel terminal UI.
+- **Scrolling, search, filter** — ↑/↓/PgUp/PgDn/Home/End; auto-pause when you scroll up; regex search with `/pattern/flags`.
+- **Level filter** — `L` cycles `all → error → warn+error`.
+- **Verbose stats** — `v` expands rows to show resolved `cmd`/args/env (secrets redacted).
+- **Fuzzy filter** — service-picker modals (`f`/`r`/`o`) filter as you type.
+- **Contextual tips** — one-liner nudges at teachable moments (high log volume, crash loop), once per session.
+- **RAM watchdog** — banner surfaces when system RAM crosses 80% with top consumers (hysteresis: clears below 75%).
+- **TLS-aware open** — `o` opens `https://<sub>.<domain>` when `--proxy` is active and TLS is on.
 
 ### Operations
-- **Persistent logs** — every line streamed to `~/.devup/logs/<project>/<svc>.log` with rotation on each launch
-- **Subcommands** — `devup logs <svc> [--follow]`, `devup install`, `devup status`, `devup help` work without launching the TUI
-- **CI-ready** — `--dry-run` prints the resolved boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI
-- **Reverse proxy config** — generate Traefik, Nginx, or Caddy config from running services; health-aware (only `health === 'up'` routed)
-- **Unix-socket control plane** — local JSON-RPC at `~/.devup/sock-<project>.sock` (chmod 0600); `status`, `restart`, `stop`, `logs.tail`, `ping`
-- **Cross-platform** — Linux, macOS, and Windows. Platform-specific process management, stats collection, and browser opening
-- **Project-agnostic** — works with any Node.js monorepo. Your project defines a `devup.config.ts`, devup does the rest
+- **Persistent logs** — every line streamed to `~/.devup/logs/<project>/<svc>.log` with rotation on each launch.
+- **Subcommands** — `devup logs <svc> [--follow]`, `devup install`, `devup status`, `devup help` work without launching the TUI.
+- **CI-ready** — `--dry-run` prints the resolved boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI.
+- **Reverse-proxy config** — generate Traefik, Nginx, or Caddy config from running services; health-aware.
+- **Unix-socket control plane** — local JSON-RPC at `~/.devup/sock-<project>.sock` (chmod 0600); `status`, `restart`, `stop`, `logs.tail`, `ping`.
+- **Cross-platform** — Linux, macOS, and Windows. Platform-specific process management, stats collection, and browser opening.
 
 ## Quick start
-
-### 1. Install
 
 ```bash
 npm install -D @gachlab/devup
 ```
 
-### 2. Create config
-
-Create `devup.config.ts` in your project root:
+Create `devup.config.ts`:
 
 ```typescript
 import { defineConfig } from '@gachlab/devup';
 
 export default defineConfig({
-  name: 'MyProject',
+  name: 'MyApp',
   icon: '🚀',
-  envFile: '.env',
 
   services: [
     {
@@ -74,7 +68,7 @@ export default defineConfig({
       type: 'api',
       port: 3000,
       phase: 0,
-      maxMem: 256,
+      readyPattern: 'listening on',
     },
     {
       name: 'web',
@@ -84,457 +78,45 @@ export default defineConfig({
       type: 'web',
       port: 4200,
       phase: 1,
-      maxMem: 512,
+      readyPattern: 'ready in',
     },
   ],
 });
 ```
 
-### 3. Run
+Run:
 
 ```bash
 npx devup
 ```
 
-## Config reference
-
-### `DevStackConfig`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | `string` | ✅ | Project name shown in the TUI header |
-| `icon` | `string` | | Emoji shown before the project name. Default: `📦` |
-| `envFile` | `string` | | Path to `.env` file relative to project root. Default: `.env` |
-| `env` | `Record<string, string>` | | Extra environment variables. Won't overwrite existing ones |
-| `services` | `ServiceConfig[]` | ✅ | List of services to manage |
-| `lazy` | `LazyConfig` | | Lazy mode configuration |
-| `proxy` | `ProxyConfig` | | Reverse proxy config generation |
-| `profiles` | `Record<string, string[]>` | | Named lists of services to boot. Select with `--profile <name>` |
-| `external` | `ExternalService[]` | | Dependencies started **before** phase 0 (databases, queues, etc.) |
-
-#### Profiles
-
-A profile is a named subset of `services`. Instead of memorising service names for `--services`, you give your common workflows a name:
-
-```typescript
-export default defineConfig({
-  // ...
-  profiles: {
-    'check-in':  ['configurations-api', 'authorization-api', 'app-api', 'check-in-api', 'app-web'],
-    'pickup':    ['configurations-api', 'pickup-api', 'pickup-drivers-web'],
-    'frontends': ['app-web', 'admin-web', 'staff-web'],
-  },
-});
-```
-
-Then `devup --profile check-in` boots that subset. Composable with `--skip`. The validator catches typos at config-load time. Unknown profile names produce a friendly error listing what's available.
-
-### `ServiceConfig`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | `string` | ✅ | Unique service name |
-| `cwd` | `string` | ✅ | Working directory relative to project root |
-| `cmd` | `string` | ✅ | Command to run (`node`, `npx`, etc.) |
-| `args` | `string[]` | ✅ | Command arguments |
-| `type` | `'api' \| 'web'` | ✅ | Service type. APIs get health-checked; webs are assumed ready after start |
-| `port` | `number` | ✅ | Port the service listens on. Must be unique |
-| `phase` | `number` | ✅ | Startup phase (0 = first). Services in the same phase start together; devup waits for all APIs in a phase to be ready before starting the next phase |
-| `maxMem` | `number` | | Max memory in MB. Injects `--max-old-space-size` for `node` commands, or `NODE_OPTIONS` for `npx` |
-| `preBuild` | `string` | | Shell command run **before** the service starts. If it exits non-zero the service is marked `crashed` and skipped. Output is tagged `[build]` in the logs panel |
-| `watchBuild` | `string` | | Shell command spawned **alongside** the service (e.g. `npx tsup --watch`). Killed automatically when the service stops/restarts. Output is tagged `[watch]` in the logs panel |
-| `nodeArgs` | `string[]` | | Extra Node.js arguments |
-| `extraEnv` | `Record<string, string>` | | Extra environment variables for this service |
-| `healthCheck` | `HealthCheckConfig` | | Override the readiness check for this service. Default: TCP probe on `port` |
-| `readyPattern` | `string` | | Regex matched against stdout/stderr lines. On match, service is marked `up` immediately, short-circuiting the next health-check poll. Plain string or vim-style `/pattern/flags`. Case-insensitive by default |
-| `errorPattern` | `string` | | Only stderr lines matching this regex bump `state.errors`. Without it every non-empty stderr line counts. Same `/pattern/flags` grammar as `readyPattern` |
-
-### `HealthCheckConfig`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `type` | `'tcp' \| 'http'` | ✅ | `tcp` (default) just opens a socket; `http` issues an HTTP GET and inspects the status code |
-| `path` | `string` | | HTTP-only request path. Default: `/`. Must start with `/` |
-| `expect` | `number \| number[]` | | HTTP-only acceptable status code(s). Default: any 2xx (200-299) |
-| `host` | `string` | | Override target host for the HTTP check. Default: `127.0.0.1` |
-| `timeoutMs` | `number` | | Per-check socket/request timeout in ms. Default: `2000` |
-| `startPeriod` | `number` | | Grace period in seconds before the first probe runs. Useful for slow boots (Angular cold-start, etc.) so failed probes during boot don't pollute `state.errors`. Default: `0` |
-
-```typescript
-// Wait for /healthz to return 200 before considering the service up
-{ name: 'api', /* ... */, healthCheck: { type: 'http', path: '/healthz' } }
-
-// Accept 200 or 204
-{ name: 'api', /* ... */, healthCheck: { type: 'http', path: '/health', expect: [200, 204] } }
-```
-
-#### readyPattern
-
-A regex matched against each line of the service's stdout/stderr. The first matching line flips the service to `up` immediately, without waiting for the next 3-second health-check poll. The periodic health-check still runs as a fallback. Useful for tools that print recognisable boot lines:
-
-```typescript
-// Vite: "ready in 423 ms"
-{ name: 'web', cmd: 'npx', args: ['vite'], readyPattern: 'ready in' }
-
-// Angular: "Compiled successfully"
-{ name: 'app', cmd: 'npx', args: ['ng', 'serve'], readyPattern: '/compiled successfully/i' }
-
-// Fastify: "Server listening at"
-{ name: 'api', cmd: 'node', args: ['index.js'], readyPattern: 'server listening' }
-```
-
-Both plain strings and vim-style `/pattern/flags` are accepted. Strings are case-insensitive by default.
-
-#### Build hooks: `preBuild` and `watchBuild`
-
-For TypeScript services or anything that needs a compile step, two hooks remove the usual `sh -c 'npm run build && (npx tsup --watch &) && node ...'` workaround:
-
-```typescript
-{
-  name: 'orders-api',
-  cwd: 'orders/api',
-  cmd: 'node', args: ['dist/index.js'],
-  type: 'api', port: 3031, phase: 1,
-  preBuild: 'npm run build',         // runs once, must succeed before the service starts
-  watchBuild: 'npx tsup --watch',    // runs in parallel; killed when the service stops
-}
-```
-
-- **`preBuild`** runs synchronously before the spawn. Non-zero exit marks the service as `crashed` (the spawn is skipped). Output is tagged `[build]` in the logs panel.
-- **`watchBuild`** runs as a sibling process. devup kills it when the service stops, restarts, or the TUI exits. Output is tagged `[watch]`.
-
-Both are passed through the platform shell (`sh -c` on Unix, `cmd /c` on Windows), so pipes and `&&` work.
-
-### `ExternalService`
-
-External dependencies (databases, message queues, etc.) launched **before** phase 0. devup waits for each `healthCheck` (when set) to pass before starting any service. Typical use: `docker compose up -d`.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | `string` | ✅ | Friendly name shown in logs (logs use the prefix `ext:<name>`) |
-| `cmd` | `string` | ✅ | Shell command (passed through `sh -c` / `cmd /c`). Pipes and `&&` work |
-| `cwd` | `string` | | Working directory relative to the project root |
-| `extraEnv` | `Record<string, string>` | | Extra env vars merged on top of the project env |
-| `healthCheck` | `HealthCheckConfig` | | Readiness probe. devup waits for `up` before starting phase 0 |
-| `port` | `number` | when `healthCheck` is set | Port to probe |
-| `startTimeout` | `number` | | Max seconds to wait for healthCheck. Default: `60` |
-| `stopCmd` | `string` | | Shell command run on shutdown (e.g. `docker compose down`) |
-
-```typescript
-export default defineConfig({
-  // ...
-  external: [
-    {
-      name: 'mongo',
-      cmd: 'docker compose -f docker-compose.dev.yml up -d mongo',
-      port: 27017,
-      healthCheck: { type: 'tcp' },
-      stopCmd: 'docker compose -f docker-compose.dev.yml stop mongo',
-    },
-    {
-      name: 'redis',
-      cmd: 'docker compose -f docker-compose.dev.yml up -d redis',
-      port: 6379,
-      healthCheck: { type: 'tcp' },
-    },
-  ],
-});
-```
-
-If any external fails its healthCheck within `startTimeout` seconds, devup aborts the boot, runs each external's `stopCmd` (best-effort), and exits.
-
-### `LazyConfig`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `alwaysOn` | `string[]` | ✅ | Service names that always start immediately |
-| `timeout` | `number` | | Minutes of inactivity before stopping a lazy service. Default: `10` |
-
-When lazy mode is active (default), services not in `alwaysOn` start a TCP proxy on their port. The real service only boots when something connects to that port. After `timeout` minutes of no connections, the service shuts down and returns to idle.
-
-### `ProxyConfig`
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `provider` | `string` | ✅ | Proxy provider name. One of: `'traefik'`, `'nginx'`, `'caddy'` |
-| `routes` | `Record<string, string>` | ✅ | Map of service name → subdomain. Empty string = root domain |
-| `confPath` | `string` | | Path to write the config file. Default: `~/.traefik/traefik_conf.yaml` |
-| `host` | `string` | | Target host for proxy URLs. Default: auto-detected per platform |
-| `tls` | `boolean` | | Enable TLS config. Default: `true` |
-| `entrypoint` | `string` | | Proxy entrypoint name. Default: `'websecure'` |
-
-The proxy config is only generated when `--proxy` is passed on the CLI. Only services with `health === 'up'` are included in the generated config.
-
-## CLI subcommands
-
-```
-devup                              # launch the interactive TUI (default)
-devup logs <service> [--follow]    # print the persisted log file
-devup install                      # parallel npm install across services
-devup status                       # health-check every service in config
-devup help [<subcommand>]          # show usage
-devup --version                    # print version
-devup --help                       # print flag summary
-```
-
-All subcommands need the project's `devup.config.ts` to be resolvable (use `--config <path>` to override).
-
-## CLI flags
-
-```
-devup [options]
-```
-
-### Service selection
-
-| Flag | Description |
-|---|---|
-| `--only apis` | Only start API services |
-| `--only webs` | Only start web services |
-| `--services api,web,auth` | Start only the named services |
-| `--profile <name>` | Start the services in the named profile (see `profiles` in the config) |
-| `--skip tasks-api,pickup-api` | Start everything except these |
-| `--config path/to/config.ts` | Use a custom config file |
-
-### Lazy mode
-
-| Flag | Description |
-|---|---|
-| `--lazy` | Enable lazy mode (default) |
-| `--no-lazy` | Disable lazy mode — start everything immediately |
-| `--timeout 15` | Idle timeout in minutes (default: 10) |
-
-### Reverse proxy
-
-| Flag | Description |
-|---|---|
-| `--proxy` | Enable proxy config generation |
-| `--proxy-host 127.0.0.1` | Override target host |
-| `--proxy-conf /path/to/file` | Override config file path |
-| `--proxy-tls` | Enable TLS (default) |
-| `--no-proxy-tls` | Disable TLS |
-| `--proxy-entrypoint web` | Override entrypoint name (Traefik-only) |
-
-### CI / scripting
-
-| Flag | Description |
-|---|---|
-| `--dry-run` | Print the resolved boot plan (phases, commands, proxy YAML) and exit. Doesn't start any process |
-| `--once` | Boot services, wait until every API is healthy, then exit `0` (or `1` on timeout). Skips the TUI — meant for CI smoke tests |
-| `--once-timeout 60` | Max seconds to wait in `--once` mode. Default: `90` |
-
-### Log files
-
-| Flag | Description |
-|---|---|
-| `--no-log-file` | Disable persistent log files |
-| `--log-dir /path` | Override log root. Default: `~/.devup/logs/<project>/<service>.log` |
-
-### Hot reload
-
-| Flag | Description |
-|---|---|
-| `--watch-config` | Watch `devup.config.*`; on save, diff against the running set and apply add/remove/restart per service. Validation runs first; failed configs leave the running set untouched |
-
-devup writes a separate `.log` file per service to disk. Lines are prefixed with an ISO timestamp. On each fresh launch the previous file is rotated to `<service>.log.prev`, so you always have at most two runs of history per service.
-
-## TUI keybindings
-
-| Key | Action |
-|---|---|
-| `q` / `Ctrl+C` | Quit and stop all services |
-| `Tab` | Switch focus between Logs and Stats panels |
-| `↑` / `↓` | Scroll the focused panel by 1 line/row |
-| `[` / `]` (or `Ctrl+B` / `Ctrl+F`) | Page up / page down |
-| `Ctrl+A` / `Ctrl+E` | Jump to top / bottom of the focused panel |
-| `f` | Filter logs by service |
-| `L` | Cycle log level filter (all → error → warn+error → all) |
-| `a` | Show all logs (clear service / search / level filters) |
-| `/` | Search in logs (accepts `/pattern/flags` regex) |
-| `p` | Pause/resume log output (auto-engaged when you scroll up) |
-| `t` | Toggle timestamps |
-| `c` | Clear logs |
-| `s` | Cycle sort mode (name → memory → errors) |
-| `r` | Restart a service |
-| `o` | Open a web service in browser (TLS-aware when `--proxy`) |
-| `v` | Verbose stats: show resolved `cmd`/args/env per service (env secrets redacted) |
-| `T` | Toggle reverse proxy config sync |
-
-When you scroll the Logs panel up, devup auto-pauses the log stream so new lines don't push your reading position. New lines are buffered and replay when you return to the bottom (`Ctrl+E` or scroll all the way down).
-
-## Config file formats
-
-devup looks for config files in this order:
-
-1. `devup.config.ts` — TypeScript with full type checking and intellisense
-2. `devup.config.js` — JavaScript (ESM or CJS)
-3. `devup.config.json` — JSON (no functions or imports)
-
-Or pass `--config path/to/file` to use a custom path.
-
-## Phases
-
-Services boot in phase order. Within a phase, all services start simultaneously. devup waits for all API services in a phase to respond on their port before moving to the next phase.
-
-```
-Phase 0: Core infrastructure (config server, auth)
-Phase 1: Base APIs (app, users, files, events)
-Phase 2: Dependent APIs (communications, notifications)
-Phase 3: Final APIs
-Phase 4: Frontends (Angular, Svelte, React, Vite)
-```
-
-Phase numbers are arbitrary — use whatever makes sense for your dependency graph.
-
-## Lazy mode
-
-In lazy mode, devup creates a TCP proxy on each lazy service's original port. The real service runs on `port + 10000` when started.
-
-```
-Client → :3000 (proxy) → :13000 (real service)
-```
-
-When a connection arrives and the service is idle, devup:
-1. Runs `npm install` if needed
-2. Starts the service on the offset port
-3. Waits for the port to be ready
-4. Pipes the buffered connection through
-
-After `timeout` minutes with no connections, the service stops and returns to idle.
-
-Services listed in `lazy.alwaysOn` skip the proxy and start normally.
-
-## Platform support
-
-| Feature | Linux | macOS | Windows |
-|---|---|---|---|
-| Process stats (CPU, memory) | `ps` | `ps` | `wmic` |
-| Kill process tree | `kill -pid` | `kill -pid` | `taskkill /T /F` |
-| Open browser | `xdg-open` | `open` | `cmd /c start` |
-| Default proxy host | `172.17.0.1` | `host.docker.internal` | `host.docker.internal` |
-
-## Reverse proxy providers
-
-devup generates dynamic config for reverse proxies. Three providers are built in: **Traefik**, **Nginx**, and **Caddy**. Only services with `health === 'up'` are included — flapping services are silently dropped from the generated config and re-added when they recover.
-
-### Traefik
-
-Generates a YAML file for Traefik's [file provider](https://doc.traefik.io/traefik/providers/file/). Mount the config file as a volume in your Traefik container.
-
-```yaml
-# docker-compose.yml
-services:
-  traefik:
-    volumes:
-      - ~/.traefik:/etc/traefik/dynamic
-```
-
-```bash
-devup --proxy --proxy-host 172.17.0.1
-```
-
-### Nginx
-
-Generates an Nginx file with one `server { }` block per healthy service. Drop it into `/etc/nginx/conf.d/` (or `include` it from your main config) and reload Nginx — devup rewrites the file in place every 3 seconds.
-
-```typescript
-proxy: {
-  provider: 'nginx',
-  confPath: '/etc/nginx/conf.d/devup.conf',
-  routes: { 'app-web': '', 'api': 'api' },
-}
-```
-
-With `tls: true` (default) each block listens on `:443 ssl` and points to `/etc/nginx/certs/<server_name>.crt` and `.key`. With `tls: false` it listens on `:80`. WebSocket / HTTP-upgrade headers are forwarded by default.
-
-> **Note:** Nginx doesn't watch files automatically — you'll need `nginx -s reload` (or `nginx-reload` sidecar) to pick up devup's updates. For a watch-and-reload workflow, prefer Traefik or Caddy.
-
-### Caddy
-
-Generates a Caddyfile with one `reverse_proxy` directive per healthy service. Caddy auto-reloads its file on change (`caddy run --watch`), so devup's updates take effect without intervention.
-
-```typescript
-proxy: {
-  provider: 'caddy',
-  confPath: '/etc/caddy/devup.Caddyfile',
-  routes: { 'app-web': '', 'api': 'api' },
-}
-```
-
-With `tls: true` (default) Caddy provisions TLS automatically (Let's Encrypt or local CA). With `tls: false` each site is prefixed with `http://`.
-
-### Adding a custom provider
-
-Implement the `ProxyConfigProvider` interface and register it manually before calling `render(<App />)`:
-
-```typescript
-interface ProxyConfigProvider {
-  readonly name: string;
-  generate(services: Map<string, ServiceState>, opts: ProxyOpts): string;
-  write(content: string, opts: ProxyOpts): void;
-  clear(opts: ProxyOpts): void;
-}
-```
-
-## Example: full config
-
-```typescript
-import { defineConfig } from '@gachlab/devup';
-
-export default defineConfig({
-  name: 'MyApp',
-  icon: '⚡',
-  envFile: '.env',
-  env: {
-    DOMAIN: 'localhost',
-  },
-
-  services: [
-    // Phase 0 — Core
-    { name: 'config-api', cwd: 'config/api', cmd: 'node', args: ['src/index.js'], type: 'api', port: 2999, phase: 0, maxMem: 192 },
-
-    // Phase 1 — APIs
-    { name: 'auth-api',   cwd: 'auth/api',   cmd: 'node', args: ['src/index.js'], type: 'api', port: 3002, phase: 1, maxMem: 192 },
-    { name: 'app-api',    cwd: 'app/api',    cmd: 'node', args: ['src/index.js'], type: 'api', port: 3000, phase: 1, maxMem: 256 },
-    { name: 'files-api',  cwd: 'files/api',  cmd: 'node', args: ['src/index.js'], type: 'api', port: 3013, phase: 1, maxMem: 192 },
-
-    // Phase 1 — TypeScript API with build step
-    { name: 'orders-api', cwd: 'orders/api', cmd: 'node', args: ['dist/index.js'], type: 'api', port: 3031, phase: 1, maxMem: 256,
-      preBuild: 'npm run build', watchBuild: 'npx tsup --watch' },
-
-    // Phase 2 — Dependent APIs
-    { name: 'notifications-api', cwd: 'notifications/api', cmd: 'node', args: ['src/index.js'], type: 'api', port: 3010, phase: 2, maxMem: 256 },
-
-    // Phase 4 — Frontends
-    { name: 'app-web',   cwd: 'app/web',   cmd: 'npx', args: ['ng', 'serve', '--port', '4201'], type: 'web', port: 4201, phase: 4, maxMem: 512 },
-    { name: 'admin-web', cwd: 'admin/web', cmd: 'npx', args: ['vite', '--port', '4204'],        type: 'web', port: 4204, phase: 4, maxMem: 384 },
-    { name: 'staff-web', cwd: 'staff/web', cmd: 'npx', args: ['vite', '--port', '4040'],        type: 'web', port: 4040, phase: 4, maxMem: 384 },
-  ],
-
-  lazy: {
-    alwaysOn: ['config-api', 'app-web'],
-    timeout: 10,
-  },
-
-  proxy: {
-    provider: 'traefik',
-    routes: {
-      'app-web':   '',
-      'admin-web': 'admin',
-      'staff-web': 'staff',
-      'app-api':   'app-api',
-      'auth-api':  'auth-api',
-      'files-api': 'files-api',
-    },
-  },
-});
-```
+See [docs/getting-started.md](./docs/getting-started.md) for a full walkthrough.
+
+## Documentation
+
+The comprehensive guide lives in [docs/](./docs/README.md):
+
+- **[Getting started](./docs/getting-started.md)** — 5-minute tutorial
+- **[Configuration reference](./docs/configuration.md)** — every field of `devup.config.ts`
+- **[Health checks](./docs/health-checks.md)** — TCP / HTTP / `readyPattern` / `startPeriod` / `errorPattern`
+- **[Lazy mode](./docs/lazy-mode.md)** — on-demand spawning, idle timeouts, troubleshooting
+- **[Build hooks](./docs/build-hooks.md)** — `preBuild` and `watchBuild` for TypeScript services
+- **[External services](./docs/external-services.md)** — wire docker-compose into the boot sequence
+- **[Profiles](./docs/profiles.md)** — save service subsets under a name
+- **[Reverse proxy](./docs/proxy.md)** — Traefik / Nginx / Caddy generators
+- **[TUI tour](./docs/tui.md)** — every keybinding
+- **[CLI reference](./docs/cli.md)** — flags + subcommands
+- **[Control plane](./docs/control-plane.md)** — Unix-socket JSON-RPC
+- **[Hot reload](./docs/hot-reload.md)** — `--watch-config`
+- **[Recipes](./docs/recipes.md)** — patterns for Vite, Angular, NestJS, TypeScript, Docker
+- **[Troubleshooting](./docs/troubleshooting.md)**
+- **[Architecture](./docs/architecture.md)** — for contributors
 
 ## Requirements
 
-- Node.js >= 22
-- npm (for dependency installation)
-- A terminal with TTY support (for the interactive TUI)
+- Node.js ≥ 22
+- npm
+- A terminal with TTY support (for the TUI; subcommands don't need it)
 
 ## Development
 
@@ -543,9 +125,19 @@ git clone https://github.com/gachlab/devup.git
 cd devup
 npm install
 npm run build
-npm test              # 200 tests, node:test native
-npm run test:coverage # coverage report
+npm test              # 331 tests, node:test native
+npm run test:coverage
 ```
+
+See [docs/architecture.md](./docs/architecture.md) for the codebase tour.
+
+## Changelog
+
+[CHANGELOG.md](./CHANGELOG.md) — every release, every notable change.
+
+## Roadmap
+
+[ROADMAP.md](./ROADMAP.md) — what's next, open questions, scope discussions.
 
 ## License
 
