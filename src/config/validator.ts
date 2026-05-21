@@ -8,6 +8,39 @@ export interface ValidationError {
   message: string;
 }
 
+export interface ValidationWarning {
+  field: string;
+  message: string;
+}
+
+/** Collects non-blocking warnings: things that look suspicious but don't justify
+ *  refusing to start the stack. Run alongside `validateConfig` from the CLI entry
+ *  point; print them and continue. */
+export function collectWarnings(config: DevStackConfig): ValidationWarning[] {
+  const warnings: ValidationWarning[] = [];
+  if (!config.services?.length) return warnings;
+
+  for (const svc of config.services) {
+    // extraEnv.PORT vs svc.port: catches the common "I set PORT in extraEnv to
+    // something other than port and now nothing connects" footgun.
+    const ep = svc.extraEnv?.['PORT'];
+    if (ep !== undefined) {
+      const expected = String(svc.port);
+      if (ep !== expected) {
+        warnings.push({
+          field: `services[${svc.name}].extraEnv.PORT`,
+          message: `extraEnv.PORT="${ep}" does not match port=${svc.port}. devup will health-check :${svc.port} but the service will probably bind to :${ep}.`,
+        });
+      }
+    }
+  }
+  return warnings;
+}
+
+export function formatValidationWarnings(warnings: ValidationWarning[]): string {
+  return warnings.map(w => `  ⚠ ${w.field}: ${w.message}`).join('\n');
+}
+
 export function validateConfig(config: DevStackConfig, cwd: string): ValidationError[] {
   const errors: ValidationError[] = [];
 

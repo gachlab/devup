@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 import { findConfigFile, loadConfig } from './config/loader.js';
-import { validateConfig, formatValidationErrors } from './config/validator.js';
+import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
 import { detectSubcommand, runLogs, runInstall, runStatus, runHelp } from './orchestrator/subcommands.js';
 import { detectPlatform } from './platform/detect.js';
@@ -85,6 +85,10 @@ async function main() {
   if (errors.length) {
     console.error(`❌ Config validation failed:\n${formatValidationErrors(errors)}`);
     process.exit(1);
+  }
+  const warnings = collectWarnings(config);
+  if (warnings.length) {
+    console.warn(`⚠ Config warnings:\n${formatValidationWarnings(warnings)}`);
   }
 
   // Filter services

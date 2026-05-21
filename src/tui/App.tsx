@@ -368,6 +368,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         maxNameLen={maxNameLen} height={logsHeight} focused={kb.panel === 'logs'}
         scrollOffset={kb.logsScrollOffset} resetScroll={kb.resetLogsScroll}
         levelFilter={kb.levelFilter}
+        filteredColorIdx={kb.logFilter ? (pm.states.get(kb.logFilter)?.colorIdx ?? null) : null}
       />
 
       <StatsPanel

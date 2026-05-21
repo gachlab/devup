@@ -3,6 +3,18 @@ import { Box, Text } from 'ink';
 import type { LogEntry } from './hooks/useProcessManager.js';
 import { tagColors, compileSearchPattern } from '../utils.js';
 
+/** Border color resolution rules:
+ *  - focused wins (cyan), so the active-pane affordance is never lost
+ *  - filtered + we know the service color → use it (subtle reinforcement)
+ *  - otherwise gray */
+export function resolveBorder(focused: boolean, filter: string | null, filteredColorIdx: number | null): string {
+  if (focused) return 'cyan';
+  if (filter && filteredColorIdx !== null && filteredColorIdx >= 0) {
+    return tagColors[filteredColorIdx % tagColors.length]!;
+  }
+  return 'gray';
+}
+
 interface Props {
   logs: LogEntry[];
   filter: string | null;
@@ -15,9 +27,12 @@ interface Props {
   scrollOffset: number;
   resetScroll: () => void;
   levelFilter?: 'all' | 'error' | 'warn';
+  /** When non-null, used to tint the panel border with the filtered service's tag color
+   *  (subtle reinforcement of "you're seeing only this service"). */
+  filteredColorIdx?: number | null;
 }
 
-export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll, levelFilter = 'all' }: Props) {
+export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll, levelFilter = 'all', filteredColorIdx = null }: Props) {
   const byService = filter ? logs.filter(l => l.svcName === filter) : logs;
   const filtered = levelFilter === 'all'
     ? byService
@@ -57,7 +72,7 @@ export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, ma
   ].filter(Boolean).join(' ');
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'cyan' : 'gray'} height={height}>
+    <Box flexDirection="column" borderStyle="round" borderColor={resolveBorder(focused, filter, filteredColorIdx)} height={height}>
       <Box><Text bold color="cyan"> {label} </Text></Box>
       {visible.map((entry, i) => {
         const color = tagColors[entry.colorIdx % tagColors.length]!;

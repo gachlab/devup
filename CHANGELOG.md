@@ -5,6 +5,18 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-05-21
+
+Polish release. Two small quality-of-life items that closed out the low-value tail of the roadmap.
+
+### Added
+- **Non-blocking config warnings** (#9). Devup now emits warnings — separate from errors — at config-load time. The first warning: `extraEnv.PORT` set to a value different from `svc.port`. That's a common footgun (the service binds to the value in `extraEnv`, devup health-checks `port`, nothing connects). Warnings are advisory: they print and the boot continues. Errors still abort as before. New helpers `collectWarnings()` / `formatValidationWarnings()` parallel to the existing `validateConfig` flow.
+- **Active-service color on the LogsPanel border** (#20). When a service filter is active and the Logs panel is not focused, the border takes the filtered service's tag color. Subtle reinforcement of "you're seeing only this service", especially helpful after `Tab`'ing between panels. Focus (cyan) still wins so the active-pane affordance is never lost.
+
+### Internals
+- New pure helper `resolveBorder()` exported from `tui/LogsPanel.tsx` for testability.
+- Test suite grown to ~331 (+10).
+
 ## [0.6.0] — 2026-05-21
 
 Control plane release. Two features that unlock external integrations and editor workflows.
@@ -172,6 +184,7 @@ Initial release.
 - Config file resolution order: `devup.config.ts` → `.js` → `.json`, with `--config <path>` override. TypeScript loaded via the `tsx` import hook.
 - CLI flags: `--only`, `--services`, `--skip`, `--lazy`/`--no-lazy`, `--timeout`, `--proxy`, `--proxy-host`, `--proxy-conf`, `--proxy-tls`/`--no-proxy-tls`, `--proxy-entrypoint`, `--config`.
 
+[0.7.0]: https://github.com/gachlab/devup/releases/tag/0.7.0
 [0.6.0]: https://github.com/gachlab/devup/releases/tag/0.6.0
 [0.5.0]: https://github.com/gachlab/devup/releases/tag/0.5.0
 [0.4.0]: https://github.com/gachlab/devup/releases/tag/0.4.0
