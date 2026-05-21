@@ -125,6 +125,7 @@ Then `devup --profile check-in` boots that subset. Composable with `--skip`. The
 | `extraEnv` | `Record<string, string>` | | Extra environment variables for this service |
 | `healthCheck` | `HealthCheckConfig` | | Override the readiness check for this service. Default: TCP probe on `port` |
 | `readyPattern` | `string` | | Regex matched against stdout/stderr lines. On match, service is marked `up` immediately, short-circuiting the next health-check poll. Plain string or vim-style `/pattern/flags`. Case-insensitive by default |
+| `errorPattern` | `string` | | Only stderr lines matching this regex bump `state.errors`. Without it every non-empty stderr line counts. Same `/pattern/flags` grammar as `readyPattern` |
 
 ### `HealthCheckConfig`
 
@@ -135,6 +136,7 @@ Then `devup --profile check-in` boots that subset. Composable with `--skip`. The
 | `expect` | `number \| number[]` | | HTTP-only acceptable status code(s). Default: any 2xx (200-299) |
 | `host` | `string` | | Override target host for the HTTP check. Default: `127.0.0.1` |
 | `timeoutMs` | `number` | | Per-check socket/request timeout in ms. Default: `2000` |
+| `startPeriod` | `number` | | Grace period in seconds before the first probe runs. Useful for slow boots (Angular cold-start, etc.) so failed probes during boot don't pollute `state.errors`. Default: `0` |
 
 ```typescript
 // Wait for /healthz to return 200 before considering the service up
@@ -318,14 +320,16 @@ devup writes a separate `.log` file per service to disk. Lines are prefixed with
 | `[` / `]` (or `Ctrl+B` / `Ctrl+F`) | Page up / page down |
 | `Ctrl+A` / `Ctrl+E` | Jump to top / bottom of the focused panel |
 | `f` | Filter logs by service |
-| `a` | Show all logs (clear filter) |
-| `/` | Search in logs |
+| `L` | Cycle log level filter (all → error → warn+error → all) |
+| `a` | Show all logs (clear service / search / level filters) |
+| `/` | Search in logs (accepts `/pattern/flags` regex) |
 | `p` | Pause/resume log output (auto-engaged when you scroll up) |
 | `t` | Toggle timestamps |
 | `c` | Clear logs |
 | `s` | Cycle sort mode (name → memory → errors) |
 | `r` | Restart a service |
-| `o` | Open a web service in browser |
+| `o` | Open a web service in browser (TLS-aware when `--proxy`) |
+| `v` | Verbose stats: show resolved `cmd`/args/env per service (env secrets redacted) |
 | `T` | Toggle reverse proxy config sync |
 
 When you scroll the Logs panel up, devup auto-pauses the log stream so new lines don't push your reading position. New lines are buffered and replay when you return to the bottom (`Ctrl+E` or scroll all the way down).
