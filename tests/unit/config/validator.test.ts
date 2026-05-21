@@ -115,6 +115,20 @@ describe('validateConfig', () => {
     assert.ok(errors.some(e => e.message.includes('startPeriod must be a non-negative')));
   });
 
+  it('accepts a valid errorPattern', () => {
+    const cfg = minimal();
+    cfg.services[0]!.errorPattern = '^error:';
+    const errors = validateConfig(cfg, tmp);
+    assert.equal(errors.filter(e => e.field.includes('errorPattern')).length, 0);
+  });
+
+  it('rejects invalid errorPattern regex', () => {
+    const cfg = minimal();
+    cfg.services[0]!.errorPattern = '(unclosed';
+    const errors = validateConfig(cfg, tmp);
+    assert.ok(errors.some(e => e.field.endsWith('errorPattern') && e.message.includes('Invalid regex')));
+  });
+
   describe('profiles', () => {
     it('accepts valid profile referencing real services', () => {
       const cfg = minimal();

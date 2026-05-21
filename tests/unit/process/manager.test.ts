@@ -204,6 +204,37 @@ describe('ProcessManager', () => {
     });
   });
 
+  it('errorPattern: only matching stderr lines bump state.errors', { timeout: 3000 }, async () => {
+    const { mgr } = makeManager();
+    const svc = makeSvc({
+      name: 'err-filter', port: 19886,
+      cmd: 'node',
+      args: ['-e', "process.stderr.write('warning: foo\\nerror: real\\ninfo: other\\n'); setTimeout(()=>{}, 30000)"],
+      errorPattern: '^error:',
+    });
+    await mgr.start(svc, 0);
+    await new Promise(r => setTimeout(r, 500));
+    const st = mgr.state.get('err-filter')!;
+    assert.equal(st.errors, 1, `expected 1 error matching /^error:/, got ${st.errors}`);
+    mgr.stop('err-filter');
+    await new Promise(r => setTimeout(r, 100));
+  });
+
+  it('without errorPattern every stderr line counts (backwards compat)', { timeout: 3000 }, async () => {
+    const { mgr } = makeManager();
+    const svc = makeSvc({
+      name: 'err-default', port: 19887,
+      cmd: 'node',
+      args: ['-e', "process.stderr.write('warning: foo\\nerror: real\\ninfo: other\\n'); setTimeout(()=>{}, 30000)"],
+    });
+    await mgr.start(svc, 0);
+    await new Promise(r => setTimeout(r, 500));
+    const st = mgr.state.get('err-default')!;
+    assert.equal(st.errors, 3, `expected 3 errors without pattern, got ${st.errors}`);
+    mgr.stop('err-default');
+    await new Promise(r => setTimeout(r, 100));
+  });
+
   it('healthCheck.startPeriod suppresses probes during the grace window', { timeout: 4000 }, async () => {
     const { mgr } = makeManager();
     const svc = makeSvc({

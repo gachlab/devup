@@ -150,12 +150,15 @@ export class ProcessManager {
       }
     };
 
+    const errorRegex = compileReadyPattern(svc.errorPattern); // reuses same /pattern/flags grammar
+    const countsAsError = (line: string) => errorRegex ? errorRegex.test(line) : true;
+
     const stdoutBuf = lineBuffer(line => {
       markReadyIfMatch(line);
       this.log(svc.name, line, colorIdx);
     });
     const stderrBuf = lineBuffer(line => {
-      state.errors += 1;
+      if (countsAsError(line)) state.errors += 1;
       markReadyIfMatch(line);
       this.log(svc.name, line, colorIdx);
     });

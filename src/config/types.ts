@@ -17,6 +17,10 @@ export interface ServiceConfig {
    *  health-check poll. Speeds up phase transitions on cold boots.
    *  Examples: '/ready in \\d+ ms/' (Vite), '/compiled successfully/' (Angular). */
   readyPattern?: string;
+  /** Case-insensitive regex. When set, only stderr lines matching this pattern
+   *  bump `state.errors`. Without it, every non-empty stderr line counts.
+   *  Useful for libraries that write info messages to stderr (Angular CLI). */
+  errorPattern?: string;
 }
 
 export interface HealthCheckConfig {
