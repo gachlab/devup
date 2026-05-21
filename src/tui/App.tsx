@@ -19,6 +19,8 @@ import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import type { ProcessState } from '../process/types.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
+import { isCrashLooped } from './StatsPanel.js';
+import { pickTip } from './tips.js';
 
 /** Builds the URL to open in the browser when the user picks a service.
  *  Honors the proxy + TLS settings: if --proxy is active and the service has
@@ -69,6 +71,8 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const [booted, setBooted] = useState(false);
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
   const externals = useRef<ExternalProc[]>([]);
+  const shownTips = useRef<Set<string>>(new Set());
+  const [activeTip, setActiveTip] = useState<string | null>(null);
 
   const kb = useKeyBindings({
     onQuit: () => {
@@ -96,6 +100,23 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   useEffect(() => {
     pm.setPaused(kb.logsPaused || kb.logsScrollOffset > 0);
   }, [kb.logsPaused, kb.logsScrollOffset, pm]);
+
+  // Contextual tips: evaluate periodically, surface once per session.
+  useEffect(() => {
+    const tip = pickTip({
+      totalLogs: pm.logs.length,
+      hasSearch: !!kb.searchTerm,
+      hasFilter: !!kb.logFilter,
+      crashLoopedCount: [...pm.states.values()].filter(isCrashLooped).length,
+      shown: shownTips.current,
+    });
+    if (tip && tip.id !== activeTip) {
+      shownTips.current.add(tip.id);
+      setActiveTip(tip.message);
+      const timer = setTimeout(() => setActiveTip(null), 12_000);
+      return () => clearTimeout(timer);
+    }
+  }, [pm.logs.length, pm.states, kb.searchTerm, kb.logFilter, activeTip]);
 
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
 
@@ -223,7 +244,10 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
 
   return (
     <Box flexDirection="column" height={rows}>
-      <Box><Text bold color="cyan"> {icon} {config.name} — devup — {services.length} services ({modeLabel}) </Text></Box>
+      <Box>
+        <Text bold color="cyan"> {icon} {config.name} — devup — {services.length} services ({modeLabel}) </Text>
+        {activeTip && <Text dimColor> · {activeTip}</Text>}
+      </Box>
 
       <LogsPanel
         logs={pm.logs} filter={kb.logFilter} searchTerm={kb.searchTerm}
