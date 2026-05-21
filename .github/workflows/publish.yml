@@ -31,13 +31,13 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # OIDC trusted publishing for auth (not just provenance) requires npm >= 11.5.1.
+          # Node 22 ships with npm 10.x; Node 24 ships with npm 11.x natively, so we use
+          # 24 here to skip the global npm upgrade step that has been failing with
+          # `Cannot find module 'promise-retry'` mid-upgrade on the GitHub runners.
+          # Test job stays on 22 (matches the project's stated `engines.node`).
+          node-version: 24
           registry-url: https://registry.npmjs.org
-      # Trusted publishing for auth (not just provenance) requires npm >= 11.5.1.
-      # Node 22 LTS ships with npm 10.x, so we pin an upgrade. Using `@latest` here
-      # hit a flaky MODULE_NOT_FOUND on promise-retry during the 0.6.0 publish run,
-      # so pin to a known-good major instead.
-      - run: npm install --global npm@11
       - run: npm --version
       - run: npm ci
       - run: npm run build
