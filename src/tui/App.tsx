@@ -20,6 +20,26 @@ import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import type { ProcessState } from '../process/types.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 
+/** Builds the URL to open in the browser when the user picks a service.
+ *  Honors the proxy + TLS settings: if --proxy is active and the service has
+ *  a route, opens https://<sub>.<domain>; otherwise falls back to http://localhost:<port>. */
+export function buildServiceUrl(
+  name: string,
+  port: number,
+  proxyActive: boolean,
+  proxyOpts: ProxyOpts | null,
+): string {
+  if (proxyActive && proxyOpts) {
+    const sub = proxyOpts.routes[name];
+    if (sub !== undefined) {
+      const host = sub ? `${sub}.${proxyOpts.domain}` : proxyOpts.domain;
+      const scheme = proxyOpts.tls ? 'https' : 'http';
+      return `${scheme}://${host}`;
+    }
+  }
+  return `http://localhost:${port}`;
+}
+
 interface Props {
   config: DevStackConfig;
   services: ServiceConfig[];
@@ -191,9 +211,12 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);
   const handleOpenSelect = useCallback((name: string) => {
     const st = pm.states.get(name);
-    if (st) platform.openBrowser(`http://localhost:${st.svc.port}`);
+    if (st) {
+      const url = buildServiceUrl(name, st.svc.port, cliArgs.proxy, proxyOpts);
+      platform.openBrowser(url);
+    }
     kb.setModal('none');
-  }, [pm, platform, kb]);
+  }, [pm, platform, kb, cliArgs.proxy, proxyOpts]);
 
   const icon = config.icon ?? '📦';
   const modeLabel = cliArgs.lazy && config.lazy ? 'lazy' : 'normal';
