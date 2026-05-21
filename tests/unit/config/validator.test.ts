@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
-import { validateConfig } from '../../../src/config/validator.js';
+import { validateConfig, collectWarnings, formatValidationWarnings } from '../../../src/config/validator.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
 
 const tmp = tmpdir();
@@ -251,5 +251,59 @@ describe('validateConfig', () => {
       const errors = validateConfig(cfg, tmp);
       assert.ok(errors.some(e => e.message.includes('must start with "/"')));
     });
+  });
+});
+
+describe('collectWarnings', () => {
+  it('returns empty when no services', () => {
+    assert.deepEqual(collectWarnings({ name: 'X', services: [] }), []);
+  });
+
+  it('warns when extraEnv.PORT does not match svc.port', () => {
+    const cfg = {
+      name: 'X',
+      services: [{
+        name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api' as const,
+        port: 3000, phase: 0,
+        extraEnv: { PORT: '3001' },
+      }],
+    };
+    const w = collectWarnings(cfg);
+    assert.equal(w.length, 1);
+    assert.equal(w[0]!.field, 'services[api].extraEnv.PORT');
+    assert.ok(w[0]!.message.includes('does not match port=3000'));
+  });
+
+  it('does not warn when extraEnv.PORT matches port', () => {
+    const cfg = {
+      name: 'X',
+      services: [{
+        name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api' as const,
+        port: 3000, phase: 0,
+        extraEnv: { PORT: '3000' },
+      }],
+    };
+    assert.deepEqual(collectWarnings(cfg), []);
+  });
+
+  it('does not warn when extraEnv.PORT is absent', () => {
+    const cfg = {
+      name: 'X',
+      services: [{
+        name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api' as const,
+        port: 3000, phase: 0,
+        extraEnv: { FOO: 'bar' },
+      }],
+    };
+    assert.deepEqual(collectWarnings(cfg), []);
+  });
+
+  it('formatValidationWarnings renders the bullet style', () => {
+    const out = formatValidationWarnings([
+      { field: 'a', message: 'x' },
+      { field: 'b', message: 'y' },
+    ]);
+    assert.ok(out.includes('⚠ a: x'));
+    assert.ok(out.includes('⚠ b: y'));
   });
 });
