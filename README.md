@@ -121,6 +121,7 @@ Then `devup --profile check-in` boots that subset. Composable with `--skip`. The
 | `nodeArgs` | `string[]` | | Extra Node.js arguments |
 | `extraEnv` | `Record<string, string>` | | Extra environment variables for this service |
 | `healthCheck` | `HealthCheckConfig` | | Override the readiness check for this service. Default: TCP probe on `port` |
+| `readyPattern` | `string` | | Regex matched against stdout/stderr lines. On match, service is marked `up` immediately, short-circuiting the next health-check poll. Plain string or vim-style `/pattern/flags`. Case-insensitive by default |
 
 ### `HealthCheckConfig`
 
@@ -139,6 +140,23 @@ Then `devup --profile check-in` boots that subset. Composable with `--skip`. The
 // Accept 200 or 204
 { name: 'api', /* ... */, healthCheck: { type: 'http', path: '/health', expect: [200, 204] } }
 ```
+
+#### readyPattern
+
+A regex matched against each line of the service's stdout/stderr. The first matching line flips the service to `up` immediately, without waiting for the next 3-second health-check poll. The periodic health-check still runs as a fallback. Useful for tools that print recognisable boot lines:
+
+```typescript
+// Vite: "ready in 423 ms"
+{ name: 'web', cmd: 'npx', args: ['vite'], readyPattern: 'ready in' }
+
+// Angular: "Compiled successfully"
+{ name: 'app', cmd: 'npx', args: ['ng', 'serve'], readyPattern: '/compiled successfully/i' }
+
+// Fastify: "Server listening at"
+{ name: 'api', cmd: 'node', args: ['index.js'], readyPattern: 'server listening' }
+```
+
+Both plain strings and vim-style `/pattern/flags` are accepted. Strings are case-insensitive by default.
 
 ### `LazyConfig`
 

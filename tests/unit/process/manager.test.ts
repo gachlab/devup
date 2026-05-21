@@ -93,4 +93,49 @@ describe('ProcessManager', () => {
       server.close();
     }
   });
+
+  it('readyPattern marks service up on stdout match', { timeout: 4000 }, async () => {
+    const stateChanges: string[] = [];
+    const p = testPlatform();
+    const mgr = new ProcessManager({
+      baseCwd: process.cwd(),
+      env: { ...process.env as Record<string, string> },
+      platform: p,
+      events: {
+        onLog: () => {},
+        onStateChange: (_n, st) => stateChanges.push(`${st.status}:${st.health}`),
+      },
+    });
+    const svc = makeSvc({
+      name: 'ready-svc', port: 19879,
+      cmd: 'node',
+      args: ['-e', "console.log('listening on 19879'); setTimeout(()=>{}, 30000)"],
+      readyPattern: 'listening on',
+    });
+    await mgr.start(svc, 0);
+    // Wait for stdout to flow + line buffer to deliver
+    await new Promise(r => setTimeout(r, 800));
+    const st = mgr.state.get('ready-svc')!;
+    assert.equal(st.health, 'up', `expected up, got ${st.health}; state changes: ${stateChanges.join(',')}`);
+    assert.equal(st.status, 'running');
+    mgr.stop('ready-svc');
+    await new Promise(r => setTimeout(r, 100));
+  });
+
+  it('readyPattern: no match → state stays starting/wait', { timeout: 4000 }, async () => {
+    const { mgr } = makeManager();
+    const svc = makeSvc({
+      name: 'noready', port: 19880,
+      cmd: 'node',
+      args: ['-e', "console.log('hello world'); setTimeout(()=>{}, 30000)"],
+      readyPattern: 'this-never-matches',
+    });
+    await mgr.start(svc, 0);
+    await new Promise(r => setTimeout(r, 500));
+    const st = mgr.state.get('noready')!;
+    assert.equal(st.health, 'wait');
+    assert.equal(st.status, 'starting');
+    mgr.stop('noready');
+    await new Promise(r => setTimeout(r, 100));
+  });
 });

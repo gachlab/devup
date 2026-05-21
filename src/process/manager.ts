@@ -11,6 +11,18 @@ import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 const MAX_RESTARTS = 3;
 const BACKOFF_BASE_MS = 2000;
 
+/** Accepts both '/foo/' (vim-style) and bare 'foo'. Case-insensitive by default. */
+export function compileReadyPattern(pattern: string | undefined): RegExp | null {
+  if (!pattern) return null;
+  const slashed = /^\/(.+)\/([gimsuy]*)$/.exec(pattern);
+  try {
+    if (slashed) return new RegExp(slashed[1]!, slashed[2] || 'i');
+    return new RegExp(pattern, 'i');
+  } catch {
+    return null;
+  }
+}
+
 function lineBuffer(onLine: (line: string) => void) {
   let buf = '';
   return {
@@ -85,9 +97,23 @@ export class ProcessManager {
     this.procs.add(proc);
     this.events.onStateChange(svc.name, state);
 
-    const stdoutBuf = lineBuffer(line => this.log(svc.name, line, colorIdx));
+    const readyRegex = compileReadyPattern(svc.readyPattern);
+    const markReadyIfMatch = (line: string) => {
+      if (!readyRegex || state.health === 'up') return;
+      if (readyRegex.test(line)) {
+        state.health = 'up';
+        if (state.status === 'starting') state.status = 'running';
+        this.events.onStateChange(svc.name, state);
+      }
+    };
+
+    const stdoutBuf = lineBuffer(line => {
+      markReadyIfMatch(line);
+      this.log(svc.name, line, colorIdx);
+    });
     const stderrBuf = lineBuffer(line => {
       state.errors += 1;
+      markReadyIfMatch(line);
       this.log(svc.name, line, colorIdx);
     });
 
