@@ -2,8 +2,140 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseEnvFile, fmtUptime, calcCpuPercent, sortServiceNames,
-  groupByPhase, buildProcessArgs, buildProcessEnv,
+  groupByPhase, buildProcessArgs, buildProcessEnv, compileSearchPattern,
+  detectLogLevel, redactSecrets, nextRamBannerVisibility,
 } from '../../src/utils.js';
+
+describe('nextRamBannerVisibility', () => {
+  it('turns on at or above the high watermark', () => {
+    assert.equal(nextRamBannerVisibility(80, false), true);
+    assert.equal(nextRamBannerVisibility(95, false), true);
+  });
+
+  it('turns off below the low watermark', () => {
+    assert.equal(nextRamBannerVisibility(70, true), false);
+    assert.equal(nextRamBannerVisibility(0, true), false);
+  });
+
+  it('stays in the dead band between watermarks', () => {
+    assert.equal(nextRamBannerVisibility(77, true), true);   // was visible, stays visible
+    assert.equal(nextRamBannerVisibility(77, false), false); // was hidden, stays hidden
+  });
+
+  it('honors custom watermarks', () => {
+    assert.equal(nextRamBannerVisibility(91, false, 90, 85), true);
+    assert.equal(nextRamBannerVisibility(84, true, 90, 85), false);
+    assert.equal(nextRamBannerVisibility(87, true, 90, 85), true);
+  });
+});
+
+describe('redactSecrets', () => {
+  it('returns empty object for undefined / empty', () => {
+    assert.deepEqual(redactSecrets(undefined), {});
+    assert.deepEqual(redactSecrets({}), {});
+  });
+
+  it('redacts keys that look secret-ish', () => {
+    const out = redactSecrets({
+      NODE_ENV: 'production',
+      API_KEY: 'sk-abc',
+      DATABASE_URL: 'postgres://...',
+      JWT_SECRET: 'shhh',
+      AUTH_TOKEN: 'bearer-xyz',
+      PASSWORD: 'p1',
+      MY_API_KEY: 'k',
+      USER_AUTH: 'u',
+    });
+    assert.equal(out['NODE_ENV'], 'production');
+    assert.equal(out['DATABASE_URL'], 'postgres://...');
+    assert.equal(out['API_KEY'], '***');
+    assert.equal(out['JWT_SECRET'], '***');
+    assert.equal(out['AUTH_TOKEN'], '***');
+    assert.equal(out['PASSWORD'], '***');
+    assert.equal(out['MY_API_KEY'], '***');
+    assert.equal(out['USER_AUTH'], '***');
+  });
+
+  it('is case-insensitive on the key', () => {
+    const out = redactSecrets({ secret_thing: 'x', Foo: 'y' });
+    assert.equal(out['secret_thing'], '***');
+    assert.equal(out['Foo'], 'y');
+  });
+});
+
+describe('detectLogLevel', () => {
+  it('detects error from common keywords', () => {
+    assert.equal(detectLogLevel('Error: connection refused'), 'error');
+    assert.equal(detectLogLevel('FATAL: out of memory'), 'error');
+    assert.equal(detectLogLevel('Exception in worker'), 'error');
+    assert.equal(detectLogLevel('something failed badly'), 'error');
+  });
+
+  it('detects error from devup-internal markers', () => {
+    assert.equal(detectLogLevel('❌ exited with code 1'), 'error');
+    assert.equal(detectLogLevel('✗ broken-watch'), 'error');
+  });
+
+  it('detects warn from common keywords', () => {
+    assert.equal(detectLogLevel('Warning: deprecated API'), 'warn');
+    assert.equal(detectLogLevel('warn: cache miss'), 'warn');
+    assert.equal(detectLogLevel('⚠ port already in use'), 'warn');
+  });
+
+  it('falls back to info for everything else', () => {
+    assert.equal(detectLogLevel('Server listening on port 3000'), 'info');
+    assert.equal(detectLogLevel(''), 'info');
+    assert.equal(detectLogLevel('   '), 'info');
+  });
+
+  it('error takes priority over warn', () => {
+    assert.equal(detectLogLevel('Warning: an error occurred'), 'error');
+  });
+});
+
+describe('compileSearchPattern', () => {
+  it('returns null for empty / null term', () => {
+    assert.equal(compileSearchPattern(null), null);
+    assert.equal(compileSearchPattern(''), null);
+  });
+
+  it('plain string is case-insensitive substring', () => {
+    const m = compileSearchPattern('Error')!;
+    assert.equal(m.test('database ERROR thrown'), true);
+    assert.equal(m.test('database error thrown'), true);
+    assert.equal(m.test('no match here'), false);
+    assert.equal(m.regex, undefined);
+  });
+
+  it('/pattern/ compiles to a case-insensitive regex by default', () => {
+    const m = compileSearchPattern('/^api: \\d+/')!;
+    assert.ok(m.regex);
+    assert.equal(m.regex!.flags, 'i');
+    assert.equal(m.test('API: 3000 listening'), true);
+    assert.equal(m.test('http api: 3000'), false);  // anchored
+  });
+
+  it('honors explicit flags after the closing slash', () => {
+    const m = compileSearchPattern('/error/g')!;
+    assert.ok(m.regex);
+    assert.ok(m.regex!.flags.includes('i')); // i is added if missing
+    assert.ok(m.regex!.flags.includes('g'));
+  });
+
+  it('falls back to substring on invalid regex and reports invalid', () => {
+    const m = compileSearchPattern('/(unclosed/')!;
+    assert.equal(m.invalid, true);
+    assert.equal(m.regex, undefined);
+    // Still works as substring search of the literal text
+    assert.equal(m.test('a /(unclosed/ b'), true);
+  });
+
+  it('plain string with slashes does NOT trigger regex mode', () => {
+    const m = compileSearchPattern('some/path')!;
+    assert.equal(m.regex, undefined);
+    assert.equal(m.test('see SOME/PATH here'), true);
+  });
+});
 
 describe('fmtUptime', () => {
   it('returns dash for invalid', () => { assert.equal(fmtUptime(-1), '-'); assert.equal(fmtUptime(0), '-'); });

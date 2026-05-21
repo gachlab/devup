@@ -17,6 +17,10 @@ export interface ServiceConfig {
    *  health-check poll. Speeds up phase transitions on cold boots.
    *  Examples: '/ready in \\d+ ms/' (Vite), '/compiled successfully/' (Angular). */
   readyPattern?: string;
+  /** Case-insensitive regex. When set, only stderr lines matching this pattern
+   *  bump `state.errors`. Without it, every non-empty stderr line counts.
+   *  Useful for libraries that write info messages to stderr (Angular CLI). */
+  errorPattern?: string;
 }
 
 export interface HealthCheckConfig {
@@ -30,6 +34,10 @@ export interface HealthCheckConfig {
   host?: string;
   /** Per-check socket timeout in ms. Default: 2000 */
   timeoutMs?: number;
+  /** Grace period (seconds) before the first probe runs. Useful for slow boots
+   *  (Angular cold-start, big webpack builds) so failed probes during boot don't
+   *  pollute state.errors. Default: 0 (no grace). */
+  startPeriod?: number;
 }
 
 export interface LazyConfig {

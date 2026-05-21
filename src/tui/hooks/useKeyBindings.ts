@@ -4,6 +4,8 @@ import React, { useState, useCallback } from 'react';
 export type Modal = 'none' | 'filter' | 'restart' | 'open' | 'search';
 export type Panel = 'logs' | 'stats';
 
+export type LevelFilter = 'all' | 'error' | 'warn';
+
 export interface KeyState {
   panel: Panel;
   modal: Modal;
@@ -15,6 +17,8 @@ export interface KeyState {
   proxyEnabled: boolean;
   logsScrollOffset: number;
   statsScrollOffset: number;
+  levelFilter: LevelFilter;
+  verboseStats: boolean;
 }
 
 const SORT_MODES = ['name', 'mem', 'errors'] as const;
@@ -51,8 +55,10 @@ export function useKeyBindings(opts: {
   const [state, setState] = useState<KeyState>({
     panel: 'logs', modal: 'none', logFilter: null, searchTerm: null,
     logsPaused: false, showTimestamps: false, sortIdx: 0, proxyEnabled: false,
-    logsScrollOffset: 0, statsScrollOffset: 0,
+    logsScrollOffset: 0, statsScrollOffset: 0, levelFilter: 'all', verboseStats: false,
   });
+
+  const LEVEL_CYCLE: LevelFilter[] = ['all', 'error', 'warn'];
 
   const setModal = useCallback((modal: Modal) => setState(s => ({ ...s, modal })), []);
   const setFilter = useCallback((f: string | null) => setState(s => ({ ...s, logFilter: f, modal: 'none' })), []);
@@ -80,11 +86,13 @@ export function useKeyBindings(opts: {
     else if (input === 'r') setModal('restart');
     else if (input === 'o') setModal('open');
     else if (input === '/') setModal('search');
-    else if (input === 'a') setState(s => ({ ...s, logFilter: null, searchTerm: null }));
+    else if (input === 'a') setState(s => ({ ...s, logFilter: null, searchTerm: null, levelFilter: 'all' }));
     else if (input === 'p') setState(s => ({ ...s, logsPaused: !s.logsPaused }));
     else if (input === 't') setState(s => ({ ...s, showTimestamps: !s.showTimestamps }));
     else if (input === 's') setState(s => ({ ...s, sortIdx: (s.sortIdx + 1) % SORT_MODES.length }));
     else if (input === 'T') { opts.onToggleProxy(); setState(s => ({ ...s, proxyEnabled: !s.proxyEnabled })); }
+    else if (input === 'L') setState(s => ({ ...s, levelFilter: LEVEL_CYCLE[(LEVEL_CYCLE.indexOf(s.levelFilter) + 1) % LEVEL_CYCLE.length]! }));
+    else if (input === 'v') setState(s => ({ ...s, verboseStats: !s.verboseStats }));
   }, { isActive });
 
   return { 

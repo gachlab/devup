@@ -150,12 +150,15 @@ export class ProcessManager {
       }
     };
 
+    const errorRegex = compileReadyPattern(svc.errorPattern); // reuses same /pattern/flags grammar
+    const countsAsError = (line: string) => errorRegex ? errorRegex.test(line) : true;
+
     const stdoutBuf = lineBuffer(line => {
       markReadyIfMatch(line);
       this.log(svc.name, line, colorIdx);
     });
     const stderrBuf = lineBuffer(line => {
-      state.errors += 1;
+      if (countsAsError(line)) state.errors += 1;
       markReadyIfMatch(line);
       this.log(svc.name, line, colorIdx);
     });
@@ -291,6 +294,12 @@ export class ProcessManager {
       if (!st.pid || st.status === 'idle') {
         st.health = st.status === 'idle' ? 'idle' : 'down';
         continue;
+      }
+      // Grace period: suppress probes during the first N seconds after startedAt.
+      // Keeps state.errors clean during slow boots (Angular cold-start, etc.).
+      const startPeriodMs = (st.svc.healthCheck?.startPeriod ?? 0) * 1000;
+      if (startPeriodMs > 0 && st.startedAt && Date.now() - st.startedAt < startPeriodMs) {
+        continue; // status stays 'starting', health stays 'wait'
       }
       const isUp = await checkHealth(st.svc.port, st.svc.healthCheck);
       const prev = st.health;

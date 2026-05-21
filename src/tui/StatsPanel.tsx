@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import type { ProcessState } from '../process/types.js';
 import type { ServiceStats } from './hooks/useProcessManager.js';
-import { fmtUptime, sortServiceNames, tagColors } from '../utils.js';
+import { fmtUptime, sortServiceNames, tagColors, redactSecrets, buildProcessArgs, nextRamBannerVisibility } from '../utils.js';
 import os from 'node:os';
 
 interface Props {
@@ -14,6 +14,7 @@ interface Props {
   focused: boolean;
   scrollOffset: number;
   resetScroll: () => void;
+  verbose?: boolean;
 }
 
 const H: Record<string, { c: string; color: string }> = {
@@ -28,7 +29,7 @@ export function isCrashLooped(st: ProcessState): boolean {
   return st.status === 'crashed' && st.restarts >= MAX_RESTARTS;
 }
 
-function Row({ name, st, stat, ml }: { name: string; st: ProcessState; stat?: ServiceStats; ml: number }) {
+function Row({ name, st, stat, ml, verbose }: { name: string; st: ProcessState; stat?: ServiceStats; ml: number; verbose?: boolean }) {
   const looped = isCrashLooped(st);
   const indicator = looped
     ? <Text color="red" bold>✖</Text>
@@ -37,10 +38,27 @@ function Row({ name, st, stat, ml }: { name: string; st: ProcessState; stat?: Se
   const sc = looped ? 'red' : st.status === 'running' ? 'green' : st.status === 'starting' ? 'yellow' : st.status === 'idle' ? 'blue' : 'red';
   const statusLabel = looped ? 'looping' : st.status;
   const up = st.startedAt ? fmtUptime(Date.now() - st.startedAt) : '-';
+
+  if (!verbose) {
+    return (
+      <Text>
+        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+      </Text>
+    );
+  }
+
+  // Verbose: row + 2 indented lines with the resolved cmd/args and extraEnv.
+  const resolvedArgs = buildProcessArgs(st.svc).join(' ');
+  const env = redactSecrets(st.svc.extraEnv);
+  const envStr = Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ');
   return (
-    <Text>
-      {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
-    </Text>
+    <Box flexDirection="column">
+      <Text>
+        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+      </Text>
+      <Text dimColor>   cmd: {st.svc.cmd} {resolvedArgs}</Text>
+      {envStr && <Text dimColor>   env: {envStr}</Text>}
+    </Box>
   );
 }
 
@@ -48,7 +66,7 @@ function ColHeader({ ml }: { ml: number }) {
   return <Text bold>H {'Service'.padEnd(ml)} {'Port'.padStart(5)} {'Status'.padEnd(8)} {'CPU'.padStart(6)} {'Mem'.padStart(8)} Err Rst {'Up'.padStart(6)}</Text>;
 }
 
-export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focused, scrollOffset, resetScroll }: Props) {
+export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focused, scrollOffset, resetScroll, verbose = false }: Props) {
   const names = [...states.keys()];
   const stObj = Object.fromEntries([...states].map(([k, v]) => [k, { errors: v.errors }]));
   const statsObj = Object.fromEntries([...stats].map(([k, v]) => [k, v]));
@@ -102,6 +120,21 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
   const scrolled = effectiveOffset > 0;
   const loopedCount = [...states.values()].filter(isCrashLooped).length;
 
+  // RAM pressure banner with hysteresis (80% on, 75% off).
+  const ramPct = (parseFloat(usedGB) / parseFloat(totalGB)) * 100;
+  const [ramBanner, setRamBanner] = useState(false);
+  useEffect(() => {
+    setRamBanner(prev => nextRamBannerVisibility(ramPct, prev));
+  }, [ramPct]);
+
+  // Top consumers when the banner is active.
+  const topConsumers = ramBanner
+    ? [...stats.entries()]
+        .map(([n, s]) => ({ name: n, mb: parseFloat(s.mem) || 0 }))
+        .sort((a, b) => b.mb - a.mb)
+        .slice(0, 3)
+    : [];
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'green' : 'gray'} height={height}>
       <Box>
@@ -113,13 +146,19 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
         <Text dimColor>Stack: CPU {totalCpu.toFixed(1)}% RAM {stackMem} Err {totalErrors} Rst {totalRestarts} Svcs {names.length}</Text>
         {sortMode !== 'name' && <Text dimColor> │ Sort: {sortMode}</Text>}
       </Box>
+      {ramBanner && (
+        <Box>
+          <Text color="yellow" bold> ⚠ RAM {ramPct.toFixed(0)}% — top: </Text>
+          <Text color="yellow">{topConsumers.map(c => `${c.name} ${c.mb.toFixed(0)}MB`).join(', ')}</Text>
+        </Box>
+      )}
       <Box flexGrow={1}>
         {/* Left column: APIs */}
         <Box flexDirection="column" flexGrow={1} flexBasis={0}>
           <Text bold color="cyan"> APIs ({apis.length})</Text>
           <ColHeader ml={ml} />
           {visibleApis.map(n => (
-            <Row key={n} name={n} st={states.get(n)!} stat={stats.get(n)} ml={ml} />
+            <Row key={n} name={n} st={states.get(n)!} stat={stats.get(n)} ml={ml} verbose={verbose} />
           ))}
         </Box>
         {/* Separator */}
@@ -131,7 +170,7 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
           <Text bold color="magenta"> Webs ({webs.length})</Text>
           <ColHeader ml={ml} />
           {visibleWebs.map(n => (
-            <Row key={n} name={n} st={states.get(n)!} stat={stats.get(n)} ml={ml} />
+            <Row key={n} name={n} st={states.get(n)!} stat={stats.get(n)} ml={ml} verbose={verbose} />
           ))}
         </Box>
       </Box>

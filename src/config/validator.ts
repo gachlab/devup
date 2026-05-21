@@ -59,6 +59,21 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
       errors.push({ field: `services[${svc.name}].cwd`, message: `Directory not found: ${svc.cwd}` });
     }
 
+    // errorPattern (same regex grammar as readyPattern)
+    if (svc.errorPattern !== undefined) {
+      if (typeof svc.errorPattern !== 'string' || !svc.errorPattern.length) {
+        errors.push({ field: `services[${svc.name}].errorPattern`, message: `errorPattern must be a non-empty string` });
+      } else {
+        const slashed = /^\/(.+)\/([gimsuy]*)$/.exec(svc.errorPattern);
+        try {
+          if (slashed) new RegExp(slashed[1]!, slashed[2] || 'i');
+          else new RegExp(svc.errorPattern, 'i');
+        } catch (e: any) {
+          errors.push({ field: `services[${svc.name}].errorPattern`, message: `Invalid regex: ${e.message}` });
+        }
+      }
+    }
+
     // readyPattern
     if (svc.readyPattern !== undefined) {
       if (typeof svc.readyPattern !== 'string' || !svc.readyPattern.length) {
@@ -87,6 +102,9 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
       const hc = svc.healthCheck;
       if (hc.type !== 'tcp' && hc.type !== 'http') {
         errors.push({ field: `services[${svc.name}].healthCheck.type`, message: `Invalid healthCheck.type: ${hc.type} (must be "tcp" or "http")` });
+      }
+      if (hc.startPeriod !== undefined && (typeof hc.startPeriod !== 'number' || hc.startPeriod < 0)) {
+        errors.push({ field: `services[${svc.name}].healthCheck.startPeriod`, message: `startPeriod must be a non-negative number (seconds), got ${hc.startPeriod}` });
       }
       if (hc.type === 'http' && hc.path && !hc.path.startsWith('/')) {
         errors.push({ field: `services[${svc.name}].healthCheck.path`, message: `healthCheck.path must start with "/": got "${hc.path}"` });

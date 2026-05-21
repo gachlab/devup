@@ -5,6 +5,27 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-05-21
+
+Config power release — six features that sharpen day-to-day debugging in a long-running stack.
+
+### Added
+- **Regex search in logs** (#8). `/` accepts vim-style `/pattern/flags` in addition to the existing case-insensitive substring mode. `/error/`, `/^api: \d+/`, `/foo/g` all work. Case-insensitive by default — add explicit flags after the slash if needed. Invalid regex falls back to substring search and shows `(invalid regex)` in the logs panel header so the user can correct it. Plain strings (including ones with slashes inside) keep working as substring matches.
+- **`healthCheck.startPeriod` grace window** (#15). New optional field, in seconds. Probes are fully suppressed during the window, status stays `starting`, `health` stays `wait`. Eliminates spurious failed probes during slow boots (Angular cold-start, big webpack builds) that otherwise inflate `state.errors` and pollute the TUI.
+- **Customizable error pattern per service** (#16). New `errorPattern?: string` field on `ServiceConfig`. When set, only stderr lines matching the regex (same `/pattern/flags` grammar as `readyPattern`) bump `state.errors`. Without it, every non-empty stderr line counts (existing behavior). Useful for libraries that write info to stderr — Angular CLI is the worst offender.
+- **Filter logs by level** (#19). Each log line is tagged with a level on ingestion: `error > warn > info`. New `L` key cycles the filter: `all → error → warn+error → all`. Detection is keyword-based with conjugations (`error`, `fail(ed|ure|s)`, `fatal`, `exception`, `crash(ed|es)` → error; `warn(ed|ing|s)`, `deprec` → warn). Devup's own log markers count: `❌`/`✗`/`⛔` → error, `⚠` → warn. `a` (show all) also resets the level filter.
+- **Verbose stats** (#21). New `v` key toggles the stats panel between compact mode and verbose mode. Verbose mode adds two dim indented lines per service: `cmd: <cmd> <resolved args>` (after `buildProcessArgs`, so devup-injected flags like `--max-old-space-size` are visible) and `env: KEY=value ...` (only when `extraEnv` is non-empty). Env values are auto-redacted (`***`) for keys matching `/secret|token|password|api[_-]?key|auth/i`.
+- **Resource awareness — RAM watchdog banner** (#24). When system RAM usage crosses 80 % the stats panel shows a banner: `⚠ RAM 84% — top: app-api 520MB, staff-web 480MB, admin-web 460MB`. Hysteresis-driven (turns off only below 75 %, no flicker at the boundary). Top consumers are sorted by `stats.get(name).mem` and capped at 3.
+
+### Changed
+- `LogEntry` interface gains a required `level: LogLevel` field; both `pushLog()` and the manager-driven `onLog` handler compute it on ingestion.
+- StatusBar shows the new `L` Level and `v` Verbose bindings.
+- The Logs panel header gains `[level: error]` / `[level: warn+error]` markers when a level filter is active.
+
+### Internals
+- New pure helpers in `utils.ts`: `compileSearchPattern`, `detectLogLevel`, `redactSecrets`, `nextRamBannerVisibility`. All exported, all individually tested.
+- Test suite grown from 274 to ~299. New suites: `compileSearchPattern` (6), `detectLogLevel` (5), `redactSecrets` (3), `nextRamBannerVisibility` (4), plus 2 manager tests for `errorPattern` and 1 for `healthCheck.startPeriod`.
+
 ## [0.4.0] — 2026-05-21
 
 Polish + standalone CLI release. Eight focused improvements landed as a single PR with one commit per issue.
@@ -135,6 +156,7 @@ Initial release.
 - Config file resolution order: `devup.config.ts` → `.js` → `.json`, with `--config <path>` override. TypeScript loaded via the `tsx` import hook.
 - CLI flags: `--only`, `--services`, `--skip`, `--lazy`/`--no-lazy`, `--timeout`, `--proxy`, `--proxy-host`, `--proxy-conf`, `--proxy-tls`/`--no-proxy-tls`, `--proxy-entrypoint`, `--config`.
 
+[0.5.0]: https://github.com/gachlab/devup/releases/tag/0.5.0
 [0.4.0]: https://github.com/gachlab/devup/releases/tag/0.4.0
 [0.3.0]: https://github.com/gachlab/devup/releases/tag/0.3.0
 [0.2.0]: https://github.com/gachlab/devup/releases/tag/0.2.0
