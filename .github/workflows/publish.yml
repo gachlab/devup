@@ -34,8 +34,10 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       # Trusted publishing for auth (not just provenance) requires npm >= 11.5.1.
-      # Node 22 LTS ships with npm 10.x, so upgrade explicitly.
-      - run: npm install --global npm@latest
+      # Node 22 LTS ships with npm 10.x, so we pin an upgrade. Using `@latest` here
+      # hit a flaky MODULE_NOT_FOUND on promise-retry during the 0.6.0 publish run,
+      # so pin to a known-good major instead.
+      - run: npm install --global npm@11
       - run: npm --version
       - run: npm ci
       - run: npm run build
