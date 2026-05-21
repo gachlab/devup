@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import type { ProcessState } from '../process/types.js';
 import type { ServiceStats } from './hooks/useProcessManager.js';
-import { fmtUptime, sortServiceNames, tagColors, redactSecrets, buildProcessArgs } from '../utils.js';
+import { fmtUptime, sortServiceNames, tagColors, redactSecrets, buildProcessArgs, nextRamBannerVisibility } from '../utils.js';
 import os from 'node:os';
 
 interface Props {
@@ -120,6 +120,21 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
   const scrolled = effectiveOffset > 0;
   const loopedCount = [...states.values()].filter(isCrashLooped).length;
 
+  // RAM pressure banner with hysteresis (80% on, 75% off).
+  const ramPct = (parseFloat(usedGB) / parseFloat(totalGB)) * 100;
+  const [ramBanner, setRamBanner] = useState(false);
+  useEffect(() => {
+    setRamBanner(prev => nextRamBannerVisibility(ramPct, prev));
+  }, [ramPct]);
+
+  // Top consumers when the banner is active.
+  const topConsumers = ramBanner
+    ? [...stats.entries()]
+        .map(([n, s]) => ({ name: n, mb: parseFloat(s.mem) || 0 }))
+        .sort((a, b) => b.mb - a.mb)
+        .slice(0, 3)
+    : [];
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? 'green' : 'gray'} height={height}>
       <Box>
@@ -131,6 +146,12 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
         <Text dimColor>Stack: CPU {totalCpu.toFixed(1)}% RAM {stackMem} Err {totalErrors} Rst {totalRestarts} Svcs {names.length}</Text>
         {sortMode !== 'name' && <Text dimColor> │ Sort: {sortMode}</Text>}
       </Box>
+      {ramBanner && (
+        <Box>
+          <Text color="yellow" bold> ⚠ RAM {ramPct.toFixed(0)}% — top: </Text>
+          <Text color="yellow">{topConsumers.map(c => `${c.name} ${c.mb.toFixed(0)}MB`).join(', ')}</Text>
+        </Box>
+      )}
       <Box flexGrow={1}>
         {/* Left column: APIs */}
         <Box flexDirection="column" flexGrow={1} flexBasis={0}>

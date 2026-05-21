@@ -24,6 +24,24 @@ export function parseEnvFile(filePath: string, baseEnv: Record<string, string> =
   return env;
 }
 
+// ── Resource awareness ──
+
+/** Hysteresis state machine for the "RAM pressure" banner.
+ *  Returns the next visibility given the current sample and previous visibility.
+ *  - turns on when usagePct > highWatermark
+ *  - turns off when usagePct < lowWatermark
+ *  - stays as-is in the dead band between watermarks */
+export function nextRamBannerVisibility(
+  usagePct: number,
+  previousVisible: boolean,
+  highWatermark = 80,
+  lowWatermark = 75,
+): boolean {
+  if (usagePct >= highWatermark) return true;
+  if (usagePct < lowWatermark) return false;
+  return previousVisible;
+}
+
 // ── Verbose stats helpers ──
 
 /** Returns the env record with values redacted to *** for keys that look

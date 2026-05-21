@@ -3,8 +3,31 @@ import assert from 'node:assert/strict';
 import {
   parseEnvFile, fmtUptime, calcCpuPercent, sortServiceNames,
   groupByPhase, buildProcessArgs, buildProcessEnv, compileSearchPattern,
-  detectLogLevel, redactSecrets,
+  detectLogLevel, redactSecrets, nextRamBannerVisibility,
 } from '../../src/utils.js';
+
+describe('nextRamBannerVisibility', () => {
+  it('turns on at or above the high watermark', () => {
+    assert.equal(nextRamBannerVisibility(80, false), true);
+    assert.equal(nextRamBannerVisibility(95, false), true);
+  });
+
+  it('turns off below the low watermark', () => {
+    assert.equal(nextRamBannerVisibility(70, true), false);
+    assert.equal(nextRamBannerVisibility(0, true), false);
+  });
+
+  it('stays in the dead band between watermarks', () => {
+    assert.equal(nextRamBannerVisibility(77, true), true);   // was visible, stays visible
+    assert.equal(nextRamBannerVisibility(77, false), false); // was hidden, stays hidden
+  });
+
+  it('honors custom watermarks', () => {
+    assert.equal(nextRamBannerVisibility(91, false, 90, 85), true);
+    assert.equal(nextRamBannerVisibility(84, true, 90, 85), false);
+    assert.equal(nextRamBannerVisibility(87, true, 90, 85), true);
+  });
+});
 
 describe('redactSecrets', () => {
   it('returns empty object for undefined / empty', () => {
