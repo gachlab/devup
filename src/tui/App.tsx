@@ -21,6 +21,9 @@ import type { ProcessState } from '../process/types.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { isCrashLooped } from './StatsPanel.js';
 import { pickTip } from './tips.js';
+import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
+import { createInterface } from 'node:readline';
+import { createReadStream, existsSync } from 'node:fs';
 
 /** Builds the URL to open in the browser when the user picks a service.
  *  Honors the proxy + TLS settings: if --proxy is active and the service has
@@ -71,6 +74,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const [booted, setBooted] = useState(false);
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
   const externals = useRef<ExternalProc[]>([]);
+  const socketServer = useRef<SocketServerHandle | null>(null);
   const shownTips = useRef<Set<string>>(new Set());
   const [activeTip, setActiveTip] = useState<string | null>(null);
 
@@ -84,6 +88,8 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
+    await socketServer.current?.close();
+    socketServer.current = null;
     await pm.cleanup();
     if (externals.current.length) {
       await stopExternals(externals.current, platform, {
@@ -95,6 +101,37 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     await logSink?.close();
     process.exit(0);
   }, [pm, logSink, platform, baseCwd, env]);
+
+  // Local control plane (Unix socket / JSON-RPC).
+  useEffect(() => {
+    if (!pm.manager) return;
+    let handle: SocketServerHandle | null = null;
+    (async () => {
+      try {
+        handle = await startSocketServer(config.name, {
+          states: () => pm.manager!.state,
+          restart: (name) => pm.manager!.restart(name),
+          stop: (name) => pm.manager!.stop(name),
+          tailLogs: async (svcName, lines) => {
+            if (!logSink) return [];
+            const file = logSink.pathFor(svcName);
+            if (!existsSync(file)) return [];
+            return new Promise<string[]>((resolve, reject) => {
+              const buf: string[] = [];
+              const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }) });
+              rl.on('line', l => { buf.push(l); if (buf.length > lines) buf.shift(); });
+              rl.on('close', () => resolve(buf));
+              rl.on('error', reject);
+            });
+          },
+        }, { onLog: msg => pm.pushLog('devup', msg, 12) });
+        socketServer.current = handle;
+      } catch (e: any) {
+        pm.pushLog('devup', `⚠ control plane disabled: ${e.message}`, 5);
+      }
+    })();
+    return () => { void handle?.close(); };
+  }, [pm.manager, config.name, logSink]);
 
   // Propagar pausa al sink de logs (incluye auto-pausa cuando el usuario scrolleó arriba).
   useEffect(() => {
