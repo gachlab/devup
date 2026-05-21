@@ -86,6 +86,7 @@ npx devup
 | `lazy` | `LazyConfig` | | Lazy mode configuration |
 | `proxy` | `ProxyConfig` | | Reverse proxy config generation |
 | `profiles` | `Record<string, string[]>` | | Named lists of services to boot. Select with `--profile <name>` |
+| `external` | `ExternalService[]` | | Dependencies started **before** phase 0 (databases, queues, etc.) |
 
 #### Profiles
 
@@ -177,6 +178,44 @@ For TypeScript services or anything that needs a compile step, two hooks remove 
 - **`watchBuild`** runs as a sibling process. devup kills it when the service stops, restarts, or the TUI exits. Output is tagged `[watch]`.
 
 Both are passed through the platform shell (`sh -c` on Unix, `cmd /c` on Windows), so pipes and `&&` work.
+
+### `ExternalService`
+
+External dependencies (databases, message queues, etc.) launched **before** phase 0. devup waits for each `healthCheck` (when set) to pass before starting any service. Typical use: `docker compose up -d`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | `string` | ✅ | Friendly name shown in logs (logs use the prefix `ext:<name>`) |
+| `cmd` | `string` | ✅ | Shell command (passed through `sh -c` / `cmd /c`). Pipes and `&&` work |
+| `cwd` | `string` | | Working directory relative to the project root |
+| `extraEnv` | `Record<string, string>` | | Extra env vars merged on top of the project env |
+| `healthCheck` | `HealthCheckConfig` | | Readiness probe. devup waits for `up` before starting phase 0 |
+| `port` | `number` | when `healthCheck` is set | Port to probe |
+| `startTimeout` | `number` | | Max seconds to wait for healthCheck. Default: `60` |
+| `stopCmd` | `string` | | Shell command run on shutdown (e.g. `docker compose down`) |
+
+```typescript
+export default defineConfig({
+  // ...
+  external: [
+    {
+      name: 'mongo',
+      cmd: 'docker compose -f docker-compose.dev.yml up -d mongo',
+      port: 27017,
+      healthCheck: { type: 'tcp' },
+      stopCmd: 'docker compose -f docker-compose.dev.yml stop mongo',
+    },
+    {
+      name: 'redis',
+      cmd: 'docker compose -f docker-compose.dev.yml up -d redis',
+      port: 6379,
+      healthCheck: { type: 'tcp' },
+    },
+  ],
+});
+```
+
+If any external fails its healthCheck within `startTimeout` seconds, devup aborts the boot, runs each external's `stopCmd` (best-effort), and exits.
 
 ### `LazyConfig`
 

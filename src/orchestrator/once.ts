@@ -5,6 +5,7 @@ import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
 import type { Platform } from '../platform/types.js';
 import type { LogSink } from '../process/log-sink.js';
+import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 
 export interface OnceOpts {
   config: DevStackConfig;
@@ -32,6 +33,23 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     },
   });
 
+  // External dependencies (DBs, queues, etc.) before phase 0.
+  let externals: ExternalProc[] = [];
+  if (config.external?.length) {
+    out(`▶ externals (${config.external.length})`);
+    const result = await startExternals(config.external, {
+      baseCwd, env, platform,
+      onLog: (svc, msg) => { logSink?.write(`ext:${svc}`, msg); out(`[ext:${svc}] ${msg}`); },
+    });
+    externals = result.procs;
+    if (!result.allHealthy) {
+      out(`✗ externals failed: ${result.failed.join(', ')}`);
+      await stopExternals(externals, platform, { baseCwd, env });
+      await mgr.cleanup();
+      return 1;
+    }
+  }
+
   const phases = groupByPhase(services);
   const phaseNums = Object.keys(phases).map(Number).sort((a, b) => a - b);
   const apiNames = services.filter(s => s.type === 'api').map(s => s.name);
@@ -46,6 +64,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       if (!installed) {
         out(`✗ install failed for ${svc.name}`);
         await mgr.cleanup();
+        await stopExternals(externals, platform, { baseCwd, env });
         return 1;
       }
       await mgr.start(svc, ci);
@@ -58,6 +77,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       if (!ok) {
         out(`✗ ${api.name} did not become healthy within ${cliArgs.onceTimeout}s`);
         await mgr.cleanup();
+        await stopExternals(externals, platform, { baseCwd, env });
         return 1;
       }
       out(`✓ ${api.name} ready`);
@@ -69,6 +89,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
   const summary = `ready: ${apiNames.length} APIs in ${((cliArgs.onceTimeout * 1000 - (deadline - Date.now())) / 1000).toFixed(1)}s`;
   out(summary);
   await mgr.cleanup();
+  await stopExternals(externals, platform, { baseCwd, env });
   return 0;
 }
 

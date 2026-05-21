@@ -46,6 +46,25 @@ export interface ProxyConfig {
   entrypoint?: string;
 }
 
+export interface ExternalService {
+  /** Friendly name (used in logs and the stats panel). Must be unique within `external`. */
+  name: string;
+  /** Shell command to start. Will be passed through `sh -c` / `cmd /c`. */
+  cmd: string;
+  /** Optional working directory (relative to the project root). */
+  cwd?: string;
+  /** Extra env vars merged on top of the project env. */
+  extraEnv?: Record<string, string>;
+  /** Optional readiness probe. devup waits for this to return `up` before starting phase 0. */
+  healthCheck?: HealthCheckConfig;
+  /** Port to probe when `healthCheck` is set. Required for tcp checks. */
+  port?: number;
+  /** Max seconds to wait for healthCheck to pass before giving up. Default: 60. */
+  startTimeout?: number;
+  /** Optional shell command run on shutdown (e.g. `docker compose down`). */
+  stopCmd?: string;
+}
+
 export interface DevStackConfig {
   name: string;
   icon?: string;
@@ -56,6 +75,8 @@ export interface DevStackConfig {
   proxy?: ProxyConfig;
   /** Named lists of service names — selectable with --profile <name>. */
   profiles?: Record<string, string[]>;
+  /** Optional external dependencies (DBs, queues) started before phase 0. */
+  external?: ExternalService[];
 }
 
 export function defineConfig(config: DevStackConfig): DevStackConfig {

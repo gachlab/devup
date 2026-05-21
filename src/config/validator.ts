@@ -121,6 +121,36 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     }
   }
 
+  // External services
+  if (config.external) {
+    const extNames = new Set<string>();
+    for (const ext of config.external) {
+      if (!ext.name?.trim()) {
+        errors.push({ field: 'external[].name', message: 'External service name is required' });
+        continue;
+      }
+      if (extNames.has(ext.name)) {
+        errors.push({ field: `external[${ext.name}].name`, message: `Duplicate external name: ${ext.name}` });
+      }
+      extNames.add(ext.name);
+      if (!ext.cmd?.trim()) {
+        errors.push({ field: `external[${ext.name}].cmd`, message: 'cmd is required' });
+      }
+      if (ext.healthCheck) {
+        const hc = ext.healthCheck;
+        if (hc.type !== 'tcp' && hc.type !== 'http') {
+          errors.push({ field: `external[${ext.name}].healthCheck.type`, message: `Invalid healthCheck.type: ${hc.type}` });
+        }
+        if ((hc.type === 'tcp' || hc.type === 'http') && (typeof ext.port !== 'number' || ext.port <= 0)) {
+          errors.push({ field: `external[${ext.name}].port`, message: `port is required when healthCheck is set (got ${ext.port})` });
+        }
+        if (hc.type === 'http' && hc.path && !hc.path.startsWith('/')) {
+          errors.push({ field: `external[${ext.name}].healthCheck.path`, message: `must start with "/"` });
+        }
+      }
+    }
+  }
+
   // Proxy route refs
   if (config.proxy?.routes) {
     for (const ref of Object.keys(config.proxy.routes)) {

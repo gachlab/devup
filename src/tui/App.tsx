@@ -18,6 +18,7 @@ import { waitForPort } from '../process/health.js';
 import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import type { ProcessState } from '../process/types.js';
+import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 
 interface Props {
   config: DevStackConfig;
@@ -47,6 +48,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const pm = useProcessManager(platform, baseCwd, env, logSink);
   const [booted, setBooted] = useState(false);
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
+  const externals = useRef<ExternalProc[]>([]);
 
   const kb = useKeyBindings({
     onQuit: () => {
@@ -59,9 +61,16 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
     await pm.cleanup();
+    if (externals.current.length) {
+      await stopExternals(externals.current, platform, {
+        baseCwd, env,
+        onLog: (svc, msg) => pm.pushLog(`ext:${svc}`, msg, 12),
+      });
+      externals.current = [];
+    }
     await logSink?.close();
     process.exit(0);
-  }, [pm, logSink]);
+  }, [pm, logSink, platform, baseCwd, env]);
 
   // Propagar pausa al sink de logs (incluye auto-pausa cuando el usuario scrolleó arriba).
   useEffect(() => {
@@ -79,6 +88,19 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     (async () => {
       const lazyMode = cliArgs.lazy;
       const lazyTimeout = cliArgs.lazyTimeout;
+
+      // External dependencies (DBs, queues, etc.) — must be healthy before phase 0.
+      if (config.external?.length) {
+        const result = await startExternals(config.external, {
+          baseCwd, env, platform,
+          onLog: (svc, msg) => pm.pushLog(`ext:${svc}`, msg, 12),
+        });
+        externals.current = result.procs;
+        if (!result.allHealthy) {
+          pm.pushLog('devup', `❌ external(s) failed: ${result.failed.join(', ')}. Aborting boot.`, 5);
+          return;
+        }
+      }
 
       if (lazyMode && config.lazy) {
         // ── Lazy mode ──

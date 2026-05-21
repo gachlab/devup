@@ -25,6 +25,18 @@ export function renderDryRun(opts: DryRunOpts): string {
   lines.push(`Services: ${services.length}`);
   lines.push('');
 
+  if (config.external?.length) {
+    lines.push(`Externals (${config.external.length}):`);
+    for (const ext of config.external) {
+      const hc = ext.healthCheck;
+      const hcTag = hc
+        ? ` health=${hc.type}${hc.type === 'http' ? ' ' + (hc.path ?? '/') : ''} :${ext.port ?? '?'}`
+        : '';
+      lines.push(`  - ${ext.name.padEnd(20)} ${ext.cmd}${hcTag}`);
+    }
+    lines.push('');
+  }
+
   const lazyMode = cliArgs.lazy && !!config.lazy;
   let alwaysOn: ServiceConfig[] = services;
   let lazy: ServiceConfig[] = [];

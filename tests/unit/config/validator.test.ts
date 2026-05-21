@@ -177,4 +177,51 @@ describe('validateConfig', () => {
       assert.ok(errors.some(e => e.field.endsWith('watchBuild') && e.message.includes('non-empty')));
     });
   });
+
+  describe('external services', () => {
+    it('accepts valid external with no healthCheck', () => {
+      const cfg = minimal();
+      cfg.external = [{ name: 'mongo', cmd: 'docker compose up -d' }];
+      const errors = validateConfig(cfg, tmp);
+      assert.equal(errors.filter(e => e.field.startsWith('external')).length, 0);
+    });
+
+    it('accepts valid external with tcp healthCheck and port', () => {
+      const cfg = minimal();
+      cfg.external = [{ name: 'redis', cmd: 'redis-server', port: 6379, healthCheck: { type: 'tcp' } }];
+      const errors = validateConfig(cfg, tmp);
+      assert.equal(errors.filter(e => e.field.startsWith('external')).length, 0);
+    });
+
+    it('rejects external with missing cmd', () => {
+      const cfg = minimal();
+      cfg.external = [{ name: 'bad', cmd: '' }];
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.field === 'external[bad].cmd'));
+    });
+
+    it('rejects duplicate external names', () => {
+      const cfg = minimal();
+      cfg.external = [
+        { name: 'a', cmd: 'echo' },
+        { name: 'a', cmd: 'echo' },
+      ];
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('Duplicate external')));
+    });
+
+    it('rejects healthCheck without port', () => {
+      const cfg = minimal();
+      cfg.external = [{ name: 'noport', cmd: 'foo', healthCheck: { type: 'tcp' } }];
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('port is required')));
+    });
+
+    it('rejects http healthCheck.path without leading slash', () => {
+      const cfg = minimal();
+      cfg.external = [{ name: 'svc', cmd: 'foo', port: 9, healthCheck: { type: 'http', path: 'health' } }];
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('must start with "/"')));
+    });
+  });
 });

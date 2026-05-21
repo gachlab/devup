@@ -94,6 +94,23 @@ export function useProcessManager(
 
   const clearLogs = useCallback(() => { pendingLogsRef.current = []; setLogs([]); }, []);
 
+  /** Push a log line not tied to a ProcessManager-managed service (e.g. externals). */
+  const pushLog = useCallback((svcName: string, text: string, colorIdx = 0) => {
+    sinkRef.current?.write(svcName, text);
+    const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now() };
+    if (pausedRef.current) {
+      pendingLogsRef.current.push(entry);
+      if (pendingLogsRef.current.length > 5000) {
+        pendingLogsRef.current = pendingLogsRef.current.slice(-5000);
+      }
+      return;
+    }
+    setLogs(prev => {
+      const next = prev.concat(entry);
+      return next.length > 5000 ? next.slice(-5000) : next;
+    });
+  }, []);
+
   const setPaused = useCallback((paused: boolean) => {
     pausedRef.current = paused;
     if (!paused && pendingLogsRef.current.length) {
@@ -115,6 +132,7 @@ export function useProcessManager(
     cleanup: useCallback(() => mgr?.cleanup(), [mgr]),
     clearLogs,
     setPaused,
+    pushLog,
     manager: mgr,
   };
 }
