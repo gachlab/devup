@@ -138,4 +138,69 @@ describe('ProcessManager', () => {
     mgr.stop('noready');
     await new Promise(r => setTimeout(r, 100));
   });
+
+  // Shell-dependent tests skipped on Windows: cmd.exe handles quoting differently
+  // than sh, and there's no portable `sleep` equivalent without per-platform tricks.
+  // The non-test code path uses sh -c / cmd /c so the feature itself works on both.
+  const skipOnWindows = process.platform === 'win32';
+
+  describe('preBuild', { skip: skipOnWindows }, () => {
+    it('runs preBuild successfully then starts the service', { timeout: 5000 }, async () => {
+      const { mgr, logs } = makeManager();
+      const svc = makeSvc({
+        name: 'pb-ok', port: 19881,
+        preBuild: "echo 'build ran'",
+        args: ['-e', 'setTimeout(()=>{}, 30000)'],
+      });
+      await mgr.start(svc, 0);
+      const st = mgr.state.get('pb-ok')!;
+      assert.equal(st.status, 'starting');
+      assert.ok(st.pid, 'service was spawned after preBuild');
+      assert.ok(logs.some(l => l.includes('🔨 preBuild')));
+      assert.ok(logs.some(l => l.includes('[build] build ran')));
+      assert.ok(logs.some(l => l.includes('[build] ✅ done')));
+      mgr.stop('pb-ok');
+      await new Promise(r => setTimeout(r, 100));
+    });
+
+    it('skips spawn and marks crashed when preBuild fails', { timeout: 5000 }, async () => {
+      const { mgr, logs } = makeManager();
+      const svc = makeSvc({
+        name: 'pb-fail', port: 19882,
+        preBuild: 'exit 1',
+      });
+      await mgr.start(svc, 0);
+      const st = mgr.state.get('pb-fail')!;
+      assert.equal(st.status, 'crashed');
+      assert.equal(st.pid, null, 'service must not have been spawned');
+      assert.ok(logs.some(l => l.includes('[build] ❌ exited with code 1')));
+    });
+  });
+
+  describe('watchBuild', { skip: skipOnWindows }, () => {
+    it('spawns a side-car alongside the service and kills it on stop', { timeout: 5000 }, async () => {
+      const { mgr, logs } = makeManager();
+      const svc = makeSvc({
+        name: 'wb', port: 19883,
+        args: ['-e', 'setTimeout(()=>{}, 30000)'],
+        watchBuild: 'sleep 30',
+      });
+      await mgr.start(svc, 0);
+      const st = mgr.state.get('wb')!;
+      assert.ok(st.watchProc, 'watchProc should be set');
+      assert.ok(st.watchProc?.pid, 'watchProc should have a pid');
+      const wpid = st.watchProc!.pid!;
+
+      assert.ok(logs.some(l => l.includes('👀 watchBuild')));
+
+      mgr.stop('wb');
+      await new Promise(r => setTimeout(r, 200));
+      assert.equal(mgr.state.get('wb')!.watchProc, null);
+      // Best-effort: the watch process should no longer be running
+      try { process.kill(wpid, 0); assert.fail('watchProc still alive'); } catch (e: any) {
+        // ESRCH or EPERM both mean the pid is gone or not ours — both acceptable
+        assert.ok(e.code === 'ESRCH' || e.code === 'EPERM', `expected ESRCH/EPERM, got ${e.code}`);
+      }
+    });
+  });
 });

@@ -116,8 +116,8 @@ Then `devup --profile check-in` boots that subset. Composable with `--skip`. The
 | `port` | `number` | ✅ | Port the service listens on. Must be unique |
 | `phase` | `number` | ✅ | Startup phase (0 = first). Services in the same phase start together; devup waits for all APIs in a phase to be ready before starting the next phase |
 | `maxMem` | `number` | | Max memory in MB. Injects `--max-old-space-size` for `node` commands, or `NODE_OPTIONS` for `npx` |
-| `preBuild` | `string` | | Command to run before starting (e.g., `npm run build`) |
-| `watchBuild` | `string` | | Watch command to run alongside the service (e.g., `npx tsup --watch`) |
+| `preBuild` | `string` | | Shell command run **before** the service starts. If it exits non-zero the service is marked `crashed` and skipped. Output is tagged `[build]` in the logs panel |
+| `watchBuild` | `string` | | Shell command spawned **alongside** the service (e.g. `npx tsup --watch`). Killed automatically when the service stops/restarts. Output is tagged `[watch]` in the logs panel |
 | `nodeArgs` | `string[]` | | Extra Node.js arguments |
 | `extraEnv` | `Record<string, string>` | | Extra environment variables for this service |
 | `healthCheck` | `HealthCheckConfig` | | Override the readiness check for this service. Default: TCP probe on `port` |
@@ -157,6 +157,26 @@ A regex matched against each line of the service's stdout/stderr. The first matc
 ```
 
 Both plain strings and vim-style `/pattern/flags` are accepted. Strings are case-insensitive by default.
+
+#### Build hooks: `preBuild` and `watchBuild`
+
+For TypeScript services or anything that needs a compile step, two hooks remove the usual `sh -c 'npm run build && (npx tsup --watch &) && node ...'` workaround:
+
+```typescript
+{
+  name: 'orders-api',
+  cwd: 'orders/api',
+  cmd: 'node', args: ['dist/index.js'],
+  type: 'api', port: 3031, phase: 1,
+  preBuild: 'npm run build',         // runs once, must succeed before the service starts
+  watchBuild: 'npx tsup --watch',    // runs in parallel; killed when the service stops
+}
+```
+
+- **`preBuild`** runs synchronously before the spawn. Non-zero exit marks the service as `crashed` (the spawn is skipped). Output is tagged `[build]` in the logs panel.
+- **`watchBuild`** runs as a sibling process. devup kills it when the service stops, restarts, or the TUI exits. Output is tagged `[watch]`.
+
+Both are passed through the platform shell (`sh -c` on Unix, `cmd /c` on Windows), so pipes and `&&` work.
 
 ### `LazyConfig`
 

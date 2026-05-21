@@ -15,6 +15,8 @@ export interface ProcessState {
   startedAt: number | null;
   intentionalStop: boolean;
   colorIdx: number;
+  /** Side-car watch process spawned alongside the main one (when `watchBuild` is set). */
+  watchProc?: ChildProcess | null;
 }
 
 export interface ProcessManagerEvents {

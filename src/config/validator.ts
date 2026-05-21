@@ -74,6 +74,14 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
       }
     }
 
+    // preBuild / watchBuild
+    if (svc.preBuild !== undefined && (typeof svc.preBuild !== 'string' || !svc.preBuild.trim())) {
+      errors.push({ field: `services[${svc.name}].preBuild`, message: `preBuild must be a non-empty string` });
+    }
+    if (svc.watchBuild !== undefined && (typeof svc.watchBuild !== 'string' || !svc.watchBuild.trim())) {
+      errors.push({ field: `services[${svc.name}].watchBuild`, message: `watchBuild must be a non-empty string` });
+    }
+
     // healthCheck
     if (svc.healthCheck) {
       const hc = svc.healthCheck;
