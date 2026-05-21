@@ -20,6 +20,8 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 - **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs
 - **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter
 - **Port conflict detection** — checks if a port is already in use before starting a service; also validates lazy `port + 10000` collisions at config-load time
+- **Pre-flight validation** — `--watch-path` arguments are checked against disk before spawn so a stale config after a rebase fails loudly instead of silently
+- **Subcommands** — `devup logs <svc>`, `devup install`, `devup status` work without launching the TUI
 
 ## Quick start
 
@@ -238,6 +240,20 @@ When lazy mode is active (default), services not in `alwaysOn` start a TCP proxy
 | `entrypoint` | `string` | | Proxy entrypoint name. Default: `'websecure'` |
 
 The proxy config is only generated when `--proxy` is passed on the CLI. Only services with `health === 'up'` are included in the generated config.
+
+## CLI subcommands
+
+```
+devup                              # launch the interactive TUI (default)
+devup logs <service> [--follow]    # print the persisted log file
+devup install                      # parallel npm install across services
+devup status                       # health-check every service in config
+devup help [<subcommand>]          # show usage
+devup --version                    # print version
+devup --help                       # print flag summary
+```
+
+All subcommands need the project's `devup.config.ts` to be resolvable (use `--config <path>` to override).
 
 ## CLI flags
 
