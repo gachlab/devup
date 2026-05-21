@@ -51,6 +51,11 @@ describe('parseCliArgs', () => {
   it('--no-log-file disables log file', () => assert.equal(parseCliArgs(['--no-log-file']).logFile, false));
   it('--log-dir sets custom path', () => assert.equal(parseCliArgs(['--log-dir', '/tmp/devup-logs']).logDir, '/tmp/devup-logs'));
   it('log file enabled by default', () => assert.equal(parseCliArgs([]).logFile, true));
+
+  it('--watch-config opts into hot reload', () => {
+    assert.equal(parseCliArgs(['--watch-config']).watchConfig, true);
+    assert.equal(parseCliArgs([]).watchConfig, false);
+  });
 });
 
 describe('filterServices', () => {

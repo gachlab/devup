@@ -8,20 +8,42 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 
 ## Features
 
+### Orchestration
 - **Phased startup** — boot services in dependency order with automatic port readiness detection
-- **Lazy mode** — only start services when they receive traffic. Idle services shut down after a configurable timeout (respects active connections, no killing mid-WebSocket)
-- **TUI dashboard** — live logs and process stats (CPU, memory, health, errors, restarts) in a split-panel terminal UI with scrolling, search, filter, and auto-pause when you scroll up
-- **Cross-platform** — Linux, macOS, and Windows. Platform-specific process management, stats collection, and browser opening
-- **HTTP or TCP health checks** — per-service `healthCheck` config: TCP probe (default) or HTTP GET with configurable path and status codes
-- **Reverse proxy config** — generate Traefik, Nginx, or Caddy config from running services. Health-aware: only routes to healthy services
-- **Persistent logs** — every line streamed to `~/.devup/logs/<project>/<svc>.log` with rotation on each launch
-- **CI-ready** — `--dry-run` prints the boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI
-- **Project-agnostic** — works with any Node.js monorepo. Your project defines a `devup.config.ts`, devup does the rest
-- **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs
-- **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter
-- **Port conflict detection** — checks if a port is already in use before starting a service; also validates lazy `port + 10000` collisions at config-load time
+- **Lazy mode** — only start services when they receive traffic; idle services shut down after a configurable timeout (respects active connections, no killing mid-WebSocket)
+- **Profiles** — name common service subsets in config; boot with `devup --profile check-in`
+- **External hooks** — start `docker compose` (DBs, queues) before phase 0, with health gating + `stopCmd` on shutdown
+- **Build hooks** — `preBuild` runs before spawn (output `[build]`); `watchBuild` runs as a side-car (output `[watch]`); both managed by devup
+- **Hot reload** — `--watch-config` diffs `devup.config.*` on save and applies add/remove/restart without killing the TUI
+- **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter; crash-loop badge surfaces services that need attention
 - **Pre-flight validation** — `--watch-path` arguments are checked against disk before spawn so a stale config after a rebase fails loudly instead of silently
-- **Subcommands** — `devup logs <svc>`, `devup install`, `devup status` work without launching the TUI
+- **Port conflict detection** — checks if a port is already in use before starting a service; also validates lazy `port + 10000` collisions at config-load time
+- **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs
+
+### Readiness
+- **HTTP or TCP health checks** — per-service `healthCheck` config: TCP probe (default) or HTTP GET with configurable path, status codes, timeout, and `startPeriod` grace window
+- **`readyPattern`** — regex matched against stdout/stderr; the first match flips the service to `up`, short-circuiting the next health poll (Vite's `ready in 423 ms`, Angular's `Compiled successfully`)
+- **`errorPattern`** — only matching stderr lines bump the error counter (filters out info-on-stderr noise from Angular CLI etc.)
+
+### TUI
+- **Live logs and process stats** — CPU, memory, health, errors, restarts in a split-panel terminal UI
+- **Scrolling, search, filter** — ↑/↓/PgUp/PgDn/Home/End; auto-pause when you scroll up
+- **Regex search** — `/pattern/flags` accepted by the search input (case-insensitive by default; invalid regex surfaced in the header)
+- **Level filter** — `L` cycles all → error → warn+error
+- **Verbose stats** — `v` expands rows to show resolved `cmd`/args/env (secrets redacted)
+- **Fuzzy filter** — service-picker modals (`f`/`r`/`o`) filter as you type
+- **Contextual tips** — one-liner nudges at teachable moments (high log volume, crash loop, etc.), once per session
+- **RAM watchdog** — banner surfaces when system RAM crosses 80 % with top consumers (hysteresis: clears below 75 %)
+- **TLS-aware open** — `o` opens `https://<sub>.<domain>` when `--proxy` is active and TLS is on
+
+### Operations
+- **Persistent logs** — every line streamed to `~/.devup/logs/<project>/<svc>.log` with rotation on each launch
+- **Subcommands** — `devup logs <svc> [--follow]`, `devup install`, `devup status`, `devup help` work without launching the TUI
+- **CI-ready** — `--dry-run` prints the resolved boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI
+- **Reverse proxy config** — generate Traefik, Nginx, or Caddy config from running services; health-aware (only `health === 'up'` routed)
+- **Unix-socket control plane** — local JSON-RPC at `~/.devup/sock-<project>.sock` (chmod 0600); `status`, `restart`, `stop`, `logs.tail`, `ping`
+- **Cross-platform** — Linux, macOS, and Windows. Platform-specific process management, stats collection, and browser opening
+- **Project-agnostic** — works with any Node.js monorepo. Your project defines a `devup.config.ts`, devup does the rest
 
 ## Quick start
 
@@ -307,6 +329,12 @@ devup [options]
 |---|---|
 | `--no-log-file` | Disable persistent log files |
 | `--log-dir /path` | Override log root. Default: `~/.devup/logs/<project>/<service>.log` |
+
+### Hot reload
+
+| Flag | Description |
+|---|---|
+| `--watch-config` | Watch `devup.config.*`; on save, diff against the running set and apply add/remove/restart per service. Validation runs first; failed configs leave the running set untouched |
 
 devup writes a separate `.log` file per service to disk. Lines are prefixed with an ISO timestamp. On each fresh launch the previous file is rotated to `<service>.log.prev`, so you always have at most two runs of history per service.
 
