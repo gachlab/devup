@@ -46,7 +46,8 @@ test('ServiceList - renders with title and services', () => {
   assert.ok(output.includes(':3001'));
   assert.ok(output.includes('↑↓ navigate'));
   assert.ok(output.includes('Enter select'));
-  assert.ok(output.includes('Esc close'));
+  assert.ok(output.includes('Esc clear/close'));
+  assert.ok(output.includes('type to filter'));
 });
 
 test('ServiceList - filters by type when filterType specified', () => {
