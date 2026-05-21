@@ -5,6 +5,22 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-05-21
+
+Control plane release. Two features that unlock external integrations and editor workflows.
+
+### Added
+- **Unix-socket control plane** (#26). devup now binds a JSON-RPC server to `~/.devup/sock-<project>.sock` with `chmod 0600`. Speaks newline-delimited JSON. Methods: `ping` (liveness), `status` (full snapshot of every service), `restart { svc }`, `stop { svc }`, `logs.tail { svc, lines? }` (capped at 10 000). Auth is filesystem-perms-only — strictly local; TCP exposure intentionally out of scope. Designed as the foundation for `devup logs --follow` against a running instance, IDE plugins, and future hot-reload coordination. If `listen()` fails (perms, dir missing) devup keeps running without the control plane and logs a single notice.
+- **Hot reload of `devup.config.*`** (#23). Opt-in via `--watch-config`. devup watches the resolved config file and applies add/remove/restart at the service level when it changes — no need to kill the TUI. Validation runs first; a failed config leaves the running set untouched. The diff classifies each service as added / removed / changed / unchanged (changed = any spawn-relevant field differs). Banner via the logs panel summarises each reload: `🔁 config reloaded: +1 added, -2 removed, ~1 changed`. 250 ms debounce because editors emit several change events per save; in-flight guard coalesces back-to-back saves.
+
+### Changed
+- README "Features" section reorganised into Orchestration / Readiness / TUI / Operations and brought up to date with everything added since 0.2.0 — every feature now has a one-line entry in the header.
+
+### Internals
+- New module `src/control-plane/socket-server.ts` exposing `startSocketServer()` / `defaultSocketPath()` (pure helpers + `RpcContext` interface).
+- New module `src/config/diff.ts` exposing `diffServices()` and `summariseDiff()` (pure functions, no side effects).
+- Test suite grown to ~321 (+22). New suites: `socket-server` (9), `diff` (11).
+
 ## [0.5.0] — 2026-05-21
 
 Config power release — six features that sharpen day-to-day debugging in a long-running stack.
@@ -156,6 +172,7 @@ Initial release.
 - Config file resolution order: `devup.config.ts` → `.js` → `.json`, with `--config <path>` override. TypeScript loaded via the `tsx` import hook.
 - CLI flags: `--only`, `--services`, `--skip`, `--lazy`/`--no-lazy`, `--timeout`, `--proxy`, `--proxy-host`, `--proxy-conf`, `--proxy-tls`/`--no-proxy-tls`, `--proxy-entrypoint`, `--config`.
 
+[0.6.0]: https://github.com/gachlab/devup/releases/tag/0.6.0
 [0.5.0]: https://github.com/gachlab/devup/releases/tag/0.5.0
 [0.4.0]: https://github.com/gachlab/devup/releases/tag/0.4.0
 [0.3.0]: https://github.com/gachlab/devup/releases/tag/0.3.0
