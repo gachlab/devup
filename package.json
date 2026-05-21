@@ -1,6 +1,6 @@
 {
   "name": "@gachlab/devup",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Dev stack runner with TUI, lazy proxy, and reverse proxy support",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "keywords": [
     "dev",

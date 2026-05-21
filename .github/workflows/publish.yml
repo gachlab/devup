@@ -33,8 +33,12 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # Trusted publishing for auth (not just provenance) requires npm >= 11.5.1.
+      # Node 22 LTS ships with npm 10.x, so upgrade explicitly.
+      - run: npm install --global npm@latest
+      - run: npm --version
       - run: npm ci
       - run: npm run build
+      # Auth + provenance both via OIDC; Trusted Publisher must be set up at
+      # https://www.npmjs.com/package/@gachlab/devup/access  →  no NODE_AUTH_TOKEN needed.
       - run: npm publish --access public --provenance
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
