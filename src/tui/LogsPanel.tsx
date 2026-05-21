@@ -14,10 +14,16 @@ interface Props {
   focused: boolean;
   scrollOffset: number;
   resetScroll: () => void;
+  levelFilter?: 'all' | 'error' | 'warn';
 }
 
-export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll }: Props) {
-  const filtered = filter ? logs.filter(l => l.svcName === filter) : logs;
+export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll, levelFilter = 'all' }: Props) {
+  const byService = filter ? logs.filter(l => l.svcName === filter) : logs;
+  const filtered = levelFilter === 'all'
+    ? byService
+    : levelFilter === 'error'
+      ? byService.filter(l => l.level === 'error')
+      : byService.filter(l => l.level === 'error' || l.level === 'warn');
   const contentHeight = Math.max(1, height - 2);
   const totalLines = filtered.length;
 
@@ -43,6 +49,7 @@ export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, ma
     filter ? `[${filter}]` : '',
     searchTerm ? `/${searchTerm}` : '',
     matcher?.invalid ? '(invalid regex)' : '',
+    levelFilter !== 'all' ? `[level: ${levelFilter}${levelFilter === 'warn' ? '+error' : ''}]` : '',
     paused ? '[PAUSED]' : '',
     scrolled ? '[SCROLL]' : '',
     `${filtered.length} lines`,

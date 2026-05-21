@@ -3,7 +3,38 @@ import assert from 'node:assert/strict';
 import {
   parseEnvFile, fmtUptime, calcCpuPercent, sortServiceNames,
   groupByPhase, buildProcessArgs, buildProcessEnv, compileSearchPattern,
+  detectLogLevel,
 } from '../../src/utils.js';
+
+describe('detectLogLevel', () => {
+  it('detects error from common keywords', () => {
+    assert.equal(detectLogLevel('Error: connection refused'), 'error');
+    assert.equal(detectLogLevel('FATAL: out of memory'), 'error');
+    assert.equal(detectLogLevel('Exception in worker'), 'error');
+    assert.equal(detectLogLevel('something failed badly'), 'error');
+  });
+
+  it('detects error from devup-internal markers', () => {
+    assert.equal(detectLogLevel('❌ exited with code 1'), 'error');
+    assert.equal(detectLogLevel('✗ broken-watch'), 'error');
+  });
+
+  it('detects warn from common keywords', () => {
+    assert.equal(detectLogLevel('Warning: deprecated API'), 'warn');
+    assert.equal(detectLogLevel('warn: cache miss'), 'warn');
+    assert.equal(detectLogLevel('⚠ port already in use'), 'warn');
+  });
+
+  it('falls back to info for everything else', () => {
+    assert.equal(detectLogLevel('Server listening on port 3000'), 'info');
+    assert.equal(detectLogLevel(''), 'info');
+    assert.equal(detectLogLevel('   '), 'info');
+  });
+
+  it('error takes priority over warn', () => {
+    assert.equal(detectLogLevel('Warning: an error occurred'), 'error');
+  });
+});
 
 describe('compileSearchPattern', () => {
   it('returns null for empty / null term', () => {

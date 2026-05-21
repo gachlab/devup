@@ -3,7 +3,7 @@ import { ProcessManager } from '../../process/manager.js';
 import type { ProcessState } from '../../process/types.js';
 import type { Platform } from '../../platform/types.js';
 import type { ServiceConfig } from '../../config/types.js';
-import { calcCpuPercent } from '../../utils.js';
+import { calcCpuPercent, detectLogLevel, type LogLevel } from '../../utils.js';
 import { LogSink } from '../../process/log-sink.js';
 
 export interface LogEntry {
@@ -11,6 +11,7 @@ export interface LogEntry {
   text: string;
   colorIdx: number;
   ts: number;
+  level: LogLevel;
 }
 
 export interface ServiceStats {
@@ -40,7 +41,7 @@ export function useProcessManager(
       events: {
         onLog: (svcName, text, colorIdx) => {
           sinkRef.current?.write(svcName, text);
-          const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now() };
+          const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) };
           if (pausedRef.current) {
             pendingLogsRef.current.push(entry);
             if (pendingLogsRef.current.length > 5000) {
@@ -97,7 +98,7 @@ export function useProcessManager(
   /** Push a log line not tied to a ProcessManager-managed service (e.g. externals). */
   const pushLog = useCallback((svcName: string, text: string, colorIdx = 0) => {
     sinkRef.current?.write(svcName, text);
-    const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now() };
+    const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) };
     if (pausedRef.current) {
       pendingLogsRef.current.push(entry);
       if (pendingLogsRef.current.length > 5000) {

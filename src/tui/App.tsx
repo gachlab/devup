@@ -254,6 +254,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         paused={kb.logsPaused} showTimestamps={kb.showTimestamps}
         maxNameLen={maxNameLen} height={logsHeight} focused={kb.panel === 'logs'}
         scrollOffset={kb.logsScrollOffset} resetScroll={kb.resetLogsScroll}
+        levelFilter={kb.levelFilter}
       />
 
       <StatsPanel

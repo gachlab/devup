@@ -24,6 +24,20 @@ export function parseEnvFile(filePath: string, baseEnv: Record<string, string> =
   return env;
 }
 
+// ── Log level detection ──
+
+export type LogLevel = 'error' | 'warn' | 'info';
+
+/** Detects the level of a log line by case-insensitive keyword priority:
+ *  error (and synonyms) > warn > info. Used by the L-level filter. */
+export function detectLogLevel(line: string): LogLevel {
+  const l = line.toLowerCase();
+  // Conjugations covered for fail/crash; `error` and `exception` matched as exact word.
+  if (/\b(?:error|err|fail(?:ed|ure|ures|s)?|fatal|exception|crash(?:ed|es)?)\b/.test(l) || /❌|✗|⛔/.test(line)) return 'error';
+  if (/\b(?:warn(?:ed|ing|s|ings)?|deprec)\b/.test(l) || /⚠/.test(line)) return 'warn';
+  return 'info';
+}
+
 // ── Search pattern ──
 
 export interface SearchMatcher {
