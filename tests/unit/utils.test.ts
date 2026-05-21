@@ -3,8 +3,42 @@ import assert from 'node:assert/strict';
 import {
   parseEnvFile, fmtUptime, calcCpuPercent, sortServiceNames,
   groupByPhase, buildProcessArgs, buildProcessEnv, compileSearchPattern,
-  detectLogLevel,
+  detectLogLevel, redactSecrets,
 } from '../../src/utils.js';
+
+describe('redactSecrets', () => {
+  it('returns empty object for undefined / empty', () => {
+    assert.deepEqual(redactSecrets(undefined), {});
+    assert.deepEqual(redactSecrets({}), {});
+  });
+
+  it('redacts keys that look secret-ish', () => {
+    const out = redactSecrets({
+      NODE_ENV: 'production',
+      API_KEY: 'sk-abc',
+      DATABASE_URL: 'postgres://...',
+      JWT_SECRET: 'shhh',
+      AUTH_TOKEN: 'bearer-xyz',
+      PASSWORD: 'p1',
+      MY_API_KEY: 'k',
+      USER_AUTH: 'u',
+    });
+    assert.equal(out['NODE_ENV'], 'production');
+    assert.equal(out['DATABASE_URL'], 'postgres://...');
+    assert.equal(out['API_KEY'], '***');
+    assert.equal(out['JWT_SECRET'], '***');
+    assert.equal(out['AUTH_TOKEN'], '***');
+    assert.equal(out['PASSWORD'], '***');
+    assert.equal(out['MY_API_KEY'], '***');
+    assert.equal(out['USER_AUTH'], '***');
+  });
+
+  it('is case-insensitive on the key', () => {
+    const out = redactSecrets({ secret_thing: 'x', Foo: 'y' });
+    assert.equal(out['secret_thing'], '***');
+    assert.equal(out['Foo'], 'y');
+  });
+});
 
 describe('detectLogLevel', () => {
   it('detects error from common keywords', () => {

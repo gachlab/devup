@@ -261,6 +261,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         states={pm.states} stats={pm.stats} sortMode={kb.sortMode}
         maxNameLen={maxNameLen} height={statsHeight} focused={kb.panel === 'stats'}
         scrollOffset={kb.statsScrollOffset} resetScroll={kb.resetStatsScroll}
+        verbose={kb.verboseStats}
       />
 
       {kb.modal === 'filter' && (
