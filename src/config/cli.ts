@@ -18,6 +18,7 @@ export interface CliArgs {
   onceTimeout: number;
   logFile: boolean;
   logDir?: string;
+  watchConfig: boolean;
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
@@ -56,6 +57,10 @@ Log files:
   --no-log-file            Disable persistent log files
   --log-dir <path>         Override log root (default: ~/.devup/logs)
 
+Hot reload:
+  --watch-config           Watch devup.config.* and apply add/remove/restart
+                           service changes without exiting the TUI
+
 Other:
   -h, --help               Show this help and exit
   -v, --version            Show version and exit
@@ -74,6 +79,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     once: false,
     onceTimeout: DEFAULT_ONCE_TIMEOUT,
     logFile: true,
+    watchConfig: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -100,6 +106,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
+      case '--watch-config':     args.watchConfig = true; break;
     }
   }
 
