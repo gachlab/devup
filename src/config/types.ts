@@ -12,6 +12,11 @@ export interface ServiceConfig {
   nodeArgs?: string[];
   extraEnv?: Record<string, string>;
   healthCheck?: HealthCheckConfig;
+  /** Case-insensitive regex. When a line of the service's stdout/stderr matches,
+   *  the service is immediately marked as `up` without waiting for the next
+   *  health-check poll. Speeds up phase transitions on cold boots.
+   *  Examples: '/ready in \\d+ ms/' (Vite), '/compiled successfully/' (Angular). */
+  readyPattern?: string;
 }
 
 export interface HealthCheckConfig {

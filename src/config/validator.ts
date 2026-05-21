@@ -59,6 +59,21 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
       errors.push({ field: `services[${svc.name}].cwd`, message: `Directory not found: ${svc.cwd}` });
     }
 
+    // readyPattern
+    if (svc.readyPattern !== undefined) {
+      if (typeof svc.readyPattern !== 'string' || !svc.readyPattern.length) {
+        errors.push({ field: `services[${svc.name}].readyPattern`, message: `readyPattern must be a non-empty string` });
+      } else {
+        const slashed = /^\/(.+)\/([gimsuy]*)$/.exec(svc.readyPattern);
+        try {
+          if (slashed) new RegExp(slashed[1]!, slashed[2] || 'i');
+          else new RegExp(svc.readyPattern, 'i');
+        } catch (e: any) {
+          errors.push({ field: `services[${svc.name}].readyPattern`, message: `Invalid regex: ${e.message}` });
+        }
+      }
+    }
+
     // healthCheck
     if (svc.healthCheck) {
       const hc = svc.healthCheck;

@@ -123,4 +123,34 @@ describe('validateConfig', () => {
       assert.ok(errors.some(e => e.message.includes('non-empty array')));
     });
   });
+
+  describe('readyPattern', () => {
+    it('accepts plain string pattern', () => {
+      const cfg = minimal();
+      cfg.services[0]!.readyPattern = 'ready in';
+      const errors = validateConfig(cfg, tmp);
+      assert.equal(errors.filter(e => e.field.includes('readyPattern')).length, 0);
+    });
+
+    it('accepts vim-style /pattern/flags', () => {
+      const cfg = minimal();
+      cfg.services[0]!.readyPattern = '/^api: \\d+$/i';
+      const errors = validateConfig(cfg, tmp);
+      assert.equal(errors.filter(e => e.field.includes('readyPattern')).length, 0);
+    });
+
+    it('rejects invalid regex', () => {
+      const cfg = minimal();
+      cfg.services[0]!.readyPattern = '(unclosed';
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('Invalid regex')));
+    });
+
+    it('rejects empty string', () => {
+      const cfg = minimal();
+      cfg.services[0]!.readyPattern = '';
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('non-empty string')));
+    });
+  });
 });
