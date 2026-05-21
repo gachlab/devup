@@ -1,6 +1,6 @@
 {
   "name": "@gachlab/devup",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Dev stack runner with TUI, lazy proxy, and reverse proxy support",
   "type": "module",
   "main": "dist/index.js",

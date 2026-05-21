@@ -5,6 +5,35 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-05-21
+
+### Added
+- **Profiles / scenarios** (#4). New `profiles: Record<string, string[]>` field on `DevStackConfig` plus a `--profile <name>` CLI flag. Lets you save common service-subset combinations under a name (e.g. `'check-in'`, `'pickup'`) and boot them with one short command instead of typing `--services` every time. Composable with `--skip`. Unknown profile names produce a friendly error listing what's available.
+- **`readyPattern` for instant up detection** (#13). New per-service field accepting a plain string or vim-style `/pattern/flags` regex. On the first matching stdout/stderr line devup flips the service to `up` immediately, short-circuiting the next 3-second health-check poll. Speeds up phase transitions when frameworks print recognisable boot lines (Vite's `ready in 423 ms`, Angular's `Compiled successfully`, Fastify's `server listening`). The periodic health-check still runs as a fallback.
+- **`preBuild` and `watchBuild` hooks** (#12). The fields existed in the type but were ignored. Now implemented properly:
+  - `preBuild` runs synchronously before the spawn through the platform shell (`sh -c` / `cmd /c`); non-zero exit marks the service `crashed` and skips the spawn.
+  - `watchBuild` is spawned as a sibling process and killed (kill-tree) on stop/restart/cleanup.
+  - Output is tagged `[build]` / `[watch]` in the logs panel and flows through the same line buffer + log sink pipeline.
+  - Replaces the awkward `sh -c 'npm run build && (npx tsup --watch &) && node ...'` workaround in projects with TypeScript services.
+- **`external` / pre hooks for external dependencies** (#14). New top-level `external: ExternalService[]` field for databases, queues, etc. Externals run **before phase 0** through the platform shell with optional `healthCheck` gating and `stopCmd` on shutdown. devup aborts the boot (and runs every `stopCmd`) if any external fails its healthCheck within `startTimeout` (default 60 s). Closes the "do `docker compose up -d` then run devup" loop. Logs are tagged `ext:<name>` and persisted to `~/.devup/logs/<proj>/ext_<name>.log`.
+
+### Changed
+- `filterServices()` now accepts an optional `config` arg to resolve `--profile`. Calls from `index.ts` updated.
+- `--dry-run` header now shows the active profile and a new `Externals (N):` section with each entry's healthCheck tag.
+- `ProcessState` gains an optional `watchProc` field tracking the `watchBuild` side-car.
+- `useProcessManager` exposes `pushLog()` so non-service log lines (externals, future side-cars) flow through the same pause buffer and log sink as regular service lines.
+
+### Fixed
+- Validator catches profile entries that reference unknown services or are empty arrays.
+- Validator catches invalid `readyPattern` regex and empty strings.
+- Validator catches empty `preBuild` / `watchBuild` strings.
+- Validator catches external dependencies with missing `cmd`, duplicate names, missing `port` when a healthCheck is set, or `http` healthCheck paths without a leading `/`.
+
+### Internals
+- New module `src/process/external.ts` (`startExternals` / `stopExternals`).
+- Test suite grown from 200 to ~237 — new suites: `ready-pattern`, `external` (Unix-only, follows the existing skip-on-Windows convention used by integration tests), validator coverage for every new field.
+- Shell-dependent `preBuild`/`watchBuild` integration tests skipped on Windows. The feature itself works on both platforms because the runtime code path already routes through `sh -c` / `cmd /c`; only writing a single test command that exercises spawn behaviour across both shells without per-platform branching is awkward.
+
 ## [0.2.0] — 2026-05-21
 
 ### Added
@@ -77,6 +106,7 @@ Initial release.
 - Config file resolution order: `devup.config.ts` → `.js` → `.json`, with `--config <path>` override. TypeScript loaded via the `tsx` import hook.
 - CLI flags: `--only`, `--services`, `--skip`, `--lazy`/`--no-lazy`, `--timeout`, `--proxy`, `--proxy-host`, `--proxy-conf`, `--proxy-tls`/`--no-proxy-tls`, `--proxy-entrypoint`, `--config`.
 
-[0.2.0]: https://github.com/gachlab/devup/releases/tag/v0.2.0
-[0.1.1]: https://github.com/gachlab/devup/releases/tag/v0.1.1
-[0.1.0]: https://github.com/gachlab/devup/releases/tag/v0.1.0
+[0.3.0]: https://github.com/gachlab/devup/releases/tag/0.3.0
+[0.2.0]: https://github.com/gachlab/devup/releases/tag/0.2.0
+[0.1.1]: https://github.com/gachlab/devup/releases/tag/0.1.1
+[0.1.0]: https://github.com/gachlab/devup/releases/tag/0.1.0
