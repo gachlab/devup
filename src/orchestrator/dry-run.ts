@@ -21,6 +21,7 @@ export function renderDryRun(opts: DryRunOpts): string {
 
   lines.push(`Project:  ${config.icon ?? '📦'} ${config.name}`);
   lines.push(`Mode:     ${cliArgs.lazy && config.lazy ? 'lazy' : 'normal'}`);
+  if (cliArgs.profile) lines.push(`Profile:  ${cliArgs.profile}`);
   lines.push(`Services: ${services.length}`);
   lines.push('');
 

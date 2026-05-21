@@ -1,10 +1,11 @@
-import type { ServiceConfig } from './types.js';
+import type { DevStackConfig, ServiceConfig } from './types.js';
 
 export interface CliArgs {
   configPath?: string;
   only?: string;
   skip: string[];
   services?: string[];
+  profile?: string;
   lazy: boolean;
   lazyTimeout: number;
   proxy: boolean;
@@ -45,6 +46,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--only':       args.only = next; i++; break;
       case '--skip':       args.skip = next?.split(',') ?? []; i++; break;
       case '--services':   args.services = next?.split(','); i++; break;
+      case '--profile':    args.profile = next; i++; break;
       case '--lazy':       args.lazy = true; break;
       case '--no-lazy':    args.lazy = false; break;
       case '--timeout':    args.lazyTimeout = parseInt(next ?? '', 10) || DEFAULT_LAZY_TIMEOUT; i++; break;
@@ -65,10 +67,23 @@ export function parseCliArgs(argv: string[]): CliArgs {
   return args;
 }
 
-export function filterServices(services: ServiceConfig[], args: CliArgs): ServiceConfig[] {
+export function filterServices(
+  services: ServiceConfig[],
+  args: CliArgs,
+  config?: Pick<DevStackConfig, 'profiles'>,
+): ServiceConfig[] {
   let result = services;
 
-  if (args.services) {
+  if (args.profile) {
+    const profileNames = config?.profiles?.[args.profile];
+    if (!profileNames) {
+      const available = Object.keys(config?.profiles ?? {});
+      const hint = available.length ? `Available: ${available.join(', ')}` : 'No profiles defined in config.';
+      throw new Error(`Unknown profile: "${args.profile}". ${hint}`);
+    }
+    const set = new Set(profileNames);
+    result = result.filter(s => set.has(s.name));
+  } else if (args.services) {
     const explicit = new Set(args.services);
     result = result.filter(s => explicit.has(s.name));
   } else if (args.only) {

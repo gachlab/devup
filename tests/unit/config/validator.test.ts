@@ -100,4 +100,27 @@ describe('validateConfig', () => {
     const errors = validateConfig(cfg, tmp);
     assert.ok(errors.some(e => e.message.includes('must start with "/"')));
   });
+
+  describe('profiles', () => {
+    it('accepts valid profile referencing real services', () => {
+      const cfg = minimal();
+      cfg.profiles = { 'core': ['api-a', 'web-a'] };
+      const errors = validateConfig(cfg, tmp);
+      assert.equal(errors.filter(e => e.field.startsWith('profiles')).length, 0);
+    });
+
+    it('rejects profile pointing at unknown service', () => {
+      const cfg = minimal();
+      cfg.profiles = { 'core': ['nonexistent'] };
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('Unknown service: nonexistent')));
+    });
+
+    it('rejects empty profile array', () => {
+      const cfg = minimal();
+      cfg.profiles = { 'core': [] };
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.message.includes('non-empty array')));
+    });
+  });
 });

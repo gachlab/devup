@@ -107,6 +107,21 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     }
   }
 
+  // Profiles
+  if (config.profiles) {
+    for (const [profile, svcNames] of Object.entries(config.profiles)) {
+      if (!Array.isArray(svcNames) || !svcNames.length) {
+        errors.push({ field: `profiles.${profile}`, message: `Profile "${profile}" must be a non-empty array of service names` });
+        continue;
+      }
+      for (const ref of svcNames) {
+        if (!names.has(ref)) {
+          errors.push({ field: `profiles.${profile}`, message: `Unknown service: ${ref}` });
+        }
+      }
+    }
+  }
+
   return errors;
 }
 
