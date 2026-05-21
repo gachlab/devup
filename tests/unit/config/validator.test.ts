@@ -153,4 +153,28 @@ describe('validateConfig', () => {
       assert.ok(errors.some(e => e.message.includes('non-empty string')));
     });
   });
+
+  describe('preBuild / watchBuild', () => {
+    it('accepts valid preBuild and watchBuild', () => {
+      const cfg = minimal();
+      cfg.services[0]!.preBuild = 'npm run build';
+      cfg.services[0]!.watchBuild = 'npx tsup --watch';
+      const errors = validateConfig(cfg, tmp);
+      assert.equal(errors.filter(e => /preBuild|watchBuild/.test(e.field)).length, 0);
+    });
+
+    it('rejects empty preBuild', () => {
+      const cfg = minimal();
+      cfg.services[0]!.preBuild = '   ';
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.field.endsWith('preBuild') && e.message.includes('non-empty')));
+    });
+
+    it('rejects empty watchBuild', () => {
+      const cfg = minimal();
+      cfg.services[0]!.watchBuild = '';
+      const errors = validateConfig(cfg, tmp);
+      assert.ok(errors.some(e => e.field.endsWith('watchBuild') && e.message.includes('non-empty')));
+    });
+  });
 });

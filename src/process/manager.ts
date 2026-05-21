@@ -79,6 +79,16 @@ export class ProcessManager {
       }
     }
 
+    // preBuild: run synchronously before spawning the service.
+    if (svc.preBuild) {
+      const built = await this.runPreBuild(svc, cwd, colorIdx);
+      if (!built) {
+        // Record crashed state so the UI shows the failure.
+        this.recordCrashedState(svc, colorIdx);
+        return;
+      }
+    }
+
     const args = buildProcessArgs(svc);
     const env = buildProcessEnv(svc, this.env);
     const proc = spawn(svc.cmd, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -124,6 +134,8 @@ export class ProcessManager {
 
     proc.on('close', code => {
       this.procs.delete(proc);
+      // Tear down the side-car watch process when the main one stops.
+      this.stopWatchProc(state);
       if (state.intentionalStop) { state.intentionalStop = false; return; }
       if (code === 0) {
         state.status = 'stopped'; state.health = 'down';
@@ -144,7 +156,74 @@ export class ProcessManager {
       }
     });
 
+    // watchBuild: side-car process running alongside the service.
+    if (svc.watchBuild) {
+      state.watchProc = this.spawnWatchBuild(svc, cwd, env, colorIdx);
+    }
+
     this.log(svc.name, isRestart ? `🔄 restarted (:${svc.port})` : `🚀 started (:${svc.port})`, colorIdx);
+  }
+
+  private runPreBuild(svc: ServiceConfig, cwd: string, colorIdx: number): Promise<boolean> {
+    this.log(svc.name, `🔨 preBuild: ${svc.preBuild}`, colorIdx);
+    return new Promise(resolve => {
+      const isWin = process.platform === 'win32';
+      const shell = isWin ? 'cmd.exe' : 'sh';
+      const shellFlag = isWin ? '/c' : '-c';
+      const env = buildProcessEnv(svc, this.env);
+      const child = spawn(shell, [shellFlag, svc.preBuild!], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+
+      const outBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
+      const errBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
+      child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
+      child.stderr?.on('data', (d: Buffer) => errBuf.push(d));
+
+      child.on('error', err => {
+        this.log(svc.name, `[build] ❌ ${err.message}`, colorIdx);
+        resolve(false);
+      });
+      child.on('close', code => {
+        outBuf.flush(); errBuf.flush();
+        if (code === 0) {
+          this.log(svc.name, `[build] ✅ done`, colorIdx);
+          resolve(true);
+        } else {
+          this.log(svc.name, `[build] ❌ exited with code ${code}`, colorIdx);
+          resolve(false);
+        }
+      });
+    });
+  }
+
+  private spawnWatchBuild(svc: ServiceConfig, cwd: string, env: Record<string, string>, colorIdx: number): ChildProcess {
+    this.log(svc.name, `👀 watchBuild: ${svc.watchBuild}`, colorIdx);
+    const isWin = process.platform === 'win32';
+    const shell = isWin ? 'cmd.exe' : 'sh';
+    const shellFlag = isWin ? '/c' : '-c';
+    const child = spawn(shell, [shellFlag, svc.watchBuild!], {
+      cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const outBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
+    const errBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
+    child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
+    child.stderr?.on('data', (d: Buffer) => errBuf.push(d));
+    child.on('error', err => this.log(svc.name, `[watch] ❌ ${err.message}`, colorIdx));
+    return child;
+  }
+
+  /** Create a state entry in 'crashed' status without spawning a process (used when preBuild fails). */
+  private recordCrashedState(svc: ServiceConfig, colorIdx: number): void {
+    const prev = this.state.get(svc.name);
+    this.state.set(svc.name, {
+      svc, proc: null, pid: null,
+      status: 'crashed', health: 'down',
+      errors: prev?.errors ?? 0,
+      restarts: prev?.restarts ?? 0,
+      startedAt: null,
+      intentionalStop: false,
+      colorIdx,
+    });
+    this.events.onStateChange(svc.name, this.state.get(svc.name)!);
   }
 
   stop(name: string): void {
@@ -152,6 +231,14 @@ export class ProcessManager {
     if (!st?.proc || !st.pid) return;
     st.intentionalStop = true;
     this.platform.killTree(st.pid);
+    this.stopWatchProc(st);
+  }
+
+  private stopWatchProc(state: ProcessState): void {
+    const wp = state.watchProc;
+    if (!wp || !wp.pid) return;
+    try { this.platform.killTree(wp.pid); } catch { /* already dead */ }
+    state.watchProc = null;
   }
 
   async restart(name: string): Promise<void> {
@@ -187,9 +274,14 @@ export class ProcessManager {
 
     for (const proc of procs) {
       const st = this.findStateByProc(proc);
-      if (st) st.intentionalStop = true;
+      if (st) {
+        st.intentionalStop = true;
+        this.stopWatchProc(st);
+      }
       if (proc.pid) this.platform.killTree(proc.pid);
     }
+    // Any side-car watch processes whose service hasn't been seen above (e.g. preBuild-failed services).
+    for (const st of this.state.values()) this.stopWatchProc(st);
 
     const waits = procs.map(p =>
       p.exitCode !== null || p.signalCode !== null
