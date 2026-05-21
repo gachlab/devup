@@ -2,8 +2,52 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseEnvFile, fmtUptime, calcCpuPercent, sortServiceNames,
-  groupByPhase, buildProcessArgs, buildProcessEnv,
+  groupByPhase, buildProcessArgs, buildProcessEnv, compileSearchPattern,
 } from '../../src/utils.js';
+
+describe('compileSearchPattern', () => {
+  it('returns null for empty / null term', () => {
+    assert.equal(compileSearchPattern(null), null);
+    assert.equal(compileSearchPattern(''), null);
+  });
+
+  it('plain string is case-insensitive substring', () => {
+    const m = compileSearchPattern('Error')!;
+    assert.equal(m.test('database ERROR thrown'), true);
+    assert.equal(m.test('database error thrown'), true);
+    assert.equal(m.test('no match here'), false);
+    assert.equal(m.regex, undefined);
+  });
+
+  it('/pattern/ compiles to a case-insensitive regex by default', () => {
+    const m = compileSearchPattern('/^api: \\d+/')!;
+    assert.ok(m.regex);
+    assert.equal(m.regex!.flags, 'i');
+    assert.equal(m.test('API: 3000 listening'), true);
+    assert.equal(m.test('http api: 3000'), false);  // anchored
+  });
+
+  it('honors explicit flags after the closing slash', () => {
+    const m = compileSearchPattern('/error/g')!;
+    assert.ok(m.regex);
+    assert.ok(m.regex!.flags.includes('i')); // i is added if missing
+    assert.ok(m.regex!.flags.includes('g'));
+  });
+
+  it('falls back to substring on invalid regex and reports invalid', () => {
+    const m = compileSearchPattern('/(unclosed/')!;
+    assert.equal(m.invalid, true);
+    assert.equal(m.regex, undefined);
+    // Still works as substring search of the literal text
+    assert.equal(m.test('a /(unclosed/ b'), true);
+  });
+
+  it('plain string with slashes does NOT trigger regex mode', () => {
+    const m = compileSearchPattern('some/path')!;
+    assert.equal(m.regex, undefined);
+    assert.equal(m.test('see SOME/PATH here'), true);
+  });
+});
 
 describe('fmtUptime', () => {
   it('returns dash for invalid', () => { assert.equal(fmtUptime(-1), '-'); assert.equal(fmtUptime(0), '-'); });

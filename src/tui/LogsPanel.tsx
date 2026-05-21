@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import type { LogEntry } from './hooks/useProcessManager.js';
-import { tagColors } from '../utils.js';
+import { tagColors, compileSearchPattern } from '../utils.js';
 
 interface Props {
   logs: LogEntry[];
@@ -35,11 +35,14 @@ export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, ma
     resetScroll();
   }, [filter, searchTerm, resetScroll]);
 
+  const matcher = useMemo(() => compileSearchPattern(searchTerm), [searchTerm]);
+
   const scrolled = effectiveOffset > 0;
   const label = [
     'Logs',
     filter ? `[${filter}]` : '',
     searchTerm ? `/${searchTerm}` : '',
+    matcher?.invalid ? '(invalid regex)' : '',
     paused ? '[PAUSED]' : '',
     scrolled ? '[SCROLL]' : '',
     `${filtered.length} lines`,
@@ -53,7 +56,7 @@ export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, ma
         const color = tagColors[entry.colorIdx % tagColors.length]!;
         const ts = showTimestamps ? new Date(entry.ts).toLocaleTimeString('en-GB') + ' ' : '';
         const line = entry.text;
-        const isMatch = searchTerm && line.toLowerCase().includes(searchTerm.toLowerCase());
+        const isMatch = matcher ? matcher.test(line) : false;
         return (
           <Box key={i}>
             {showTimestamps && <Text dimColor>{ts}</Text>}
