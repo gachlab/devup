@@ -5,6 +5,35 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-05-21
+
+Polish + standalone CLI release. Eight focused improvements landed as a single PR with one commit per issue.
+
+### Added
+- **`devup --version` / `-v` and `devup --help` / `-h`** (#6). Both short-circuit before any config loading and exit `0`. Version is read from `package.json` at runtime so dev (via tsx) and the published tarball both report the right number.
+- **Standalone subcommands** (#17): `devup logs <service> [--follow|-f]`, `devup install`, `devup status`, `devup help [<subcommand>]`. Reuse the persistent log files and the health-check primitives without launching the TUI. `logs --follow` tails new lines via `watchFile` and exits cleanly on SIGINT. `install` runs `npm install` across every service.cwd in parallel (max 4 at a time), skipping ones whose `.install-stamp` matches. `status` probes each service's healthCheck and prints a table.
+- **Pre-flight check for `--watch-path` arguments** (#5). Before spawning a service, devup scans its args for `--watch` / `--watch-path` (both `--flag value` and `--flag=value` forms) and verifies every referenced path exists relative to the service's `cwd`. Missing paths mark the service `crashed` with one grouped error line instead of letting Node 22 die with a cryptic message after a rebase that renamed directories.
+- **Browser open respects proxy + TLS** (#10). Pressing `o` in the TUI now opens `https://<sub>.<domain>` when `--proxy` is active and the service has a route. Falls back to `http://localhost:<port>` otherwise. Honors `proxy.tls: false` by using `http://` on the subdomain.
+- **Crash-loop badge** (#11). Services that exhausted their auto-restart budget (`status === 'crashed' && restarts >= MAX_RESTARTS`) now render with `✖` (red, bold), status label `looping`, and a `⚠ N need attention` counter in the stats panel header. Easy to spot in a long service list.
+- **Fuzzy filter in `ServiceList` modal** (#18). All three picker modals (`f`, `r`, `o`) now accept typed characters to filter the list in real time. Backspace removes a character. First Esc clears the filter, second Esc closes the modal. Sub-second selection on stacks with 30+ services.
+- **Contextual tips** (#22). At teachable moments the TUI shows a dim one-liner in the header bar (e.g. "tip: press / to search in logs" once logs exceed 1000 lines, or "tip: press r to restart" when a service crash-loops). Each tip shows at most once per session and auto-clears after 12 s. Priority order favors actionable tips (crash → search → filter).
+
+### Changed
+- **`npm pkg fix` cleanup** (#7). `bin.devup` normalised to `dist/index.js` (no leading `./`), `repository.url` to `git+https://...`. New `prepack` script runs `npm pkg fix` on every publish so the warnings from 0.2.0 don't reappear.
+- `ServiceList` footer hint updated: `type to filter  ↑↓ navigate  Enter select  Esc clear/close`.
+- README gets a new "CLI subcommands" section and additions to the Features list ("Pre-flight validation", "Subcommands").
+
+### Fixed
+- Reordering inside the TUI key-binding handler so `Ctrl+F` (PgDn) never falls through to the filter modal (`f`). Same fix applied to other `Ctrl`-modified bindings.
+
+### Internals
+- Exported `extractWatchPaths(args)` from `process/manager.ts` (handles `--watch X`, `--watch-path X`, `--watch=X`, `--watch-path=X`; ignores `--watch-path` followed by another flag; doesn't match unrelated flags like `--watcher`).
+- Exported `isCrashLooped(st)` + `MAX_RESTARTS` constant from `tui/StatsPanel.tsx` for test reuse and to drive the crash-loop banner.
+- Exported `buildServiceUrl(name, port, proxyActive, proxyOpts)` from `tui/App.tsx` for testability.
+- New `src/tui/tips.ts` with a pure `pickTip(state)` function — easy to extend by appending to the priority list.
+- New `src/orchestrator/subcommands.ts` with `detectSubcommand`, `runLogs`, `runInstall`, `runStatus`, `runHelp`.
+- Test suite grown to ~274.
+
 ## [0.3.0] — 2026-05-21
 
 ### Added
@@ -106,6 +135,7 @@ Initial release.
 - Config file resolution order: `devup.config.ts` → `.js` → `.json`, with `--config <path>` override. TypeScript loaded via the `tsx` import hook.
 - CLI flags: `--only`, `--services`, `--skip`, `--lazy`/`--no-lazy`, `--timeout`, `--proxy`, `--proxy-host`, `--proxy-conf`, `--proxy-tls`/`--no-proxy-tls`, `--proxy-entrypoint`, `--config`.
 
+[0.4.0]: https://github.com/gachlab/devup/releases/tag/0.4.0
 [0.3.0]: https://github.com/gachlab/devup/releases/tag/0.3.0
 [0.2.0]: https://github.com/gachlab/devup/releases/tag/0.2.0
 [0.1.1]: https://github.com/gachlab/devup/releases/tag/0.1.1
