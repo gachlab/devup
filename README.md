@@ -40,9 +40,11 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 - **Persistent logs** — every line streamed to `~/.devup/logs/<project>/<svc>.log` with rotation on each launch.
 - **Subcommands** — `devup logs <svc> [--follow]`, `devup install`, `devup status`, `devup help` work without launching the TUI.
 - **CI-ready** — `--dry-run` prints the resolved boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI.
+- **Daemon mode** — `devup up -d` boots the stack detached (like `docker compose up -d`) so you can keep using the same terminal. `devup down` stops it. Linux + macOS.
+- **`devup ctl`** — CLI client for the control plane: `ping`, `status [--follow]`, `logs <svc> [--follow]`, `restart`, `stop`.
 - **Reverse-proxy config** — generate Traefik, Nginx, or Caddy config from running services; health-aware.
-- **Unix-socket control plane** — local JSON-RPC at `~/.devup/sock-<project>.sock` (chmod 0600); `status`, `restart`, `stop`, `logs.tail`, `ping`.
-- **Cross-platform** — Linux, macOS, and Windows. Platform-specific process management, stats collection, and browser opening.
+- **Unix-socket control plane** — local JSON-RPC at `~/.devup/sock-<project>.sock` (chmod 0600); `status`, `restart`, `stop`, `logs.tail`, `logs.follow`, `status.follow`, `ping`.
+- **Cross-platform** — Linux, macOS, and Windows for the TUI; daemon mode is Linux + macOS only.
 
 ## Quick start
 

@@ -5,6 +5,34 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-05-22
+
+**Headless devup.** The control plane grows up: streaming events, a CLI client that speaks it end-to-end, and the long-requested daemon mode so the stack can be left running while you keep working in the same terminal — `docker compose up -d` for Node monorepos.
+
+### Added
+- **Streaming control plane** (#46). Two new RPC methods over the existing Unix socket:
+  - `logs.follow { svc, tail? }` — ack, then a replay of the last N tail lines (default 50), then live newline-delimited frames until the socket closes.
+  - `status.follow` — ack, then a full snapshot, then deltas as services transition.
+  Subscriptions auto-clean on socket close; no explicit unfollow needed. Backed by a small typed `Broadcaster<T>` pub-sub fed from `ProcessManagerEvents.onLog` / `onStateChange`.
+- **`devup ctl <method>` CLI client** (#47). Lightweight reference client that exercises every control-plane method, doubles as a useful tool on its own:
+  - `devup ctl ping` — liveness check
+  - `devup ctl status [--follow]` — snapshot or live stream
+  - `devup ctl logs <svc> [--follow]` — tail (last 100) or follow live stream
+  - `devup ctl restart <svc>` / `devup ctl stop <svc>` — write operations
+  Friendly error when the daemon isn't running. Streaming variants abort on SIGINT.
+- **Daemon mode** (#54). `devup up -d` (also `--detach`) boots the stack and returns the terminal immediately, leaving services running until explicitly stopped:
+  - Double-forks via `spawn({ detached: true, stdio: 'ignore' })` so the daemon survives terminal close. The parent waits up to 90s for the child to write `~/.devup/<project>.pid` (success signal) or `~/.devup/<project>.boot-error` (failure).
+  - Headless: no Ink/TUI mounted in the daemon process. **Feature parity with the TUI**: same `ProcessManager`, `LogSink`, control plane, lazy proxies, externals, proxy-config sync, and `--watch-config` hot-reload — minus the React layer.
+  - `devup down` reads the PID file, sends SIGTERM with a 10-second grace window, falls back to SIGKILL, and cleans up the PID + socket files. Reports stale PID files clearly.
+  - One daemon per project; trying `devup up -d` while one is running prints the existing PID and exits 1.
+  - Not yet supported on Windows; clear error directs users to the TUI.
+
+### Internals
+- New `src/orchestrator/config-watcher.ts` extracts the diff/apply logic from `useHotReload` into a pure `applyConfigChange()` + an fs.watch wrapper `watchConfig()`. Both the TUI hook and the daemon now share this code path.
+
+### Notes
+- Test suite: 338 → 369 (+31). New: 3 streaming, 8 `ctl`, 10 daemon unit, 3 daemon E2E (boot + clean shutdown, hot-reload, "already running" guard), 6 config-watcher tests, plus 1 fix to existing config tests.
+
 ## [0.7.1] — 2026-05-22
 
 Internals cleanup. No user-facing changes; safe drop-in upgrade from 0.7.0.
