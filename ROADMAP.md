@@ -2,6 +2,18 @@
 
 Living list of proposed features for `@gachlab/devup`. This is the source of truth; new ideas go here first and graduate to GitHub Issues / a release milestone when prioritized.
 
+## Status
+
+Last released: **[0.7.0](https://github.com/gachlab/devup/releases/tag/0.7.0)** (2026-05-21). The original roadmap (0.3.0 → 0.7.0, 28 items) is **done**. See the [Suggested release cadence](#suggested-release-cadence) section below.
+
+Active milestone: **[0.8.0](https://github.com/gachlab/devup/milestone/5)** — VS Code extension foundation. Three issues:
+
+1. [#46](https://github.com/gachlab/devup/issues/46) — control-plane streaming (`logs.follow`, `status.follow`).
+2. [#47](https://github.com/gachlab/devup/issues/47) — `devup ctl <method>` subcommand (dogfooding client).
+3. [#48](https://github.com/gachlab/devup/issues/48) — VS Code extension MVP (in a new repo `gachlab/devup-vscode`).
+
+Order matters: streaming first (the extension is anaemic without it), then the CLI client (validates the protocol surface), then the extension itself.
+
 ## Conventions
 
 For each item:
@@ -229,49 +241,45 @@ Useful for HAProxy, Envoy, or in-house proxies.
 
 ## Suggested release cadence
 
-### 0.3.0 — "GuestHub-shaped"
+### 0.3.0 — "GuestHub-shaped" — ✅ released
 
-Items that directly improve the daily-use experience for the reference stack. Two evenings of work.
+- Profiles, `preBuild`/`watchBuild`, `readyPattern`, `external` hooks.
 
-- #1 Profiles
-- #9 `preBuild` / `watchBuild`
-- #10 `readyPattern`
-- #11 `external` hooks
+### 0.4.0 — polish + standalone CLI — ✅ released
 
-### 0.4.0 — polish + standalone CLI
+- Pre-flight `--watch-path`, `--version`/`--help`, `npm pkg fix`, browser TLS, crash-loop badge, `devup logs/install/status`, fuzzy filter, contextual tips.
 
-Once 0.3.0 lands, focus on the rough edges that show up after adoption.
+### 0.5.0 — config power — ✅ released
 
-- #2 Pre-flight `--watch-path`
-- #3 `--version` / `--help`
-- #4 `npm pkg fix`
-- #7 Browser open respects TLS
-- #8 Crash-loop badge
-- #14 CLI standalone (`devup logs`, `devup install`, `devup status`)
-- #15 Fuzzy filter in `ServiceList`
-- #19 Contextual tips
+- Regex search, `healthCheck.startPeriod`, `errorPattern`, log-level filter, verbose stats, resource awareness.
 
-### 0.5.0 — config power
+### 0.6.0 — control plane — released as part of 0.7.0
 
-- #5 Regex search
-- #12 `healthCheck.startPeriod`
-- #13 Customizable error patterns
-- #16 Log-level filter
-- #18 Verbose stats
-- #21 Resource awareness
+- Hot reload of config, Unix socket / JSON-RPC.
 
-### 0.6.0 — control plane
+### 0.7.0 — polish tail — ✅ released
 
-- #20 Hot reload of config
-- #23 Unix socket / JSON-RPC
+- `extraEnv.PORT` warning, active-service border color. Closed the last low-value items of the original roadmap.
+
+### 0.8.0 — VS Code extension foundation
+
+The control plane (0.6/0.7) was always meant to feed something like a VS Code extension. This milestone builds the plumbing first, then the UI:
+
+- **#46 control-plane: streaming `logs.follow` + `status.follow`** (prereq for anything live)
+- **#47 `devup ctl <method>` subcommand** — dogfooding CLI client that exercises every method; doubles as a reference impl for third-party clients
+- **#48 VS Code extension MVP** (new repo `gachlab/devup-vscode`) — tree view, status bar, restart/stop/logs commands, per-service output channels
+
+The order matters: streaming first (the extension would be poll-and-ugly without it), then the CLI client (proves the protocol is enough), then the extension (envuelve eso en UI).
 
 ### Future / unresolved
 
-- #6 `extraEnv.PORT` warning (could slot anywhere)
-- #17 Active-service color (cosmetic)
-- #22 Daemon mode (pending product decision)
-- #24, #25, #26, #27 Production-mode items (pending product decision)
-- #28, #29 Extensibility (pending demand)
+The original roadmap's "open question" items still live in the issue tracker without a milestone:
+
+- Daemon mode (#22, pending product decision)
+- Production-mode items: `--prod`, cluster, Prometheus metrics, crash webhooks (#24, #25, #26, #27 — pending product decision on whether devup pivots to dev+prod)
+- Plugin systems: custom proxy providers, custom healthCheck types (#28, #29 — pending demand from external users)
+
+These graduate into a milestone if/when there's a concrete commitment to ship them.
 
 ---
 
