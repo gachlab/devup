@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createConnection, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startSocketServer, defaultSocketPath, type RpcContext } from '../../../src/control-plane/socket-server.js';
@@ -16,6 +16,17 @@ function mkState(over: Partial<ProcessState>): ProcessState {
   return {
     svc, proc: null, pid: null, status: 'running', health: 'up',
     errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
+    ...over,
+  };
+}
+function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
+  return {
+    states: () => new Map(),
+    restart: async () => {},
+    stop: () => {},
+    tailLogs: async () => [],
+    watchLogs: () => () => {},
+    watchStatus: () => () => {},
     ...over,
   };
 }
@@ -33,6 +44,22 @@ function rpcCall(socketPath: string, payload: object): Promise<any> {
   });
 }
 
+/** Connect and collect multiple newline-delimited JSON frames. */
+function rpcStream(socketPath: string, payload: object, frameCount: number, timeoutMs = 2000): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const frames: any[] = [];
+    const c: Socket = createConnection(socketPath);
+    c.on('error', reject);
+    const rl = createInterface({ input: c });
+    const timer = setTimeout(() => { c.destroy(); resolve(frames); }, timeoutMs);
+    rl.on('line', l => {
+      try { frames.push(JSON.parse(l)); } catch (e) { reject(e); return; }
+      if (frames.length >= frameCount) { clearTimeout(timer); c.destroy(); resolve(frames); }
+    });
+    c.write(JSON.stringify(payload) + '\n');
+  });
+}
+
 describe('socket-server', { skip: !isUnix }, () => {
   it('defaultSocketPath sanitizes project name', () => {
     const p = defaultSocketPath('My/Weird Name!');
@@ -44,17 +71,10 @@ describe('socket-server', { skip: !isUnix }, () => {
     const path = join(dir, 'test.sock');
     try {
       const states = new Map([['api', mkState({})]]);
-      const ctx: RpcContext = {
-        states: () => states,
-        restart: async () => {},
-        stop: () => {},
-        tailLogs: async () => [],
-      };
-      const handle = await startSocketServer('test', ctx, { path });
+      const handle = await startSocketServer('test', noopCtx({ states: () => states }), { path });
       try {
         const st = statSync(path);
         assert.ok(st.isSocket());
-        // perms: only the owner can read/write
         assert.equal(st.mode & 0o777, 0o600);
       } finally {
         await handle.close();
@@ -68,13 +88,7 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      const ctx: RpcContext = {
-        states: () => new Map(),
-        restart: async () => {},
-        stop: () => {},
-        tailLogs: async () => [],
-      };
-      const handle = await startSocketServer('p', ctx, { path });
+      const handle = await startSocketServer('p', noopCtx(), { path });
       try {
         const res = await rpcCall(path, { id: 1, method: 'ping' });
         assert.equal(res.id, 1);
@@ -96,13 +110,7 @@ describe('socket-server', { skip: !isUnix }, () => {
         ['api', mkState({ status: 'running', health: 'up', errors: 0, restarts: 1 })],
         ['web', mkState({ svc: { ...svc, name: 'web', type: 'web', port: 4000 }, status: 'starting', health: 'wait' })],
       ]);
-      const ctx: RpcContext = {
-        states: () => states,
-        restart: async () => {},
-        stop: () => {},
-        tailLogs: async () => [],
-      };
-      const handle = await startSocketServer('s', ctx, { path });
+      const handle = await startSocketServer('s', noopCtx({ states: () => states }), { path });
       try {
         const res = await rpcCall(path, { id: 'x', method: 'status' });
         assert.equal(res.result.services.length, 2);
@@ -124,13 +132,9 @@ describe('socket-server', { skip: !isUnix }, () => {
     const path = join(dir, 's.sock');
     try {
       const restarts: string[] = [];
-      const ctx: RpcContext = {
-        states: () => new Map(),
+      const handle = await startSocketServer('r', noopCtx({
         restart: async (n) => { restarts.push(n); },
-        stop: () => {},
-        tailLogs: async () => [],
-      };
-      const handle = await startSocketServer('r', ctx, { path });
+      }), { path });
       try {
         const res = await rpcCall(path, { method: 'restart', params: { svc: 'foo' } });
         assert.deepEqual(res.result, { ok: true });
@@ -147,12 +151,7 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      const handle = await startSocketServer('u', {
-        states: () => new Map(),
-        restart: async () => {},
-        stop: () => {},
-        tailLogs: async () => [],
-      }, { path });
+      const handle = await startSocketServer('u', noopCtx(), { path });
       try {
         const res = await rpcCall(path, { id: 9, method: 'mystery' });
         assert.equal(res.id, 9);
@@ -170,15 +169,12 @@ describe('socket-server', { skip: !isUnix }, () => {
     const path = join(dir, 's.sock');
     try {
       const lines = ['a', 'b', 'c', 'd', 'e'];
-      const handle = await startSocketServer('t', {
-        states: () => new Map(),
-        restart: async () => {},
-        stop: () => {},
+      const handle = await startSocketServer('t', noopCtx({
         tailLogs: async (svcName, n) => {
           assert.equal(svcName, 'api');
           return lines.slice(-n);
         },
-      }, { path });
+      }), { path });
       try {
         const res = await rpcCall(path, { method: 'logs.tail', params: { svc: 'api', lines: 3 } });
         assert.deepEqual(res.result.lines, ['c', 'd', 'e']);
@@ -194,10 +190,7 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      const handle = await startSocketServer('a', {
-        states: () => new Map(),
-        restart: async () => {}, stop: () => {}, tailLogs: async () => [],
-      }, { path });
+      const handle = await startSocketServer('a', noopCtx(), { path });
       assert.ok(statSync(path).isSocket());
       await handle.close();
       assert.throws(() => statSync(path), { code: 'ENOENT' });
@@ -210,12 +203,8 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      const handle = await startSocketServer('g', {
-        states: () => new Map(),
-        restart: async () => {}, stop: () => {}, tailLogs: async () => [],
-      }, { path });
+      const handle = await startSocketServer('g', noopCtx(), { path });
       try {
-        // Send invalid JSON
         const res = await new Promise<any>((resolve, reject) => {
           const c = createConnection(path);
           const rl = createInterface({ input: c });
@@ -223,6 +212,104 @@ describe('socket-server', { skip: !isUnix }, () => {
           c.write('not json{\n');
         });
         assert.equal(res.error.code, -32700);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ── Streaming ────────────────────────────────────────────────────────────
+
+  it('logs.follow sends ack then replays tail then streams live lines', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      let liveCallback: ((svc: string, line: string) => void) | null = null;
+      const handle = await startSocketServer('lf', noopCtx({
+        tailLogs: async () => ['history-1', 'history-2'],
+        watchLogs: (_svc, cb) => {
+          liveCallback = cb;
+          return () => { liveCallback = null; };
+        },
+      }), { path });
+      try {
+        // Expect: ack + 2 tail frames + 1 live frame = 4 total
+        const framesP = rpcStream(path, { id: 7, method: 'logs.follow', params: { svc: 'api', tail: 2 } }, 4);
+
+        // Give server a moment to set up the subscription before emitting live.
+        await new Promise(r => setTimeout(r, 30));
+        liveCallback?.('api', 'live-line');
+
+        const frames = await framesP;
+        assert.equal(frames.length, 4);
+        assert.deepEqual(frames[0], { id: 7, result: { ok: true } });
+        assert.equal(frames[1].event, 'log');
+        assert.equal(frames[1].data, 'history-1');
+        assert.equal(frames[2].data, 'history-2');
+        assert.equal(frames[3].data, 'live-line');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status.follow sends ack then current snapshot then live updates', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      let stateCallback: ((name: string, state: ProcessState) => void) | null = null;
+      const initial = new Map([['api', mkState({ status: 'running' })]]);
+      const handle = await startSocketServer('sf', noopCtx({
+        states: () => initial,
+        watchStatus: (cb) => {
+          stateCallback = cb;
+          return () => { stateCallback = null; };
+        },
+      }), { path });
+      try {
+        // Expect: ack + snapshot frame + 1 live update = 3 total
+        const framesP = rpcStream(path, { id: 3, method: 'status.follow' }, 3);
+
+        await new Promise(r => setTimeout(r, 30));
+        stateCallback?.('api', mkState({ status: 'crashed' }));
+
+        const frames = await framesP;
+        assert.equal(frames.length, 3);
+        assert.deepEqual(frames[0], { id: 3, result: { ok: true } });
+        assert.equal(frames[1].event, 'status');
+        assert.equal(frames[1].data[0].status, 'running');
+        assert.equal(frames[2].event, 'status');
+        assert.equal(frames[2].data[0].status, 'crashed');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('logs.follow unsubscribes when socket closes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      let unsubCalled = false;
+      const handle = await startSocketServer('lu', noopCtx({
+        watchLogs: () => () => { unsubCalled = true; },
+      }), { path });
+      try {
+        const c = createConnection(path);
+        await new Promise<void>(r => c.on('connect', r));
+        c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: { svc: 'api' } }) + '\n');
+        // Wait for ack then close.
+        await new Promise<void>(r => {
+          const rl = createInterface({ input: c });
+          rl.once('line', () => { c.destroy(); setTimeout(r, 50); });
+        });
+        assert.ok(unsubCalled, 'unsub should be called on socket close');
       } finally {
         await handle.close();
       }

@@ -5,6 +5,7 @@ import type { Platform } from '../../platform/types.js';
 import type { ServiceConfig } from '../../config/types.js';
 import { calcCpuPercent, detectLogLevel, type LogLevel } from '../../utils.js';
 import { LogSink } from '../../process/log-sink.js';
+import { Broadcaster } from '../../utils/broadcaster.js';
 
 export interface LogEntry {
   svcName: string;
@@ -35,12 +36,17 @@ export function useProcessManager(
   const sinkRef = useRef<LogSink | null>(logSink);
   sinkRef.current = logSink;
 
+  // Stable broadcaster instances — control plane subscribers tap into these.
+  const logBus = useRef(new Broadcaster<{ svc: string; text: string }>());
+  const stateBus = useRef(new Broadcaster<{ name: string; state: ProcessState }>());
+
   useEffect(() => {
     const mgr = new ProcessManager({
       baseCwd, env, platform,
       events: {
         onLog: (svcName, text, colorIdx) => {
           sinkRef.current?.write(svcName, text);
+          logBus.current.emit({ svc: svcName, text });
           const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) };
           if (pausedRef.current) {
             pendingLogsRef.current.push(entry);
@@ -54,7 +60,10 @@ export function useProcessManager(
             return next.length > 5000 ? next.slice(-5000) : next;
           });
         },
-        onStateChange: () => setStates(new Map(mgr.state)),
+        onStateChange: (name, state) => {
+          stateBus.current.emit({ name, state });
+          setStates(new Map(mgr.state));
+        },
       },
     });
     mgrRef.current = mgr;
@@ -98,6 +107,7 @@ export function useProcessManager(
   /** Push a log line not tied to a ProcessManager-managed service (e.g. externals). */
   const pushLog = useCallback((svcName: string, text: string, colorIdx = 0) => {
     sinkRef.current?.write(svcName, text);
+    logBus.current.emit({ svc: svcName, text });
     const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) };
     if (pausedRef.current) {
       pendingLogsRef.current.push(entry);
@@ -135,5 +145,7 @@ export function useProcessManager(
     setPaused,
     pushLog,
     manager: mgr,
+    logBus: logBus.current,
+    stateBus: stateBus.current,
   };
 }

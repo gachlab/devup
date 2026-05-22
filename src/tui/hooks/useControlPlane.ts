@@ -3,6 +3,8 @@ import { createInterface } from 'node:readline';
 import { createReadStream, existsSync } from 'node:fs';
 import type { ProcessManager } from '../../process/manager.js';
 import type { LogSink } from '../../process/log-sink.js';
+import type { Broadcaster } from '../../utils/broadcaster.js';
+import type { ProcessState } from '../../process/types.js';
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
@@ -15,6 +17,8 @@ export function useControlPlane(
   projectName: string,
   logSink: LogSink | null,
   pushLog: (svc: string, msg: string, colorIdx?: number) => void,
+  logBus: Broadcaster<{ svc: string; text: string }>,
+  stateBus: Broadcaster<{ name: string; state: ProcessState }>,
 ): React.RefObject<SocketServerHandle | null> {
   const handleRef = useRef<SocketServerHandle | null>(null);
   useEffect(() => {
@@ -38,6 +42,14 @@ export function useControlPlane(
               rl.on('error', reject);
             });
           },
+          watchLogs: (svcName, onLine) => {
+            return logBus.subscribe(({ svc, text }) => {
+              if (svcName === null || svc === svcName) onLine(svc, text);
+            });
+          },
+          watchStatus: (onUpdate) => {
+            return stateBus.subscribe(({ name, state }) => onUpdate(name, state));
+          },
         }, { onLog: msg => pushLog('devup', msg, 12) });
         handleRef.current = handle;
       } catch (e: any) {
@@ -45,6 +57,6 @@ export function useControlPlane(
       }
     })();
     return () => { void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog]);
+  }, [manager, projectName, logSink, pushLog, logBus, stateBus]);
   return handleRef;
 }
