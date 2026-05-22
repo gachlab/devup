@@ -25,6 +25,7 @@ export function useControlPlane(
   stateBus: Broadcaster<{ name: string; state: ProcessState }>,
   platform: Platform,
   proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
+  profiles: Record<string, string[]>,
 ): React.RefObject<SocketServerHandle | null> {
   const handleRef = useRef<SocketServerHandle | null>(null);
   const prevCpuMap = useRef(new Map<string, { time: number; cpu: number }>());
@@ -96,6 +97,9 @@ export function useControlPlane(
               routes: proxy.opts.routes,
             };
           },
+          getInfo() {
+            return { project: projectName, profiles };
+          },
         }, { onLog: msg => pushLog('devup', msg, 12) });
         handleRef.current = handle;
       } catch (e: any) {
@@ -103,6 +107,6 @@ export function useControlPlane(
       }
     })();
     return () => { void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog, logBus, stateBus, platform, proxy]);
+  }, [manager, projectName, logSink, pushLog, logBus, stateBus, platform, proxy, profiles]);
   return handleRef;
 }

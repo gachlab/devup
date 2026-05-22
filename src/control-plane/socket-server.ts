@@ -38,6 +38,11 @@ export interface ProxyInfo {
   routes: Record<string, string>;
 }
 
+export interface ProjectInfo {
+  project: string;
+  profiles: Record<string, string[]>;
+}
+
 export interface RpcContext {
   /** State of every service (read-only snapshot). */
   states(): Map<string, ProcessState>;
@@ -56,6 +61,8 @@ export interface RpcContext {
   getStats(): Promise<StatsResult>;
   /** Active proxy configuration, or null when no proxy is running. */
   getProxyInfo(): ProxyInfo | null;
+  /** Project metadata: name and profiles defined in config. */
+  getInfo(): ProjectInfo;
 }
 
 export interface SocketServerHandle {
@@ -217,6 +224,7 @@ function serializeState(name: string, st: ProcessState): Record<string, unknown>
     health: st.health,
     port: st.svc.port,
     type: st.svc.type,
+    phase: st.svc.phase,
     errors: st.errors,
     restarts: st.restarts,
     pid: st.pid,
@@ -243,6 +251,8 @@ async function dispatch(
     }
     case 'stats':
       return await ctx.getStats();
+    case 'info':
+      return ctx.getInfo();
     case 'restart': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
       await ctx.restart(svc);
