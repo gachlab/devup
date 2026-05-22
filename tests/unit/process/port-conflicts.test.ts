@@ -55,13 +55,14 @@ describe('scanPortConflicts', { skip: !isUnix }, () => {
     assert.deepEqual(conflicts, []);
   });
 
-  it('only checks API services (webs are skipped)', async () => {
+  it('flags conflicts on web services too (not just APIs)', async () => {
     const server = net.createServer();
     await new Promise<void>(r => server.listen(0, r));
     const port = (server.address() as net.AddressInfo).port;
     try {
       const conflicts = await scanPortConflicts([web('w', port)]);
-      assert.equal(conflicts.length, 0, 'web service should be skipped');
+      assert.equal(conflicts.length, 1, 'web service should be scanned');
+      assert.equal(conflicts[0]!.service, 'w');
     } finally {
       await new Promise<void>(r => server.close(() => r()));
     }

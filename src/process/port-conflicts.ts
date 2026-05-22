@@ -70,13 +70,14 @@ function parseLsof(stdout: string): PortHolder | null {
   return null;
 }
 
-/** Scan every API-typed service for port conflicts. (Webs are usually managed
- *  by their own dev server which sometimes handles port collisions itself, so
- *  we leave them alone — matching the spawner's pre-flight scope.) */
+/** Scan every configured service for port conflicts. APIs and webs both —
+ *  pre-boot we want to surface any conflict the user will hit during spawn,
+ *  regardless of service type. Web dev servers (Vite, ng serve, etc.) handle
+ *  port-collision retry at runtime, but pre-boot the user typically wants to
+ *  reclaim THE configured port, not let the dev server roll it. */
 export async function scanPortConflicts(services: ServiceConfig[]): Promise<PortConflict[]> {
-  const apis = services.filter(s => s.type === 'api');
   const conflicts: PortConflict[] = [];
-  for (const svc of apis) {
+  for (const svc of services) {
     const bindable = await isPortBindable(svc.port);
     if (bindable) continue;
     const holder = await findPortHolder(svc.port);

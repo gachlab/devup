@@ -292,6 +292,35 @@ describe('socket-server', { skip: !isUnix }, () => {
     }
   });
 
+  it('close() destroys streaming clients (does not hang on open follow subscriptions)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('streamclose', noopCtx({
+        watchLogs: () => () => {},
+      }), { path });
+
+      // Open a logs.follow subscription that would otherwise hold the socket open forever.
+      const c = createConnection(path);
+      await new Promise<void>(r => c.on('connect', r));
+      c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: { svc: 'x' } }) + '\n');
+      // Wait briefly so the server registers the handler.
+      await new Promise(r => setTimeout(r, 50));
+
+      // close() must complete promptly even with an active streaming client.
+      const start = Date.now();
+      await Promise.race([
+        handle.close(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('close() hung')), 2000)),
+      ]);
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < 2000, `close() should complete fast; took ${elapsed}ms`);
+      try { c.destroy(); } catch { /* already gone */ }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('logs.follow unsubscribes when socket closes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
