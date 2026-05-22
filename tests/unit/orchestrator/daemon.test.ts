@@ -11,16 +11,21 @@ import {
 
 const isUnix = process.platform === 'linux' || process.platform === 'darwin';
 
-/** Stage the test's HOME so all the daemon files (~/.devup/...) live in a temp dir. */
+/** Stage the test's home so all the daemon files (~/.devup/...) live in a temp dir.
+ *  Node's os.homedir() reads HOME on Unix and USERPROFILE on Windows — we override
+ *  both so the test is hermetic regardless of platform. */
 function withFakeHome(): { home: string; restore: () => void } {
   const home = mkdtempSync(join(tmpdir(), 'devup-daemon-'));
-  const original = process.env.HOME;
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   mkdirSync(join(home, '.devup'), { recursive: true });
   return {
     home,
     restore: () => {
-      if (original) process.env.HOME = original; else delete process.env.HOME;
+      if (originalHome) process.env.HOME = originalHome; else delete process.env.HOME;
+      if (originalUserProfile) process.env.USERPROFILE = originalUserProfile; else delete process.env.USERPROFILE;
       rmSync(home, { recursive: true, force: true });
     },
   };
