@@ -1,6 +1,6 @@
 import React from 'react';
 import { render } from 'ink';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -259,7 +259,34 @@ function askYesNo(question: string): Promise<boolean> {
   });
 }
 
-main().catch(e => {
-  console.error(e);
-  process.exit(1);
-});
+/** Only run main() when this script is invoked directly (i.e. as the `devup`
+ *  binary). When the bundle is *imported* — which happens whenever a user's
+ *  `devup.config.ts` does `import { defineConfig } from '@gachlab/devup'` —
+ *  we just want our exports (`defineConfig`, types) to be available, NOT to
+ *  start a second concurrent main() that races for the same ports and
+ *  duplicates every line of output.
+ *
+ *  Compare `import.meta.url` (this module's file URL) against the realpath
+ *  of `process.argv[1]` (the entry script). When invoked as `devup`, npm
+ *  installs `bin/devup` as a symlink to `dist/index.js`, so the realpath
+ *  resolves to our module and the comparison matches. When imported from a
+ *  config file, `process.argv[1]` points at the outer entry — which lives
+ *  at a different node_modules path even when the same version — and the
+ *  comparison fails, so `main()` does not fire. */
+function isInvokedDirectly(): boolean {
+  const argvPath = process.argv[1];
+  if (!argvPath) return false;
+  const moduleFile = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(argvPath) === moduleFile;
+  } catch {
+    return argvPath === moduleFile;
+  }
+}
+
+if (isInvokedDirectly()) {
+  main().catch(e => {
+    console.error(e);
+    process.exit(1);
+  });
+}

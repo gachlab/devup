@@ -5,6 +5,17 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-05-22
+
+Critical hotfix. **All 0.9.x users should upgrade immediately.**
+
+### Fixed
+- **Bundle's top-level `main()` would fire when devup was imported as a library.** When a user's `devup.config.ts` did `import { defineConfig } from '@gachlab/devup'`, Node loaded our compiled `dist/index.js` to satisfy the import — and the bundle's top-level `main()` invocation ran, starting a SECOND, concurrent devup process. Symptoms: every line of output duplicated, three or more racing instances of the same service spawning in milliseconds, ports clobbered, the daemon's socket created but never bound, `devup ctl ping` ECONNREFUSED. Fix: guard `main()` with a `realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)` check so it only fires when the script is invoked directly (as the `devup` binary), not when imported.
+- **`devup ctl` crashed with an unhandled `error` event on ECONNREFUSED.** The socket-error handler was attached to the connection but Node's `readline.createInterface` re-forwarded the error through its own emitter, which had no listener, so the process crashed instead of reporting cleanly. Now we attach the handler on both the socket and the readline interface.
+
+### Why this matters
+Every devup invocation that loaded a config file (i.e. everything except `--version` / `--help`) was silently running two instances of itself. That is the root cause of every weird behaviour reported against 0.9.0 / 0.9.1: duplicated prompts, daemons that "die" right after starting, sockets that exist but refuse connections, port-takeover prompts firing for ports the user expected devup to own.
+
 ## [0.9.1] — 2026-05-22
 
 Hotfix for two issues reported moments after 0.9.0 hit:
