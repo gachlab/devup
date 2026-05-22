@@ -24,10 +24,14 @@ function findFreePort(): Promise<number> {
   });
 }
 
-async function waitFor(pred: () => boolean, timeoutMs: number, label: string): Promise<void> {
+async function waitFor(
+  pred: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (pred()) return;
+    if (await pred()) return;
     await sleep(100);
   }
   throw new Error(`timeout waiting for: ${label}`);
@@ -108,6 +112,81 @@ describe('daemon E2E lifecycle', { skip: !isUnix }, () => {
       // Pid file should be gone; socket file should be gone.
       assert.equal(existsSync(pidPath), false, 'pid file should be removed');
       assert.equal(existsSync(sockPath), false, 'socket file should be removed');
+    } finally {
+      if (child?.pid) { try { process.kill(child.pid, 'SIGKILL'); } catch { /* ignore */ } }
+      if (originalHome) process.env.HOME = originalHome; else delete process.env.HOME;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('daemon hot-reloads the config when --watch-config is on', async () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'devup-daemon-hr-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+    mkdirSync(join(tempHome, '.devup'), { recursive: true });
+
+    const portA = await findFreePort();
+    const portB = await findFreePort();
+    const projectDir = join(tempHome, 'project');
+    mkdirSync(projectDir);
+    const configPath = join(projectDir, 'devup.config.json');
+
+    const apiSvc = (port: number) => ({
+      name: 'api', cwd: '.', cmd: 'node',
+      args: [join(fixtures, 'dummy-server.cjs'), String(port)],
+      type: 'api', port, phase: 0,
+      readyPattern: 'listening:',
+    });
+
+    // Start with just `api` on portA.
+    writeFileSync(configPath, JSON.stringify({
+      name: 'HotReloadDaemon',
+      services: [apiSvc(portA)],
+    }));
+
+    let child: ChildProcess | null = null;
+    try {
+      const repoRoot = join(__dirname, '..', '..');
+      // Spawn the daemon with --watch-config enabled.
+      child = spawn(process.execPath, ['--import', 'tsx', join(repoRoot, 'tests/fixtures/run-daemon-watch.ts'), configPath], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempHome },
+      });
+      child.unref();
+
+      const pidPath = pidPathFor('HotReloadDaemon');
+      const sockPath = defaultSocketPath('HotReloadDaemon');
+      await waitFor(() => existsSync(pidPath), 20_000, 'pid file');
+      await waitFor(() => existsSync(sockPath), 5_000, 'socket file');
+
+      // Confirm initial state: one service.
+      const before = await rpcOnce(sockPath, { id: 1, method: 'status' });
+      assert.equal(before.result.services.length, 1);
+
+      // Rewrite the config to add a second service.
+      writeFileSync(configPath, JSON.stringify({
+        name: 'HotReloadDaemon',
+        services: [apiSvc(portA), {
+          ...apiSvc(portB), name: 'api2',
+        }],
+      }));
+
+      // Wait for the daemon to pick up the change.
+      await waitFor(async () => {
+        try {
+          const r = await rpcOnce(sockPath, { id: 2, method: 'status' });
+          return r.result.services.length === 2;
+        } catch { return false; }
+      }, 8_000, 'hot-reload to add service');
+
+      const after = await rpcOnce(sockPath, { id: 3, method: 'status' });
+      const names = after.result.services.map((s: any) => s.name).sort();
+      assert.deepEqual(names, ['api', 'api2']);
+
+      // Clean shutdown.
+      await stopDaemon('HotReloadDaemon', { gracePeriodMs: 10_000 });
     } finally {
       if (child?.pid) { try { process.kill(child.pid, 'SIGKILL'); } catch { /* ignore */ } }
       if (originalHome) process.env.HOME = originalHome; else delete process.env.HOME;

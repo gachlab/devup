@@ -14,6 +14,8 @@ import { startSocketServer, type SocketServerHandle } from '../control-plane/soc
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
+import { watchConfig } from './config-watcher.js';
+import { findConfigFile } from '../config/loader.js';
 
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
@@ -86,6 +88,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   let socket: SocketServerHandle | null = null;
   let healthTimer: NodeJS.Timeout | null = null;
   let proxyTimer: NodeJS.Timeout | null = null;
+  let stopConfigWatcher: (() => void) | null = null;
 
   const writeDevupLog = (text: string) => {
     logSink.write('devup', text);
@@ -106,6 +109,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   const cleanup = async (): Promise<void> => {
     if (healthTimer) clearInterval(healthTimer);
     if (proxyTimer) clearInterval(proxyTimer);
+    if (stopConfigWatcher) { try { stopConfigWatcher(); } catch { /* ignore */ } }
     for (const p of lazyProxies.values()) p.destroy();
     if (socket) await socket.close().catch(() => {});
     await mgr.cleanup().catch(() => {});
@@ -192,6 +196,20 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       };
       sync();
       proxyTimer = setInterval(sync, 3000);
+    }
+
+    // ── Hot-reload watcher (opt-in via --watch-config) ──
+    if (cliArgs.watchConfig) {
+      try {
+        const configPath = findConfigFile(baseCwd, cliArgs.configPath);
+        writeDevupLog(`👀 watching ${configPath}`);
+        stopConfigWatcher = watchConfig({
+          configPath, baseCwd, manager: mgr,
+          log: msg => writeDevupLog(msg),
+        });
+      } catch (e: any) {
+        writeDevupLog(`⚠ watch-config disabled: ${e.message ?? String(e)}`);
+      }
     }
 
     // ── Write PID file (signals "ready" to the parent process) ──
