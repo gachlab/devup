@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Box, Text, useStdout } from 'ink';
+import React, { useCallback, useRef } from 'react';
+import { Box, Text } from 'ink';
 import type { Platform } from '../platform/types.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
@@ -8,25 +8,19 @@ import type { LogSink } from '../process/log-sink.js';
 import { useProcessManager } from './hooks/useProcessManager.js';
 import { useKeyBindings } from './hooks/useKeyBindings.js';
 import { useProxySync } from './hooks/useProxySync.js';
+import { useTerminalSize } from './hooks/useTerminalSize.js';
+import { useLogsPause } from './hooks/useLogsPause.js';
+import { useControlPlane } from './hooks/useControlPlane.js';
+import { useHotReload } from './hooks/useHotReload.js';
+import { useContextualTips } from './hooks/useContextualTips.js';
+import { useBootSequence } from './hooks/useBootSequence.js';
 import { LogsPanel } from './LogsPanel.js';
 import { StatsPanel } from './StatsPanel.js';
 import { StatusBar } from './StatusBar.js';
 import { ServiceList } from './ServiceList.js';
 import { SearchInput } from './SearchInput.js';
-import { groupByPhase } from '../utils.js';
-import { waitForPort } from '../process/health.js';
-import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
-import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
-import type { ProcessState } from '../process/types.js';
-import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
-import { isCrashLooped } from './StatsPanel.js';
-import { pickTip } from './tips.js';
-import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
-import { createInterface } from 'node:readline';
-import { createReadStream, existsSync, watch as fsWatch, type FSWatcher } from 'node:fs';
-import { loadConfig, findConfigFile } from '../config/loader.js';
-import { validateConfig, formatValidationErrors } from '../config/validator.js';
-import { diffServices, summariseDiff } from '../config/diff.js';
+import type { LazyProxy } from '../lazy/proxy.js';
+import { stopExternals, type ExternalProc } from '../process/external.js';
 
 /** Builds the URL to open in the browser when the user picks a service.
  *  Honors the proxy + TLS settings: if --proxy is active and the service has
@@ -61,38 +55,26 @@ interface Props {
 }
 
 export function App({ config, services, cliArgs, platform, env, baseCwd, proxyProvider, proxyOpts, logSink }: Props) {
-  const { stdout } = useStdout();
-  const [rows, setRows] = useState(stdout?.rows ?? 40);
-  useEffect(() => {
-    if (!stdout) return;
-    const onResize = () => setRows(stdout.rows ?? 40);
-    stdout.on('resize', onResize);
-    return () => { stdout.off('resize', onResize); };
-  }, [stdout]);
+  const rows = useTerminalSize();
   const logsHeight = Math.floor(rows * 0.65);
   const statsHeight = rows - logsHeight - 2; // 2 for header + statusbar
   const maxNameLen = Math.max(...services.map(s => s.name.length), 10);
 
   const pm = useProcessManager(platform, baseCwd, env, logSink);
-  const [booted, setBooted] = useState(false);
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
   const externals = useRef<ExternalProc[]>([]);
-  const socketServer = useRef<SocketServerHandle | null>(null);
-  const shownTips = useRef<Set<string>>(new Set());
-  const [activeTip, setActiveTip] = useState<string | null>(null);
 
   const kb = useKeyBindings({
-    onQuit: () => {
-      void shutdown();
-    },
+    onQuit: () => { void shutdown(); },
     onClearLogs: pm.clearLogs,
     onToggleProxy: () => {},
   });
 
+  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog);
+
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
     await socketServer.current?.close();
-    socketServer.current = null;
     await pm.cleanup();
     if (externals.current.length) {
       await stopExternals(externals.current, platform, {
@@ -103,243 +85,14 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     }
     await logSink?.close();
     process.exit(0);
-  }, [pm, logSink, platform, baseCwd, env]);
+  }, [pm, logSink, platform, baseCwd, env, socketServer]);
 
-  // Local control plane (Unix socket / JSON-RPC).
-  useEffect(() => {
-    if (!pm.manager) return;
-    let handle: SocketServerHandle | null = null;
-    (async () => {
-      try {
-        handle = await startSocketServer(config.name, {
-          states: () => pm.manager!.state,
-          restart: (name) => pm.manager!.restart(name),
-          stop: (name) => pm.manager!.stop(name),
-          tailLogs: async (svcName, lines) => {
-            if (!logSink) return [];
-            const file = logSink.pathFor(svcName);
-            if (!existsSync(file)) return [];
-            return new Promise<string[]>((resolve, reject) => {
-              const buf: string[] = [];
-              const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }) });
-              rl.on('line', l => { buf.push(l); if (buf.length > lines) buf.shift(); });
-              rl.on('close', () => resolve(buf));
-              rl.on('error', reject);
-            });
-          },
-        }, { onLog: msg => pm.pushLog('devup', msg, 12) });
-        socketServer.current = handle;
-      } catch (e: any) {
-        pm.pushLog('devup', `⚠ control plane disabled: ${e.message}`, 5);
-      }
-    })();
-    return () => { void handle?.close(); };
-  }, [pm.manager, config.name, logSink]);
-
-  // Hot reload of devup.config.* (#23). Opt-in via --watch-config.
-  // Diffs the new service list against the running set and applies added /
-  // removed / changed services. Validation runs before any change is applied;
-  // a failed validation leaves the running set untouched.
-  useEffect(() => {
-    if (!cliArgs.watchConfig || !pm.manager) return;
-    let watcher: FSWatcher | null = null;
-    let configPath: string;
-    try {
-      configPath = findConfigFile(baseCwd, cliArgs.configPath);
-    } catch (e: any) {
-      pm.pushLog('devup', `⚠ watch-config disabled: ${e.message}`, 5);
-      return;
-    }
-    pm.pushLog('devup', `👀 watching ${configPath}`, 12);
-
-    let reloadInFlight = false;
-    let reloadAgain = false;
-    const reload = async () => {
-      if (reloadInFlight) { reloadAgain = true; return; }
-      reloadInFlight = true;
-      try {
-        const nextCfg = await loadConfig(configPath);
-        const errs = validateConfig(nextCfg, baseCwd);
-        if (errs.length) {
-          pm.pushLog('devup', `⚠ config reload failed:\n${formatValidationErrors(errs)}`, 5);
-          return;
-        }
-        const mgr = pm.manager!;
-        const currentSvcs = [...mgr.state.values()].map(s => s.svc);
-        const diff = diffServices(currentSvcs, nextCfg.services);
-        if (!diff.added.length && !diff.removed.length && !diff.changed.length) return;
-
-        // Apply: stop removed + changed, start added + changed.
-        for (const name of diff.removed) {
-          mgr.stop(name);
-          mgr.state.delete(name);
-        }
-        let colorIdx = currentSvcs.length;
-        for (const { next } of diff.changed) {
-          const prev = mgr.state.get(next.name);
-          const ci = prev?.colorIdx ?? colorIdx++;
-          mgr.stop(next.name);
-          await new Promise(r => setTimeout(r, 800));
-          await mgr.install(next, ci);
-          await mgr.start(next, ci, true);
-        }
-        for (const next of diff.added) {
-          const ci = colorIdx++;
-          await mgr.install(next, ci);
-          await mgr.start(next, ci);
-        }
-        pm.pushLog('devup', `🔁 config reloaded: ${summariseDiff(diff)}`, 12);
-      } catch (e: any) {
-        pm.pushLog('devup', `⚠ config reload error: ${e.message}`, 5);
-      } finally {
-        reloadInFlight = false;
-        if (reloadAgain) { reloadAgain = false; void reload(); }
-      }
-    };
-
-    // Debounce: editors often emit several change events per save.
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    watcher = fsWatch(configPath, () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => void reload(), 250);
-    });
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      watcher?.close();
-    };
-  }, [cliArgs.watchConfig, cliArgs.configPath, baseCwd, pm.manager, pm]);
-
-  // Propagar pausa al sink de logs (incluye auto-pausa cuando el usuario scrolleó arriba).
-  useEffect(() => {
-    pm.setPaused(kb.logsPaused || kb.logsScrollOffset > 0);
-  }, [kb.logsPaused, kb.logsScrollOffset, pm]);
-
-  // Contextual tips: evaluate periodically, surface once per session.
-  useEffect(() => {
-    const tip = pickTip({
-      totalLogs: pm.logs.length,
-      hasSearch: !!kb.searchTerm,
-      hasFilter: !!kb.logFilter,
-      crashLoopedCount: [...pm.states.values()].filter(isCrashLooped).length,
-      shown: shownTips.current,
-    });
-    if (tip && tip.id !== activeTip) {
-      shownTips.current.add(tip.id);
-      setActiveTip(tip.message);
-      const timer = setTimeout(() => setActiveTip(null), 12_000);
-      return () => clearTimeout(timer);
-    }
-  }, [pm.logs.length, pm.states, kb.searchTerm, kb.logFilter, activeTip]);
-
+  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog);
+  useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
+  const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
-
-  // Boot sequence
-  useEffect(() => {
-    if (booted || !pm.manager) return;
-    setBooted(true);
-    const mgr = pm.manager;
-
-    (async () => {
-      const lazyMode = cliArgs.lazy;
-      const lazyTimeout = cliArgs.lazyTimeout;
-
-      // External dependencies (DBs, queues, etc.) — must be healthy before phase 0.
-      if (config.external?.length) {
-        const result = await startExternals(config.external, {
-          baseCwd, env, platform,
-          onLog: (svc, msg) => pm.pushLog(`ext:${svc}`, msg, 12),
-        });
-        externals.current = result.procs;
-        if (!result.allHealthy) {
-          pm.pushLog('devup', `❌ external(s) failed: ${result.failed.join(', ')}. Aborting boot.`, 5);
-          return;
-        }
-      }
-
-      if (lazyMode && config.lazy) {
-        // ── Lazy mode ──
-        const { alwaysOn, lazy } = classifyServices(services, config.lazy);
-
-        // Boot always-on services normally
-        const aoPhases = groupByPhase(alwaysOn);
-        let colorIdx = 0;
-        for (const num of Object.keys(aoPhases).map(Number).sort((a, b) => a - b)) {
-          const svcs = aoPhases[num]!;
-          for (const svc of svcs) {
-            const ci = colorIdx++;
-            await mgr.install(svc, ci);
-            await mgr.start(svc, ci);
-          }
-          const apis = svcs.filter(s => s.type === 'api');
-          if (apis.length) await Promise.all(apis.map(s => waitForPort(s.port, { timeout: 45000 })));
-          svcs.filter(s => s.type === 'web').forEach(s => {
-            const st = mgr.state.get(s.name);
-            if (st) st.status = 'running';
-          });
-        }
-
-        // Set up lazy proxies
-        for (const svc of lazy) {
-          const ci = colorIdx++;
-          const rewritten = rewriteServicePort(svc);
-
-          // Register as idle in process state
-          const idleState: ProcessState = {
-            svc: rewritten, proc: null, pid: null,
-            status: 'idle', health: 'idle',
-            errors: 0, restarts: 0, startedAt: null,
-            intentionalStop: false, colorIdx: ci,
-          };
-          mgr.state.set(svc.name, idleState);
-
-          const proxy = createLazyProxy({
-            listenPort: svc.port,
-            targetPort: rewritten.realPort,
-            timeoutMin: lazyTimeout,
-            onDemandStart: async () => {
-              await mgr.install(rewritten, ci);
-              await mgr.start(rewritten, ci);
-              const ok = await waitForPort(rewritten.realPort, { timeout: 45000 });
-              const st = mgr.state.get(svc.name);
-              if (st) {
-                st.status = ok ? 'running' : 'timeout';
-                if (ok) st.health = 'up';
-              }
-            },
-            onIdleStop: () => {
-              mgr.stop(svc.name);
-              const st = mgr.state.get(svc.name);
-              if (st) { st.status = 'idle'; st.health = 'idle'; st.pid = null; st.proc = null; st.startedAt = null; }
-            },
-            isAlive: () => {
-              const st = mgr.state.get(svc.name);
-              return !!st && !!st.proc && !st.proc.killed && st.health === 'up';
-            },
-          });
-
-          lazyProxies.current.set(svc.name, proxy);
-        }
-      } else {
-        // ── Normal mode ──
-        const phases = groupByPhase(services);
-        let colorIdx = 0;
-        for (const num of Object.keys(phases).map(Number).sort((a, b) => a - b)) {
-          const svcs = phases[num]!;
-          for (const svc of svcs) {
-            const ci = colorIdx++;
-            await mgr.install(svc, ci);
-            await mgr.start(svc, ci);
-          }
-          const apis = svcs.filter(s => s.type === 'api');
-          if (apis.length) await Promise.all(apis.map(s => waitForPort(s.port, { timeout: 45000 })));
-          svcs.filter(s => s.type === 'web').forEach(s => {
-            const st = mgr.state.get(s.name);
-            if (st) st.status = 'running';
-          });
-        }
-      }
-    })();
-  }, [booted, pm.manager, services, cliArgs, config.lazy]);
+  useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
+    { lazyProxies, externals }, pm.pushLog);
 
   const handleFilterSelect = useCallback((name: string) => kb.setFilter(name), [kb]);
   const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);

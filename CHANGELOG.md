@@ -5,6 +5,17 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-05-22
+
+Internals cleanup. No user-facing changes; safe drop-in upgrade from 0.7.0.
+
+### Internals
+- **Split `utils.ts` into focused modules** (#52). The old junk-drawer became `src/utils/*` with one file per concern: `env`, `format`, `search`, `redact`, `install-stamp`, `process-args`, `stats`, `phases`, `colors`. `src/utils.ts` survives as a re-export façade so existing imports keep working.
+- **Extract `App.tsx` useEffects into focused hooks** (#51). Six effects (terminal size, control plane, hot reload, log pause, contextual tips, boot sequence) moved into colocated hooks in `src/tui/hooks/`. `App.tsx` shrank from 397 to 150 lines (-62%); each hook ≤ 144 lines.
+- **Split `ProcessManager` into Spawner / Restarter / HealthPoller / Lifecycle** (#50). All four share the same `state` Map and `procs` Set via constructor injection. Public API unchanged. `manager.ts` shrank from 361 to 91 lines (-75%); spawn pipeline isolated in `Spawner`; auto-restart backoff isolated in `Restarter`; cleanup + kill-tree in `Lifecycle`; health polling + grace window in `HealthPoller`.
+
+Test count: 331 → 338. Build clean. Every public call site (TUI, control plane, runOnce, subcommands) keeps working unchanged.
+
 ## [0.7.0] — 2026-05-21
 
 Polish release. Two small quality-of-life items that closed out the low-value tail of the roadmap.
@@ -184,6 +195,7 @@ Initial release.
 - Config file resolution order: `devup.config.ts` → `.js` → `.json`, with `--config <path>` override. TypeScript loaded via the `tsx` import hook.
 - CLI flags: `--only`, `--services`, `--skip`, `--lazy`/`--no-lazy`, `--timeout`, `--proxy`, `--proxy-host`, `--proxy-conf`, `--proxy-tls`/`--no-proxy-tls`, `--proxy-entrypoint`, `--config`.
 
+[0.7.1]: https://github.com/gachlab/devup/releases/tag/0.7.1
 [0.7.0]: https://github.com/gachlab/devup/releases/tag/0.7.0
 [0.6.0]: https://github.com/gachlab/devup/releases/tag/0.6.0
 [0.5.0]: https://github.com/gachlab/devup/releases/tag/0.5.0

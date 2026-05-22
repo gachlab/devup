@@ -1,0 +1,213 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import type { ServiceConfig } from '../config/types.js';
+import type { ProcessState, ProcessManagerEvents } from './types.js';
+import { checkPort } from './health.js';
+import { buildProcessArgs, buildProcessEnv } from '../utils.js';
+import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
+import type { Lifecycle } from './lifecycle.js';
+
+interface SpawnerOpts {
+  baseCwd: string;
+  env: Record<string, string>;
+  state: Map<string, ProcessState>;
+  procs: Set<ChildProcess>;
+  events: ProcessManagerEvents;
+  lifecycle: Lifecycle;
+  /** Called when a service exits non-zero, so the Restarter can schedule auto-restart. */
+  onCrash: (svc: ServiceConfig, state: ProcessState, colorIdx: number) => void;
+}
+
+/** Owns the spawn lifecycle: port check → preBuild → watch-path pre-flight →
+ *  spawn → wire stdio (readyPattern + errorPattern + log) → watchBuild → close
+ *  handler. On crash, delegates to `onCrash` (the Restarter wires this). */
+export class Spawner {
+  private readonly baseCwd: string;
+  private readonly env: Record<string, string>;
+  private readonly state: Map<string, ProcessState>;
+  private readonly procs: Set<ChildProcess>;
+  private readonly events: ProcessManagerEvents;
+  private readonly lifecycle: Lifecycle;
+  private readonly onCrash: SpawnerOpts['onCrash'];
+
+  constructor(opts: SpawnerOpts) {
+    this.baseCwd = opts.baseCwd;
+    this.env = opts.env;
+    this.state = opts.state;
+    this.procs = opts.procs;
+    this.events = opts.events;
+    this.lifecycle = opts.lifecycle;
+    this.onCrash = opts.onCrash;
+  }
+
+  async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
+    const cwd = join(this.baseCwd, svc.cwd);
+
+    // Port occupied check (APIs only — webs are assumed to manage their own).
+    if (svc.type === 'api') {
+      const occupied = await checkPort(svc.port);
+      if (occupied && !isRestart) {
+        this.log(svc.name, `⚠ port ${svc.port} already in use — skipping`, colorIdx);
+        return;
+      }
+    }
+
+    // preBuild: run synchronously before spawning the service.
+    if (svc.preBuild) {
+      const built = await this.runPreBuild(svc, cwd, colorIdx);
+      if (!built) {
+        this.recordCrashedState(svc, colorIdx);
+        return;
+      }
+    }
+
+    const args = buildProcessArgs(svc);
+
+    // Pre-flight: every --watch / --watch-path must resolve to an existing path.
+    const missingWatchPaths = extractWatchPaths(args)
+      .filter(p => !existsSync(resolve(cwd, p)));
+    if (missingWatchPaths.length) {
+      this.log(svc.name, `⚠ missing watch paths: ${missingWatchPaths.join(', ')}`, colorIdx);
+      this.recordCrashedState(svc, colorIdx);
+      return;
+    }
+
+    const env = buildProcessEnv(svc, this.env);
+    const proc = spawn(svc.cmd, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const prev = this.state.get(svc.name);
+    const state: ProcessState = {
+      svc, proc, pid: proc.pid ?? null,
+      status: 'starting', health: 'wait',
+      errors: prev?.errors ?? 0,
+      restarts: prev?.restarts ?? 0,
+      startedAt: Date.now(),
+      intentionalStop: false,
+      colorIdx,
+    };
+    this.state.set(svc.name, state);
+    this.procs.add(proc);
+    this.events.onStateChange(svc.name, state);
+
+    this.wireStdio(proc, svc, state, colorIdx);
+    this.wireCloseHandler(proc, svc, state, colorIdx);
+
+    // watchBuild: side-car process running alongside the service.
+    if (svc.watchBuild) {
+      state.watchProc = this.spawnWatchBuild(svc, cwd, env, colorIdx);
+    }
+
+    this.log(svc.name, isRestart ? `🔄 restarted (:${svc.port})` : `🚀 started (:${svc.port})`, colorIdx);
+  }
+
+  private wireStdio(proc: ChildProcess, svc: ServiceConfig, state: ProcessState, colorIdx: number): void {
+    const readyRegex = compileReadyPattern(svc.readyPattern);
+    const markReadyIfMatch = (line: string) => {
+      if (!readyRegex || state.health === 'up') return;
+      if (readyRegex.test(line)) {
+        state.health = 'up';
+        if (state.status === 'starting') state.status = 'running';
+        this.events.onStateChange(svc.name, state);
+      }
+    };
+    const errorRegex = compileReadyPattern(svc.errorPattern);
+    const countsAsError = (line: string) => errorRegex ? errorRegex.test(line) : true;
+
+    const stdoutBuf = lineBuffer(line => { markReadyIfMatch(line); this.log(svc.name, line, colorIdx); });
+    const stderrBuf = lineBuffer(line => {
+      if (countsAsError(line)) state.errors += 1;
+      markReadyIfMatch(line);
+      this.log(svc.name, line, colorIdx);
+    });
+
+    proc.stdout?.on('data', (d: Buffer) => stdoutBuf.push(d));
+    proc.stderr?.on('data', (d: Buffer) => stderrBuf.push(d));
+    proc.stdout?.on('end', () => stdoutBuf.flush());
+    proc.stderr?.on('end', () => stderrBuf.flush());
+  }
+
+  private wireCloseHandler(proc: ChildProcess, svc: ServiceConfig, state: ProcessState, colorIdx: number): void {
+    proc.on('close', code => {
+      this.procs.delete(proc);
+      this.lifecycle.stopWatchProc(state);
+      if (state.intentionalStop) { state.intentionalStop = false; return; }
+      if (code === 0) {
+        state.status = 'stopped'; state.health = 'down';
+        this.events.onStateChange(svc.name, state);
+        return;
+      }
+      state.status = 'crashed'; state.health = 'down';
+      this.log(svc.name, `❌ exited with code ${code}`, colorIdx);
+      this.events.onStateChange(svc.name, state);
+      this.onCrash(svc, state, colorIdx);
+    });
+  }
+
+  private runPreBuild(svc: ServiceConfig, cwd: string, colorIdx: number): Promise<boolean> {
+    this.log(svc.name, `🔨 preBuild: ${svc.preBuild}`, colorIdx);
+    return new Promise(res => {
+      const isWin = process.platform === 'win32';
+      const shell = isWin ? 'cmd.exe' : 'sh';
+      const shellFlag = isWin ? '/c' : '-c';
+      const env = buildProcessEnv(svc, this.env);
+      const child = spawn(shell, [shellFlag, svc.preBuild!], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+
+      const outBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
+      const errBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
+      child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
+      child.stderr?.on('data', (d: Buffer) => errBuf.push(d));
+
+      child.on('error', err => {
+        this.log(svc.name, `[build] ❌ ${err.message}`, colorIdx);
+        res(false);
+      });
+      child.on('close', code => {
+        outBuf.flush(); errBuf.flush();
+        if (code === 0) {
+          this.log(svc.name, `[build] ✅ done`, colorIdx);
+          res(true);
+        } else {
+          this.log(svc.name, `[build] ❌ exited with code ${code}`, colorIdx);
+          res(false);
+        }
+      });
+    });
+  }
+
+  private spawnWatchBuild(svc: ServiceConfig, cwd: string, env: Record<string, string>, colorIdx: number): ChildProcess {
+    this.log(svc.name, `👀 watchBuild: ${svc.watchBuild}`, colorIdx);
+    const isWin = process.platform === 'win32';
+    const shell = isWin ? 'cmd.exe' : 'sh';
+    const shellFlag = isWin ? '/c' : '-c';
+    const child = spawn(shell, [shellFlag, svc.watchBuild!], {
+      cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const outBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
+    const errBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
+    child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
+    child.stderr?.on('data', (d: Buffer) => errBuf.push(d));
+    child.on('error', err => this.log(svc.name, `[watch] ❌ ${err.message}`, colorIdx));
+    return child;
+  }
+
+  /** Create a state entry in 'crashed' status without spawning a process
+   *  (used when preBuild fails or pre-flight checks fail). */
+  private recordCrashedState(svc: ServiceConfig, colorIdx: number): void {
+    const prev = this.state.get(svc.name);
+    this.state.set(svc.name, {
+      svc, proc: null, pid: null,
+      status: 'crashed', health: 'down',
+      errors: prev?.errors ?? 0,
+      restarts: prev?.restarts ?? 0,
+      startedAt: null,
+      intentionalStop: false,
+      colorIdx,
+    });
+    this.events.onStateChange(svc.name, this.state.get(svc.name)!);
+  }
+
+  private log(name: string, text: string, colorIdx: number): void {
+    this.events.onLog(name, text, colorIdx);
+  }
+}
