@@ -11,7 +11,6 @@ import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
 import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
 import { scanPortConflicts, resolvePortConflicts } from './process/port-conflicts.js';
-import { createInterface } from 'node:readline';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -149,6 +148,25 @@ async function main() {
     logSink = new LogSink({ projectName: config.name, rootDir: cliArgs.logDir });
   }
 
+  // Daemon-already-running guard. Applies to all "boot the stack" flows
+  // (TUI, --once, devup up -d). If a healthy daemon is up for this project,
+  // the ports we'd scan belong to its services — killing them only triggers
+  // the daemon's auto-restarter and produces churn. Skip only for the daemon
+  // child itself (which IS the running daemon).
+  if (process.env.DEVUP_DAEMON_CHILD !== '1') {
+    const daemonStatus = isDaemonRunning(config.name);
+    if (daemonStatus.pid && !daemonStatus.stale) {
+      console.error(`❌ A devup daemon is already running for "${config.name}" (pid=${daemonStatus.pid}).`);
+      console.error('');
+      console.error('Stop it first with `devup down`, or interact via the control plane:');
+      console.error('  devup ctl status');
+      console.error('  devup ctl logs <svc> --follow');
+      console.error('  devup ctl restart <svc>');
+      await logSink?.close();
+      process.exit(1);
+    }
+  }
+
   // Pre-boot port conflict resolution. Skip in the daemon child (the parent
   // already cleared conflicts before spawning us). All other flows benefit:
   // TUI, `devup up -d`, `--once`.
@@ -194,19 +212,6 @@ async function main() {
     }));
   }
 
-  // Refuse to start the TUI when a daemon is already running for this project
-  // — they'd race for the same ports and the user would only see noise.
-  const daemonStatus = isDaemonRunning(config.name);
-  if (daemonStatus.pid && !daemonStatus.stale) {
-    console.error(`❌ A devup daemon is already running for "${config.name}" (pid=${daemonStatus.pid}).`);
-    console.error('');
-    console.error('Stop it first with `devup down`, or interact via the control plane:');
-    console.error('  devup ctl status');
-    console.error('  devup ctl logs <svc> --follow');
-    console.error('  devup ctl restart <svc>');
-    process.exit(1);
-  }
-
   // Render TUI
   const isInteractive = process.stdin.isTTY ?? false;
   const { waitUntilExit } = render(
@@ -220,17 +225,37 @@ async function main() {
   await waitUntilExit();
 }
 
-/** Single-line y/N prompt. Uses readline so it works before Ink mounts.
- *  Returns false on EOF / non-TTY stdin so the caller's `isInteractive`
- *  guard is the source of truth. */
+/** Single-line y/N prompt. Reads stdin directly rather than going through
+ *  readline — `readline.createInterface` can no-op silently when the input
+ *  stream has been touched elsewhere (e.g. terminal multiplexers, IDE
+ *  integrated terminals, complex shells), which left users with the
+ *  question printed but the process moving on without waiting.
+ *
+ *  TTY is detected via any of stdin / stderr / stdout being a TTY; some
+ *  environments misreport one but not the others. Resolves false on EOF
+ *  or non-TTY so a caller can fall back to "non-interactive" handling. */
 function askYesNo(question: string): Promise<boolean> {
   return new Promise(resolve => {
-    if (!process.stdin.isTTY) { resolve(false); return; }
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, answer => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
+    const isTTY = Boolean(process.stdin.isTTY || process.stderr.isTTY || process.stdout.isTTY);
+    if (!isTTY) { resolve(false); return; }
+
+    process.stderr.write(question);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+
+    const cleanup = () => {
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      process.stdin.pause();
+    };
+    const onData = (data: string | Buffer) => {
+      cleanup();
+      resolve(/^y(es)?$/i.test(String(data).trim()));
+    };
+    const onEnd = () => { cleanup(); resolve(false); };
+
+    process.stdin.once('data', onData);
+    process.stdin.once('end', onEnd);
   });
 }
 
