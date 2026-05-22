@@ -71,7 +71,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   });
 
   const proxyCtx = proxyProvider && proxyOpts ? { provider: proxyProvider, opts: proxyOpts } : null;
-  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, platform, proxyCtx);
+  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, platform, proxyCtx, config.profiles ?? {});
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());

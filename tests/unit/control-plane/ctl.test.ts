@@ -32,6 +32,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchStatus: () => () => {},
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
+    getInfo: () => ({ project: 'test', profiles: {} }),
     ...over,
   };
 }

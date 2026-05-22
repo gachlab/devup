@@ -29,6 +29,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchStatus: () => () => {},
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
+    getInfo: () => ({ project: 'test', profiles: {} }),
     ...over,
   };
 }
@@ -318,6 +319,45 @@ describe('socket-server', { skip: !isUnix }, () => {
       const elapsed = Date.now() - start;
       assert.ok(elapsed < 2000, `close() should complete fast; took ${elapsed}ms`);
       try { c.destroy(); } catch { /* already gone */ }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status includes phase per service', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const states = new Map([
+        ['api', mkState({ svc: { ...svc, phase: 2 } })],
+      ]);
+      const handle = await startSocketServer('ph', noopCtx({ states: () => states }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'status' });
+        assert.equal(res.result.services[0].phase, 2);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('info returns project name and profiles', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const profiles = { backend: ['api', 'db'], frontend: ['web'] };
+      const handle = await startSocketServer('inf', noopCtx({
+        getInfo: () => ({ project: 'my-stack', profiles }),
+      }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'info' });
+        assert.equal(res.result.project, 'my-stack');
+        assert.deepEqual(res.result.profiles, profiles);
+      } finally {
+        await handle.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

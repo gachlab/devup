@@ -215,6 +215,9 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
           routes: proxyOpts.routes,
         };
       },
+      getInfo() {
+        return { project: projectName, profiles: config.profiles ?? {} };
+      },
     }, { onLog: msg => writeDevupLog(msg) });
 
     // ── Health poller (keeps state.health fresh for control-plane consumers) ──
