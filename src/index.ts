@@ -8,7 +8,8 @@ import { homedir } from 'node:os';
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
-import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl } from './orchestrator/subcommands.js';
+import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown } from './orchestrator/subcommands.js';
+import { runDetached, daemonBody } from './orchestrator/daemon.js';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -68,6 +69,8 @@ async function main() {
     if (subcmd === 'install') process.exit(await runInstall(subOpts));
     if (subcmd === 'status')  process.exit(await runStatus(subOpts));
     if (subcmd === 'ctl')     process.exit(await runCtl(subArgs, subOpts));
+    if (subcmd === 'down')    process.exit(await runDown(subOpts));
+    // `up` falls through to the full setup pipeline so it can boot the stack like the TUI does.
   }
 
   // Load config
@@ -151,6 +154,24 @@ async function main() {
     });
     await logSink?.close();
     process.exit(code);
+  }
+
+  // Daemon child: spawned by `devup up -d`. Skip Ink/TUI; run the daemon body
+  // which stays alive until SIGTERM. The parent process polls for the PID file.
+  if (process.env.DEVUP_DAEMON_CHILD === '1') {
+    await daemonBody({ config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts });
+    return; // daemonBody installs its own signal handlers and only exits via process.exit
+  }
+
+  // `devup up -d`: spawn the daemon child detached, wait for it to signal ready, exit.
+  if (subcmd === 'up') {
+    if (!raw.includes('-d') && !raw.includes('--detach')) {
+      console.error('usage: devup up -d  (use plain `devup` for the TUI)');
+      process.exit(1);
+    }
+    process.exit(await runDetached({
+      config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts,
+    }));
   }
 
   // Render TUI

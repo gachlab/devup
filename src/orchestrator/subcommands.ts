@@ -8,9 +8,10 @@ import { createInterface } from 'node:readline';
 import { checkHealth } from '../process/health.js';
 import { needsInstall, writeInstallStamp } from '../utils.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists } from '../control-plane/client.js';
+import { stopDaemon } from './daemon.js';
 import type { DevStackConfig } from '../config/types.js';
 
-const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl']);
+const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down']);
 
 /** Returns the subcommand name if the first arg is one we recognise, else null. */
 export function detectSubcommand(argv: string[]): string | null {
@@ -277,6 +278,13 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
   }
 }
 
+// ── devup down ──
+
+export async function runDown(opts: SubOpts): Promise<number> {
+  const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
+  return stopDaemon(opts.config.name, { out });
+}
+
 // ── devup help <subcommand> ──
 
 export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}): number {
@@ -312,10 +320,26 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('  devup must be running in the same project directory.');
     return 0;
   }
+  if (sub === 'up') {
+    out('Usage: devup up -d');
+    out('  Boot the stack in detached/daemon mode (like `docker compose up -d`).');
+    out('  Returns immediately once the stack is healthy; services keep running.');
+    out('  Use `devup ctl status`, `devup ctl logs`, or `devup down` to interact.');
+    out('  Not supported on Windows yet — use `devup` (TUI) instead.');
+    return 0;
+  }
+  if (sub === 'down') {
+    out('Usage: devup down');
+    out('  Stop the daemon for the current project. SIGTERM with 10s grace,');
+    out('  then SIGKILL. Removes the PID file and the control-plane socket.');
+    return 0;
+  }
   out('Subcommands:');
   out('  devup logs <service> [--follow]   Read the persisted log file');
   out('  devup install                     Concurrent npm install across services');
   out('  devup status                      Health check every service in config');
+  out('  devup up -d                       Boot the stack in detached/daemon mode');
+  out('  devup down                        Stop the running daemon');
   out('  devup ctl <method> [args]         Control a running devup (restart/stop/logs/...)');
   out('  devup help [<subcommand>]         Show detailed help for a subcommand');
   out('');
