@@ -59,7 +59,18 @@ export async function startSocketServer(
     } catch { /* ignore — listen() will surface the real error */ }
   }
 
-  const server = createServer(socket => handleClient(socket, ctx));
+  // Track every active client socket so `close()` can destroy them. Without
+  // this, `server.close()` waits for all clients to disconnect on their own
+  // — and long-lived streaming clients (logs.follow / status.follow, e.g.
+  // the VS Code extension) keep the connection open indefinitely, which
+  // means `devup down` would hang past its 10 s grace and SIGKILL the daemon
+  // before cleanup could run, leaking child processes.
+  const activeClients = new Set<Socket>();
+  const server = createServer(socket => {
+    activeClients.add(socket);
+    socket.once('close', () => activeClients.delete(socket));
+    handleClient(socket, ctx);
+  });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(path, () => {
@@ -74,6 +85,9 @@ export async function startSocketServer(
     server,
     path,
     async close() {
+      // Destroy active clients first so server.close() can complete promptly.
+      for (const sock of activeClients) sock.destroy();
+      activeClients.clear();
       await new Promise<void>(resolve => server.close(() => resolve()));
       if (existsSync(path)) {
         try { unlinkSync(path); } catch { /* ignore */ }
