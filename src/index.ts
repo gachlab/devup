@@ -9,7 +9,7 @@ import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
 import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown } from './orchestrator/subcommands.js';
-import { runDetached, daemonBody } from './orchestrator/daemon.js';
+import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -172,6 +172,19 @@ async function main() {
     process.exit(await runDetached({
       config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts,
     }));
+  }
+
+  // Refuse to start the TUI when a daemon is already running for this project
+  // — they'd race for the same ports and the user would only see noise.
+  const daemonStatus = isDaemonRunning(config.name);
+  if (daemonStatus.pid && !daemonStatus.stale) {
+    console.error(`❌ A devup daemon is already running for "${config.name}" (pid=${daemonStatus.pid}).`);
+    console.error('');
+    console.error('Stop it first with `devup down`, or interact via the control plane:');
+    console.error('  devup ctl status');
+    console.error('  devup ctl logs <svc> --follow');
+    console.error('  devup ctl restart <svc>');
+    process.exit(1);
   }
 
   // Render TUI

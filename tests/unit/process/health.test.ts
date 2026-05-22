@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import http from 'node:http';
-import { checkPort, waitForPort, deriveHealth, checkHttp, checkHealth } from '../../../src/process/health.js';
+import { checkPort, isPortBindable, waitForPort, deriveHealth, checkHttp, checkHealth } from '../../../src/process/health.js';
 
 describe('checkPort', () => {
   it('returns true for open port', async () => {
@@ -19,6 +19,43 @@ describe('checkPort', () => {
   it('returns false for closed port', async () => {
     // Port 1 is almost certainly not listening
     assert.equal(await checkPort(19999), false);
+  });
+});
+
+describe('isPortBindable', () => {
+  it('returns true for a free port', async () => {
+    // Find a free port by listening on 0, then immediately release.
+    const probe = net.createServer();
+    await new Promise<void>(r => probe.listen(0, r));
+    const port = (probe.address() as net.AddressInfo).port;
+    await new Promise<void>(r => probe.close(() => r()));
+    assert.equal(await isPortBindable(port), true);
+  });
+
+  it('returns false when another server holds the port', async () => {
+    const occupier = net.createServer();
+    await new Promise<void>(r => occupier.listen(0, '0.0.0.0', r));
+    const port = (occupier.address() as net.AddressInfo).port;
+    try {
+      assert.equal(await isPortBindable(port), false);
+    } finally {
+      await new Promise<void>(r => occupier.close(() => r()));
+    }
+  });
+
+  it('returns false even for a server bound but not yet accepting (the case checkPort misses)', async () => {
+    // A net.Server that has called .listen() but is paused (not accepting yet)
+    // still holds the port. This is the bug the spawner pre-flight had: it used
+    // a connect-based check which would time out and falsely report "free".
+    const occupier = net.createServer();
+    occupier.pause?.(); // best-effort; the bind already happened above
+    await new Promise<void>(r => occupier.listen(0, '0.0.0.0', r));
+    const port = (occupier.address() as net.AddressInfo).port;
+    try {
+      assert.equal(await isPortBindable(port), false);
+    } finally {
+      await new Promise<void>(r => occupier.close(() => r()));
+    }
   });
 });
 

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ServiceConfig } from '../config/types.js';
 import type { ProcessState, ProcessManagerEvents } from './types.js';
-import { checkPort } from './health.js';
+import { isPortBindable } from './health.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
@@ -45,10 +45,13 @@ export class Spawner {
     const cwd = join(this.baseCwd, svc.cwd);
 
     // Port occupied check (APIs only — webs are assumed to manage their own).
+    // Use bind-based test so we catch every state that would EADDRINUSE the
+    // spawned service, not just sockets that already accept connections.
     if (svc.type === 'api') {
-      const occupied = await checkPort(svc.port);
-      if (occupied && !isRestart) {
+      const bindable = await isPortBindable(svc.port);
+      if (!bindable && !isRestart) {
         this.log(svc.name, `⚠ port ${svc.port} already in use — skipping`, colorIdx);
+        this.recordCrashedState(svc, colorIdx);
         return;
       }
     }

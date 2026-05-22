@@ -3,6 +3,11 @@ import http from 'node:http';
 import type { HealthStatus } from './types.js';
 import type { HealthCheckConfig } from '../config/types.js';
 
+/** "Is something accepting connections at port?" — connect-based test.
+ *  Use this for health checks and waitForPort, where "occupied" means
+ *  "the service is up". Do NOT use this to decide whether to spawn — use
+ *  `isPortBindable` instead (a bound but pre-accept server would slip
+ *  through this check). */
 export function checkPort(port: number, host = '127.0.0.1', timeoutMs = 2000): Promise<boolean> {
   return new Promise(resolve => {
     const socket = new net.Socket();
@@ -11,6 +16,24 @@ export function checkPort(port: number, host = '127.0.0.1', timeoutMs = 2000): P
     socket.once('error', () => { socket.destroy(); resolve(false); });
     socket.once('timeout', () => { socket.destroy(); resolve(false); });
     socket.connect(port, host);
+  });
+}
+
+/** "Can I bind to this port right now?" — bind-based test. Returns true
+ *  if a server could listen on the port. Use this as the pre-flight check
+ *  before spawning a service: it catches every case that would cause the
+ *  service to die with EADDRINUSE, including bound-but-not-yet-accepting
+ *  states that `checkPort` misses. Defaults to host=0.0.0.0 to match how
+ *  most services bind. */
+export function isPortBindable(port: number, host = '0.0.0.0'): Promise<boolean> {
+  return new Promise(resolve => {
+    const server = net.createServer();
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      // EADDRINUSE / EACCES → the port is unusable. Other errors are transient.
+      resolve(err.code !== 'EADDRINUSE' && err.code !== 'EACCES');
+    });
+    server.once('listening', () => server.close(() => resolve(true)));
+    server.listen(port, host);
   });
 }
 
