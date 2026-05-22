@@ -5,6 +5,20 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-05-22
+
+Patch focused on two real-world footguns surfaced as soon as 0.8.0 hit users.
+
+### Fixed
+- **Spawner port pre-flight was unreliable.** The check used `checkPort` — a connect-based test designed for health checks — which can miss bindings (e.g. a server bound but not yet accepting connections, or listening on a different address family). When the check missed, the service crashed with a raw `EADDRINUSE` Node stack trace dumped to the logs panel. Replaced with `isPortBindable()` — a bind-based test using `net.createServer().listen()` — which catches every case that would actually conflict.
+- **Pre-flight failures now record a crashed state.** Previously the spawner returned silently when the port was occupied, leaving no entry in the services list. Now the failed service appears in the stats panel as `crashed` with the `⚠ port N already in use` line in its log, matching the behaviour of other pre-flight failures.
+
+### Added
+- **TUI refuses to start when a daemon is already running for the project.** Running `devup` (TUI) on top of `devup up -d` would race for the same ports — every API would fail with EADDRINUSE. The TUI now detects the PID file before mounting Ink and exits with a clear pointer to `devup down` and the `devup ctl` family.
+
+### Internals
+- New public `isPortBindable(port, host?)` in `src/process/health.ts`. `checkPort` keeps its connect-based semantics for health checks and `waitForPort`. Three new tests cover free / occupied / bound-but-not-accepting cases.
+
 ## [0.8.0] — 2026-05-22
 
 **Headless devup.** The control plane grows up: streaming events, a CLI client that speaks it end-to-end, and the long-requested daemon mode so the stack can be left running while you keep working in the same terminal — `docker compose up -d` for Node monorepos.
