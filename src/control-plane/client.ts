@@ -26,17 +26,25 @@ export function sendRpc(
   params: Record<string, unknown> = {},
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+    const ok = (v: unknown) => { if (!settled) { settled = true; resolve(v); } };
+
     const c = createConnection(socketPath);
-    c.on('error', reject);
     const rl = createInterface({ input: c });
+    // Both the socket AND the readline interface can emit 'error' (readline
+    // re-forwards errors from its input stream). Attach to BOTH so an
+    // ECONNREFUSED on the socket can't escape as an unhandled error event.
+    c.on('error', fail);
+    rl.on('error', fail);
     rl.once('line', l => {
       c.end();
       try {
         const msg = JSON.parse(l);
-        if (msg.error) reject(new Error(msg.error.message ?? String(msg.error)));
-        else resolve(msg.result);
-      } catch (e) {
-        reject(e);
+        if (msg.error) fail(new Error(msg.error.message ?? String(msg.error)));
+        else ok(msg.result);
+      } catch (e: any) {
+        fail(e);
       }
     });
     c.write(JSON.stringify({ id: 1, method, params }) + '\n');
@@ -62,7 +70,12 @@ export function openStream(
   const rl = createInterface({ input: c });
   let ackDone = false;
 
-  c.on('error', err => onError?.(err));
+  // Both the socket and the readline interface can emit 'error'. Listen on
+  // both — without an rl handler an ECONNREFUSED can escape as an unhandled
+  // 'error' event and crash the host process.
+  const onErr = (err: Error) => onError?.(err);
+  c.on('error', onErr);
+  rl.on('error', onErr);
   c.write(JSON.stringify({ id: 1, method, params }) + '\n');
 
   rl.on('line', l => {
