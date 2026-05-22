@@ -225,6 +225,8 @@ function serializeState(name: string, st: ProcessState): Record<string, unknown>
     port: st.svc.port,
     type: st.svc.type,
     phase: st.svc.phase,
+    cmd: st.svc.cmd,
+    cwd: st.svc.cwd,
     errors: st.errors,
     restarts: st.restarts,
     pid: st.pid,
