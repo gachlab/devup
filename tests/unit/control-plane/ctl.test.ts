@@ -1,0 +1,155 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { startSocketServer, type RpcContext } from '../../../src/control-plane/socket-server.js';
+import { runCtl } from '../../../src/orchestrator/subcommands.js';
+import type { ProcessState } from '../../../src/process/types.js';
+import type { ServiceConfig } from '../../../src/config/types.js';
+import type { DevStackConfig } from '../../../src/config/types.js';
+
+const isUnix = process.platform === 'linux' || process.platform === 'darwin';
+
+const svc: ServiceConfig = { name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api', port: 3000, phase: 0 };
+function mkState(over: Partial<ProcessState> = {}): ProcessState {
+  return {
+    svc, proc: null, pid: 42, status: 'running', health: 'up',
+    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
+    ...over,
+  };
+}
+function mkConfig(name = 'test'): DevStackConfig {
+  return { name, services: [svc] };
+}
+function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
+  return {
+    states: () => new Map(),
+    restart: async () => {},
+    stop: () => {},
+    tailLogs: async () => [],
+    watchLogs: () => () => {},
+    watchStatus: () => () => {},
+    ...over,
+  };
+}
+
+async function withServer(ctx: RpcContext, fn: (socketPath: string) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
+  const path = join(dir, 's.sock');
+  try {
+    const handle = await startSocketServer('test', ctx, { path });
+    try { await fn(path); } finally { await handle.close(); }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('runCtl', { skip: !isUnix }, () => {
+  it('ping prints pong with ts', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx(), async path => {
+      const code = await runCtl(['ping'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.ok(lines[0].startsWith('pong'));
+      assert.ok(lines[0].includes('ts='));
+    });
+  });
+
+  it('status prints tabular snapshot', async () => {
+    const lines: string[] = [];
+    const states = new Map([
+      ['api', mkState({ status: 'running', health: 'up', pid: 1234, errors: 0, restarts: 2 })],
+      ['web', mkState({ svc: { ...svc, name: 'web', type: 'web', port: 4000 }, status: 'crashed', health: 'down', pid: null, errors: 5, restarts: 3 })],
+    ]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['status'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.equal(lines.length, 2);
+      assert.ok(lines[0].includes('api'));
+      assert.ok(lines[0].includes('running'));
+      assert.ok(lines[0].includes('pid=1234'));
+      assert.ok(lines[1].includes('web'));
+      assert.ok(lines[1].includes('crashed'));
+      assert.ok(lines[1].includes('errors=5'));
+    });
+  });
+
+  it('logs prints tail lines', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      tailLogs: async () => ['line one', 'line two', 'line three'],
+    }), async path => {
+      const code = await runCtl(['logs', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(lines, ['line one', 'line two', 'line three']);
+    });
+  });
+
+  it('restart sends rpc and prints confirmation', async () => {
+    const restarted: string[] = [];
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      restart: async n => { restarted.push(n); },
+    }), async path => {
+      const code = await runCtl(['restart', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(restarted, ['api']);
+      assert.ok(lines[0].includes('restart sent'));
+    });
+  });
+
+  it('stop sends rpc and prints confirmation', async () => {
+    const stopped: string[] = [];
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      stop: n => { stopped.push(n); },
+    }), async path => {
+      const code = await runCtl(['stop', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(stopped, ['api']);
+      assert.ok(lines[0].includes('stop sent'));
+    });
+  });
+
+  it('returns 1 with friendly error when socket does not exist', async () => {
+    const lines: string[] = [];
+    const code = await runCtl(['status'], {
+      config: mkConfig('myproject'),
+      socketPath: '/tmp/devup-nonexistent-999.sock',
+      out: l => lines.push(l),
+    });
+    assert.equal(code, 1);
+    assert.ok(lines[0].includes('myproject'));
+    assert.ok(lines[0].toLowerCase().includes('not running'));
+  });
+
+  it('logs returns 1 with usage when no service given', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx(), async path => {
+      const code = await runCtl(['logs'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines[0].includes('usage'));
+    });
+  });
+
+  it('unknown method returns 1 with hint', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx(), async path => {
+      const code = await runCtl(['frobnicate'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines[0].includes('frobnicate'));
+    });
+  });
+
+  it('help / no args prints usage and returns 0', async () => {
+    const lines: string[] = [];
+    const code = await runCtl([], { config: mkConfig(), out: l => lines.push(l) });
+    assert.equal(code, 0);
+    assert.ok(lines.some(l => l.includes('ping')));
+    assert.ok(lines.some(l => l.includes('status')));
+    assert.ok(lines.some(l => l.includes('logs')));
+    assert.ok(lines.some(l => l.includes('restart')));
+    assert.ok(lines.some(l => l.includes('stop')));
+  });
+});

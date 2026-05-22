@@ -4,17 +4,7 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.7.0](https://github.com/gachlab/devup/releases/tag/0.7.0)** (2026-05-21). The original roadmap (0.3.0 → 0.7.0, 28 items) is **done**. See the [Suggested release cadence](#suggested-release-cadence) section below.
-
-A patch release **[0.7.1](https://github.com/gachlab/devup/milestone/6)** is in flight (#50 ProcessManager split, #51 App.tsx hooks split, #52 utils.ts split). Internals-only; safe drop-in upgrade.
-
-Active milestone: **[0.8.0](https://github.com/gachlab/devup/milestone/5)** — **headless devup**. Three issues:
-
-1. [#46](https://github.com/gachlab/devup/issues/46) — control-plane streaming (`logs.follow`, `status.follow`).
-2. [#47](https://github.com/gachlab/devup/issues/47) — `devup ctl <method>` subcommand (dogfooding client).
-3. [#54](https://github.com/gachlab/devup/issues/54) — `devup up -d` + `devup down` (daemon run mode).
-
-Order: #46 streaming → #47 ctl → #54 daemon. Each unblocks the next.
+Last released: **[0.8.0](https://github.com/gachlab/devup/releases/tag/0.8.0)** (2026-05-22) — **headless devup**. The control plane now streams (`logs.follow`, `status.follow`), there's a CLI client (`devup ctl`), and the long-requested daemon mode (`devup up -d` / `devup down`) is shipped.
 
 Next milestone: **[0.9.0](https://github.com/gachlab/devup/milestone/7)** — VS Code extension MVP ([#48](https://github.com/gachlab/devup/issues/48)). Consumes the headless devup + control plane that 0.8.0 stabilises. New repo: `gachlab/devup-vscode`.
 

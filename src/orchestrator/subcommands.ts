@@ -7,9 +7,11 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { checkHealth } from '../process/health.js';
 import { needsInstall, writeInstallStamp } from '../utils.js';
+import { sendRpc, openStream, resolveSocket, assertSocketExists } from '../control-plane/client.js';
+import { stopDaemon } from './daemon.js';
 import type { DevStackConfig } from '../config/types.js';
 
-const KNOWN = new Set(['logs', 'install', 'status', 'help']);
+const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down']);
 
 /** Returns the subcommand name if the first arg is one we recognise, else null. */
 export function detectSubcommand(argv: string[]): string | null {
@@ -158,6 +160,131 @@ export async function runStatus(opts: SubOpts): Promise<number> {
   return 0;
 }
 
+// ── devup ctl <method> [args] ──
+
+interface CtlOpts {
+  config: DevStackConfig;
+  out?: (line: string) => void;
+  socketPath?: string;
+}
+
+type ServiceRow = {
+  name: string; status: string; health: string;
+  port: number; type: string; pid: number | null;
+  errors: number; restarts: number;
+};
+
+function fmtStatus(rows: ServiceRow[], out: (l: string) => void): void {
+  const maxLen = Math.max(...rows.map(r => r.name.length), 8);
+  for (const r of rows) {
+    const pid = r.pid != null ? `pid=${r.pid}` : '        ';
+    const name = r.name.padEnd(maxLen);
+    const port = `:${r.port}`.padStart(6);
+    const status = r.status.padEnd(8);
+    const health = r.health.padEnd(4);
+    out(`${name}  ${port}  ${status}  ${health}  ${pid}  errors=${r.errors}  restarts=${r.restarts}`);
+  }
+}
+
+export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
+  const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
+  const method = argv[0];
+  const follow = argv.includes('--follow') || argv.includes('-f');
+  const socketPath = resolveSocket(opts.config.name, opts.socketPath);
+
+  if (!method || method === 'help') {
+    out('Usage: devup ctl <method> [args] [--follow]');
+    out('  ping                         Check if devup is running');
+    out('  status [--follow]            Service snapshot, or live updates');
+    out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
+    out('  restart <svc>                Restart a service');
+    out('  stop <svc>                   Stop a service');
+    return 0;
+  }
+
+  try {
+    assertSocketExists(socketPath, opts.config.name);
+  } catch (e: any) {
+    out(e.message);
+    return 1;
+  }
+
+  try {
+    if (method === 'ping') {
+      const res = await sendRpc(socketPath, 'ping') as { ok: boolean; ts: number };
+      out(`pong  ts=${res.ts}`);
+      return 0;
+    }
+
+    if (method === 'status' && !follow) {
+      const res = await sendRpc(socketPath, 'status') as { services: ServiceRow[] };
+      if (!res.services.length) { out('(no services)'); return 0; }
+      fmtStatus(res.services, out);
+      return 0;
+    }
+
+    if (method === 'status' && follow) {
+      return await new Promise<number>(resolve => {
+        const abort = openStream(socketPath, 'status.follow', {}, frame => {
+          const rows = frame.data as ServiceRow[];
+          const ts = new Date().toISOString().slice(11, 23);
+          for (const r of rows) {
+            out(`[${ts}] ${r.name.padEnd(24)}  ${r.status}/${r.health}`);
+          }
+        }, err => { out(`error: ${err.message}`); resolve(1); });
+        process.once('SIGINT', () => { abort(); resolve(0); });
+      });
+    }
+
+    if (method === 'logs') {
+      const svc = argv.find((a, i) => i > 0 && !a.startsWith('-'));
+      if (!svc) { out('usage: devup ctl logs <service> [--follow]'); return 1; }
+
+      if (!follow) {
+        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines: 100 }) as { lines: string[] };
+        for (const l of res.lines) out(l);
+        return 0;
+      }
+
+      return await new Promise<number>(resolve => {
+        const abort = openStream(socketPath, 'logs.follow', { svc, tail: 100 }, frame => {
+          out(frame.data as string);
+        }, err => { out(`error: ${err.message}`); resolve(1); });
+        process.once('SIGINT', () => { abort(); resolve(0); });
+      });
+    }
+
+    if (method === 'restart') {
+      const svc = argv[1];
+      if (!svc) { out('usage: devup ctl restart <service>'); return 1; }
+      await sendRpc(socketPath, 'restart', { svc });
+      out(`✓ restart sent to ${svc}`);
+      return 0;
+    }
+
+    if (method === 'stop') {
+      const svc = argv[1];
+      if (!svc) { out('usage: devup ctl stop <service>'); return 1; }
+      await sendRpc(socketPath, 'stop', { svc });
+      out(`✓ stop sent to ${svc}`);
+      return 0;
+    }
+
+    out(`unknown ctl method: ${method}. Run \`devup ctl help\` for usage.`);
+    return 1;
+  } catch (e: any) {
+    out(`error: ${e.message}`);
+    return 1;
+  }
+}
+
+// ── devup down ──
+
+export async function runDown(opts: SubOpts): Promise<number> {
+  const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
+  return stopDaemon(opts.config.name, { out });
+}
+
 // ── devup help <subcommand> ──
 
 export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}): number {
@@ -180,10 +307,40 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('  For each service, probes its health-check endpoint and prints up/down.');
     return 0;
   }
+  if (sub === 'ctl') {
+    out('Usage: devup ctl <method> [args] [--follow]');
+    out('  Send commands to a running devup process via the control plane socket.');
+    out('');
+    out('  ping                         Check if devup is running');
+    out('  status [--follow]            Service snapshot, or live state-change stream');
+    out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
+    out('  restart <svc>                Restart the named service');
+    out('  stop <svc>                   Stop the named service');
+    out('');
+    out('  devup must be running in the same project directory.');
+    return 0;
+  }
+  if (sub === 'up') {
+    out('Usage: devup up -d');
+    out('  Boot the stack in detached/daemon mode (like `docker compose up -d`).');
+    out('  Returns immediately once the stack is healthy; services keep running.');
+    out('  Use `devup ctl status`, `devup ctl logs`, or `devup down` to interact.');
+    out('  Not supported on Windows yet — use `devup` (TUI) instead.');
+    return 0;
+  }
+  if (sub === 'down') {
+    out('Usage: devup down');
+    out('  Stop the daemon for the current project. SIGTERM with 10s grace,');
+    out('  then SIGKILL. Removes the PID file and the control-plane socket.');
+    return 0;
+  }
   out('Subcommands:');
   out('  devup logs <service> [--follow]   Read the persisted log file');
   out('  devup install                     Concurrent npm install across services');
   out('  devup status                      Health check every service in config');
+  out('  devup up -d                       Boot the stack in detached/daemon mode');
+  out('  devup down                        Stop the running daemon');
+  out('  devup ctl <method> [args]         Control a running devup (restart/stop/logs/...)');
   out('  devup help [<subcommand>]         Show detailed help for a subcommand');
   out('');
   out('No subcommand → launch the interactive TUI.');
