@@ -5,6 +5,14 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-05-22
+
+Hotfix for two issues reported moments after 0.9.0 hit:
+
+### Fixed
+- **The y/N prompt no longer no-ops silently.** The conflict list would print, then the process would just continue without waiting for input on some terminals (IDE integrated terminals, multiplexers, custom shells where `process.stdin.isTTY` is misreported). Replaced `readline.question` with direct stdin handling. TTY detection now also accepts stderr / stdout being a TTY when stdin isn't — covers more real environments.
+- **Daemon-already-running guard moved before the port scan.** Running `devup` (TUI) or `devup up -d` while a daemon was already up for the same project caused the scan to list the daemon's own services as conflicts, prompt the user to kill them, restart them (because the daemon's auto-restarter kicked in), then bail with "daemon already running". Now the daemon check runs first and short-circuits cleanly — no churn, single clear error.
+
 ## [0.9.0] — 2026-05-22
 
 Pre-boot port-conflict resolution. When devup detects another process already holding a port it needs, it now offers to take it over instead of silently marking the service as crashed.
