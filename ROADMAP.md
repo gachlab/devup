@@ -6,13 +6,17 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 Last released: **[0.7.0](https://github.com/gachlab/devup/releases/tag/0.7.0)** (2026-05-21). The original roadmap (0.3.0 → 0.7.0, 28 items) is **done**. See the [Suggested release cadence](#suggested-release-cadence) section below.
 
-Active milestone: **[0.8.0](https://github.com/gachlab/devup/milestone/5)** — VS Code extension foundation. Three issues:
+A patch release **[0.7.1](https://github.com/gachlab/devup/milestone/6)** is in flight (#50 ProcessManager split, #51 App.tsx hooks split, #52 utils.ts split). Internals-only; safe drop-in upgrade.
+
+Active milestone: **[0.8.0](https://github.com/gachlab/devup/milestone/5)** — **headless devup**. Three issues:
 
 1. [#46](https://github.com/gachlab/devup/issues/46) — control-plane streaming (`logs.follow`, `status.follow`).
 2. [#47](https://github.com/gachlab/devup/issues/47) — `devup ctl <method>` subcommand (dogfooding client).
-3. [#48](https://github.com/gachlab/devup/issues/48) — VS Code extension MVP (in a new repo `gachlab/devup-vscode`).
+3. [#54](https://github.com/gachlab/devup/issues/54) — `devup up -d` + `devup down` (daemon run mode).
 
-Order matters: streaming first (the extension is anaemic without it), then the CLI client (validates the protocol surface), then the extension itself.
+Order: #46 streaming → #47 ctl → #54 daemon. Each unblocks the next.
+
+Next milestone: **[0.9.0](https://github.com/gachlab/devup/milestone/7)** — VS Code extension MVP ([#48](https://github.com/gachlab/devup/issues/48)). Consumes the headless devup + control plane that 0.8.0 stabilises. New repo: `gachlab/devup-vscode`.
 
 ## Conventions
 
@@ -261,23 +265,52 @@ Useful for HAProxy, Envoy, or in-house proxies.
 
 - `extraEnv.PORT` warning, active-service border color. Closed the last low-value items of the original roadmap.
 
-### 0.8.0 — VS Code extension foundation
+### 0.7.1 — internals cleanup
 
-The control plane (0.6/0.7) was always meant to feed something like a VS Code extension. This milestone builds the plumbing first, then the UI:
+No user-facing changes. Sets the stage for 0.8.0 by splitting the three biggest files into focused units:
 
-- **#46 control-plane: streaming `logs.follow` + `status.follow`** (prereq for anything live)
-- **#47 `devup ctl <method>` subcommand** — dogfooding CLI client that exercises every method; doubles as a reference impl for third-party clients
-- **#48 VS Code extension MVP** (new repo `gachlab/devup-vscode`) — tree view, status bar, restart/stop/logs commands, per-service output channels
+- **#52 split `utils.ts`** into `src/utils/*` (one file per concern; façade preserves imports)
+- **#51 extract `App.tsx` useEffects** into colocated hooks (`useBootSequence`, `useControlPlane`, `useHotReload`, etc.)
+- **#50 split `ProcessManager`** into `Spawner` / `Restarter` / `HealthPoller` / `Lifecycle` units sharing the same `state` Map
 
-The order matters: streaming first (the extension would be poll-and-ugly without it), then the CLI client (proves the protocol is enough), then the extension (envuelve eso en UI).
+Daemon mode (#54) will compose these units directly, without the TUI's `events.onLog` indirection — easier with units than with a god class.
+
+### 0.8.0 — headless devup
+
+The goal: make devup feel like `docker compose` for Node monorepos. A daemon run mode + the plumbing that makes inspection from the daemon possible:
+
+- **#46 control-plane streaming** (`logs.follow`, `status.follow`) — required for real-time `devup logs --follow` against a running daemon and for the 0.9.0 extension's live output channels
+- **#47 `devup ctl <method>` subcommand** — dogfooding CLI client that exercises every method; doubles as a reference impl for third-party clients and proves the protocol surface is enough before we build UI on it
+- **#54 daemon mode** (`devup up -d` + `devup down`) — the actual "run and forget" experience that devs are asking for. PID file in `~/.devup/<project>.pid`, control plane stays bound, logs persist to disk. Linux + macOS v1; Windows users keep using the TUI
+
+Order: #46 → #47 → #54. Each unblocks the next.
+
+After 0.8.0 the dev workflow looks like:
+
+```bash
+devup up -d                    # boots, returns the shell prompt
+devup status                   # snapshot
+devup logs --follow app-api    # tail in real time
+devup ctl restart app-api      # control plane via CLI
+devup down                     # clean shutdown
+```
+
+The TUI mode (`devup` without `-d`) stays for interactive sessions. The two modes coexist; the daemon is just the headless variant.
+
+### 0.9.0 — VS Code extension MVP
+
+- **#48 VS Code extension** (new repo `gachlab/devup-vscode`) — tree view, status bar, restart/stop/logs commands, per-service output channels. Consumes the headless devup + control plane stabilised in 0.8.0.
+
+The extension is the "GUI rich" alternative for devs who live in VS Code. With 0.8/0.9 done, a dev has three frontends to choose from: TUI (interactive sessions), CLI subcommands (scripting, CI), VS Code extension (editor-integrated). All three speak to the same core via the same control plane.
 
 ### Future / unresolved
 
 The original roadmap's "open question" items still live in the issue tracker without a milestone:
 
-- Daemon mode (#22, pending product decision)
 - Production-mode items: `--prod`, cluster, Prometheus metrics, crash webhooks (#24, #25, #26, #27 — pending product decision on whether devup pivots to dev+prod)
 - Plugin systems: custom proxy providers, custom healthCheck types (#28, #29 — pending demand from external users)
+
+These graduate into a milestone if/when there's a concrete commitment to ship them. **#22 (daemon mode) is no longer here** — it became #54 and was promoted to 0.8.0 once devs asked for it explicitly.
 
 These graduate into a milestone if/when there's a concrete commitment to ship them.
 
