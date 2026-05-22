@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
-import { detectSubcommand, runLogs, runInstall, runStatus, runHelp } from './orchestrator/subcommands.js';
+import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl } from './orchestrator/subcommands.js';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -67,6 +67,7 @@ async function main() {
     if (subcmd === 'logs')    process.exit(await runLogs(subArgs, subOpts));
     if (subcmd === 'install') process.exit(await runInstall(subOpts));
     if (subcmd === 'status')  process.exit(await runStatus(subOpts));
+    if (subcmd === 'ctl')     process.exit(await runCtl(subArgs, subOpts));
   }
 
   // Load config
