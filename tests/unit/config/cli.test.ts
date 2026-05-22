@@ -56,6 +56,11 @@ describe('parseCliArgs', () => {
     assert.equal(parseCliArgs(['--watch-config']).watchConfig, true);
     assert.equal(parseCliArgs([]).watchConfig, false);
   });
+
+  it('--kill-port-conflicts opts into auto-kill', () => {
+    assert.equal(parseCliArgs(['--kill-port-conflicts']).killPortConflicts, true);
+    assert.equal(parseCliArgs([]).killPortConflicts, false);
+  });
 });
 
 describe('filterServices', () => {

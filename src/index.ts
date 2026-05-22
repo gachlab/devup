@@ -10,6 +10,8 @@ import { validateConfig, formatValidationErrors, collectWarnings, formatValidati
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
 import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
+import { scanPortConflicts, resolvePortConflicts } from './process/port-conflicts.js';
+import { createInterface } from 'node:readline';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -147,6 +149,24 @@ async function main() {
     logSink = new LogSink({ projectName: config.name, rootDir: cliArgs.logDir });
   }
 
+  // Pre-boot port conflict resolution. Skip in the daemon child (the parent
+  // already cleared conflicts before spawning us). All other flows benefit:
+  // TUI, `devup up -d`, `--once`.
+  if (process.env.DEVUP_DAEMON_CHILD !== '1') {
+    const conflicts = await scanPortConflicts(services);
+    if (conflicts.length) {
+      const resolved = await resolvePortConflicts(conflicts, {
+        autoKill: cliArgs.killPortConflicts,
+        out: msg => process.stderr.write(msg + '\n'),
+        prompt: () => askYesNo('Kill these processes and continue? [y/N]: '),
+      });
+      if (!resolved) {
+        await logSink?.close();
+        process.exit(1);
+      }
+    }
+  }
+
   // --once: arranca, espera ready, sale 0/1 (sin TUI)
   if (cliArgs.once) {
     const code = await runOnce({
@@ -198,6 +218,20 @@ async function main() {
   );
 
   await waitUntilExit();
+}
+
+/** Single-line y/N prompt. Uses readline so it works before Ink mounts.
+ *  Returns false on EOF / non-TTY stdin so the caller's `isInteractive`
+ *  guard is the source of truth. */
+function askYesNo(question: string): Promise<boolean> {
+  return new Promise(resolve => {
+    if (!process.stdin.isTTY) { resolve(false); return; }
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(question, answer => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
 }
 
 main().catch(e => {
