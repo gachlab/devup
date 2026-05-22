@@ -27,6 +27,8 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     tailLogs: async () => [],
     watchLogs: () => () => {},
     watchStatus: () => () => {},
+    getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
+    getProxyInfo: () => null,
     ...over,
   };
 }
@@ -316,6 +318,64 @@ describe('socket-server', { skip: !isUnix }, () => {
       const elapsed = Date.now() - start;
       assert.ok(elapsed < 2000, `close() should complete fast; took ${elapsed}ms`);
       try { c.destroy(); } catch { /* already gone */ }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stats returns per-service and system shape', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('stats', noopCtx({
+        getStats: async () => ({
+          services: { api: { cpu: 1.5, memMB: 200 }, web: { cpu: 0, memMB: 0 } },
+          system: { totalMemMB: 16384, freeMemMB: 8000, cpuCores: 8 },
+        }),
+      }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'stats' });
+        assert.equal(res.result.services.api.cpu, 1.5);
+        assert.equal(res.result.services.api.memMB, 200);
+        assert.equal(res.result.services.web.cpu, 0);
+        assert.equal(res.result.system.cpuCores, 8);
+        assert.ok(res.result.system.totalMemMB > 0);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status includes proxy: null when no proxy active', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('prx', noopCtx({ getProxyInfo: () => null }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'status' });
+        assert.equal(res.result.proxy, null);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status includes proxy info when proxy is active', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const proxy = { active: true, provider: 'traefik', domain: 'localhost', tls: false, routes: { 'app-web': '' } };
+      const handle = await startSocketServer('prx2', noopCtx({ getProxyInfo: () => proxy }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'status' });
+        assert.deepEqual(res.result.proxy, proxy);
+      } finally {
+        await handle.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

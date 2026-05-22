@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync, createReadStream } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, totalmem, freemem, cpus } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createInterface } from 'node:readline';
 
 import { ProcessManager } from '../process/manager.js';
 import { LogSink } from '../process/log-sink.js';
-import { groupByPhase } from '../utils.js';
+import { groupByPhase, calcCpuPercent } from '../utils.js';
 import { waitForPort } from '../process/health.js';
 import { Broadcaster } from '../utils/broadcaster.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
@@ -84,6 +84,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   const logBus = new Broadcaster<{ svc: string; text: string }>();
   const stateBus = new Broadcaster<{ name: string; state: ProcessState }>();
   const lazyProxies = new Map<string, LazyProxy>();
+  const prevCpuMap = new Map<string, { time: number; cpu: number }>();
   let externals: ExternalProc[] = [];
   let socket: SocketServerHandle | null = null;
   let healthTimer: NodeJS.Timeout | null = null;
@@ -176,6 +177,44 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         if (svcName === null || svc === svcName) onLine(svc, text);
       }),
       watchStatus: (onUpdate) => stateBus.subscribe(({ name, state }) => onUpdate(name, state)),
+      async getStats() {
+        const pids: number[] = [];
+        const pidToName = new Map<number, string>();
+        for (const [name, st] of mgr.state) {
+          if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
+        }
+        const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
+        const services: Record<string, { cpu: number; memMB: number }> = {};
+        for (const [name] of mgr.state) {
+          services[name] = { cpu: 0, memMB: 0 };
+        }
+        for (const [pid, data] of raw) {
+          const name = pidToName.get(pid);
+          if (!name) continue;
+          const prev = prevCpuMap.get(name) ?? { time: Date.now(), cpu: 0 };
+          const cpu = calcCpuPercent(data.cpuSeconds, prev.cpu, prev.time);
+          prevCpuMap.set(name, { time: Date.now(), cpu: data.cpuSeconds });
+          services[name] = { cpu: Math.round(cpu * 10) / 10, memMB: Math.round((data.rss / 1024) * 10) / 10 };
+        }
+        return {
+          services,
+          system: {
+            totalMemMB: Math.round(totalmem() / 1024 / 1024),
+            freeMemMB: Math.round(freemem() / 1024 / 1024),
+            cpuCores: cpus().length,
+          },
+        };
+      },
+      getProxyInfo() {
+        if (!proxyProvider || !proxyOpts || !cliArgs.proxy) return null;
+        return {
+          active: true,
+          provider: proxyProvider.name,
+          domain: proxyOpts.domain,
+          tls: proxyOpts.tls,
+          routes: proxyOpts.routes,
+        };
+      },
     }, { onLog: msg => writeDevupLog(msg) });
 
     // ── Health poller (keeps state.health fresh for control-plane consumers) ──
