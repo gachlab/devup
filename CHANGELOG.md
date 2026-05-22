@@ -5,6 +5,17 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] — 2026-05-22
+
+Critical hotfix for `devup down` against the VS Code extension.
+
+### Fixed
+- **`devup down` no longer gets SIGKILL'd because the control-plane socket hangs on streaming clients.** The control-plane server's `close()` awaited every client to disconnect on its own, but long-lived streaming subscriptions (`status.follow`, `logs.follow` — exactly what the VS Code extension uses) never close until the daemon tells them to. Result: `devup down` waited the full 10 s grace, then SIGKILL'd the daemon. SIGKILL skips the cleanup handler → all spawned services orphaned to init, ports left busy, next `devup up -d` hits EADDRINUSE on every port. Fix: track every active client socket and `destroy()` them before awaiting `server.close()`. Clean shutdowns now complete in milliseconds even with the extension connected.
+- **Pre-boot port-conflict scan now covers web services too.** They were skipped on the assumption that dev servers handle retry themselves, but in daemon mode the user wants devup to own the configured ports — same as APIs. If a web port is held by a stray Vite/ng-serve from a previous run, the scan now flags it and offers to take it over.
+
+### Added
+- New unit test asserts `socket.close()` completes in under 2 s with an active `logs.follow` subscription.
+
 ## [0.9.2] — 2026-05-22
 
 Critical hotfix. **All 0.9.x users should upgrade immediately.**
