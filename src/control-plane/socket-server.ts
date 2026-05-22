@@ -9,6 +9,7 @@ import type { ProcessState } from '../process/types.js';
 /** Minimal JSON-RPC-like protocol over a local Unix socket.
  *  Request  ─►  { id?, method, params? }  newline-terminated JSON
  *  Response ─►  { id?, result | error }   newline-terminated JSON
+ *  Stream   ─►  { id, event, data }       pushed until socket closes
  *
  *  Auth model: unix socket created with `chmod 0600`. Anyone with read access
  *  to the socket file already has the same uid as the devup process — no
@@ -24,6 +25,11 @@ export interface RpcContext {
   stop(name: string): void;
   /** Tail N most recent log lines for the given service (from the persistent log file). */
   tailLogs(svcName: string, lines: number): Promise<string[]>;
+  /** Subscribe to live log lines. Pass null to receive logs from all services.
+   *  Returns an unsubscribe function. */
+  watchLogs(svcName: string | null, onLine: (svc: string, line: string) => void): () => void;
+  /** Subscribe to service-state changes. Returns an unsubscribe function. */
+  watchStatus(onUpdate: (name: string, state: ProcessState) => void): () => void;
 }
 
 export interface SocketServerHandle {
@@ -78,6 +84,13 @@ export async function startSocketServer(
 
 function handleClient(socket: Socket, ctx: RpcContext): void {
   const rl = createInterface({ input: socket });
+  const unsubs = new Set<() => void>();
+
+  socket.on('close', () => {
+    for (const unsub of unsubs) unsub();
+    unsubs.clear();
+  });
+
   rl.on('line', async (line: string) => {
     if (!line.trim()) return;
     let req: { id?: unknown; method?: unknown; params?: unknown };
@@ -91,14 +104,84 @@ function handleClient(socket: Socket, ctx: RpcContext): void {
       respond(socket, { id: req.id, error: { code: -32600, message: 'method required' } });
       return;
     }
+    const params = (req.params ?? {}) as Record<string, unknown>;
+    if (req.method === 'logs.follow' || req.method === 'status.follow') {
+      try {
+        await handleFollow(socket, req as { id?: unknown; method: string }, params, ctx, unsubs);
+      } catch (e: any) {
+        respond(socket, { id: req.id, error: { code: -32603, message: e.message ?? String(e) } });
+      }
+      return;
+    }
     try {
-      const result = await dispatch(req.method, (req.params ?? {}) as Record<string, unknown>, ctx);
+      const result = await dispatch(req.method, params, ctx);
       respond(socket, { id: req.id, result });
     } catch (e: any) {
       respond(socket, { id: req.id, error: { code: -32603, message: e.message ?? String(e) } });
     }
   });
   socket.on('error', () => {/* swallow ECONNRESET etc. */});
+}
+
+async function handleFollow(
+  socket: Socket,
+  req: { id?: unknown; method: string },
+  params: Record<string, unknown>,
+  ctx: RpcContext,
+  unsubs: Set<() => void>,
+): Promise<void> {
+  if (req.method === 'logs.follow') {
+    const rawSvc = params['svc'] ?? params['service'];
+    const svcName = rawSvc != null ? stringOrThrow(rawSvc, 'svc') : null;
+    const tail = Math.max(0, Math.min(1000, Number(params['tail'] ?? 50)));
+
+    respond(socket, { id: req.id, result: { ok: true } });
+
+    // Replay recent history before going live.
+    if (svcName) {
+      const lines = await ctx.tailLogs(svcName, tail);
+      for (const l of lines) {
+        respond(socket, { id: req.id, event: 'log', data: l });
+      }
+    }
+
+    const unsub = ctx.watchLogs(svcName, (svc, line) => {
+      respond(socket, { id: req.id, event: 'log', data: line, svc });
+    });
+    unsubs.add(unsub);
+
+  } else {
+    // status.follow
+    respond(socket, { id: req.id, result: { ok: true } });
+
+    // Send current snapshot immediately so the client has something to render.
+    const snapshot: Array<Record<string, unknown>> = [];
+    for (const [name, st] of ctx.states()) {
+      snapshot.push(serializeState(name, st));
+    }
+    if (snapshot.length) {
+      respond(socket, { id: req.id, event: 'status', data: snapshot });
+    }
+
+    const unsub = ctx.watchStatus((name, state) => {
+      respond(socket, { id: req.id, event: 'status', data: [serializeState(name, state)] });
+    });
+    unsubs.add(unsub);
+  }
+}
+
+function serializeState(name: string, st: ProcessState): Record<string, unknown> {
+  return {
+    name,
+    status: st.status,
+    health: st.health,
+    port: st.svc.port,
+    type: st.svc.type,
+    errors: st.errors,
+    restarts: st.restarts,
+    pid: st.pid,
+    startedAt: st.startedAt,
+  };
 }
 
 function respond(socket: Socket, payload: object): void {
@@ -114,17 +197,7 @@ async function dispatch(
     case 'status': {
       const out: Array<Record<string, unknown>> = [];
       for (const [name, st] of ctx.states()) {
-        out.push({
-          name,
-          status: st.status,
-          health: st.health,
-          port: st.svc.port,
-          type: st.svc.type,
-          errors: st.errors,
-          restarts: st.restarts,
-          pid: st.pid,
-          startedAt: st.startedAt,
-        });
+        out.push(serializeState(name, st));
       }
       return { services: out };
     }
