@@ -15,6 +15,8 @@ export interface ProcessState {
   startedAt: number | null;
   intentionalStop: boolean;
   colorIdx: number;
+  /** Last N stderr lines captured before most recent crash. Null when not crashed or after clean restart. */
+  crashLog: string[] | null;
   /** Side-car watch process spawned alongside the main one (when `watchBuild` is set). */
   watchProc?: ChildProcess | null;
 }

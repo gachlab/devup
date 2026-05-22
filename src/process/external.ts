@@ -112,7 +112,7 @@ async function waitHealthy(svc: ExternalService, timeoutMs: number): Promise<boo
   const deadline = Date.now() + timeoutMs;
   const port = svc.port!;
   while (Date.now() < deadline) {
-    if (await checkHealth(port, svc.healthCheck)) return true;
+    if ((await checkHealth(port, svc.healthCheck)).ok) return true;
     await new Promise(r => setTimeout(r, 500));
   }
   return false;

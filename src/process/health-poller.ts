@@ -7,10 +7,12 @@ interface HealthPollerOpts {
 }
 
 /** Runs one round of health probes across every service in `state`.
- *  Suppresses probes during `healthCheck.startPeriod` grace window. */
+ *  Suppresses probes during `healthCheck.startPeriod` grace window.
+ *  Requires `failureThreshold` consecutive failures before marking down. */
 export class HealthPoller {
   private readonly state: Map<string, ProcessState>;
   private readonly events: ProcessManagerEvents;
+  private readonly failureCounts = new Map<string, number>();
 
   constructor(opts: HealthPollerOpts) {
     this.state = opts.state;
@@ -19,20 +21,32 @@ export class HealthPoller {
 
   async checkAll(): Promise<void> {
     for (const [name, st] of this.state) {
-      if (!st.pid || st.status === 'idle') {
+      if (!st.pid || st.status === 'idle' || st.status === 'timeout') {
         st.health = st.status === 'idle' ? 'idle' : 'down';
         continue;
       }
-      // Grace period: suppress probes during the first N seconds after startedAt.
-      // Keeps state.errors clean during slow boots (Angular cold-start, etc.).
       const startPeriodMs = (st.svc.healthCheck?.startPeriod ?? 0) * 1000;
       if (startPeriodMs > 0 && st.startedAt && Date.now() - st.startedAt < startPeriodMs) {
-        continue; // status stays 'starting', health stays 'wait'
+        continue;
       }
-      const isUp = await checkHealth(st.svc.port, st.svc.healthCheck);
+      const result = await checkHealth(st.svc.port, st.svc.healthCheck);
+      const threshold = st.svc.healthCheck?.failureThreshold ?? 2;
       const prev = st.health;
-      st.health = deriveHealth(isUp, st.status);
-      if (st.health === 'up' && st.status === 'starting') st.status = 'running';
+
+      if (result.ok) {
+        this.failureCounts.delete(name);
+        st.health = deriveHealth(true, st.status);
+        if (st.health === 'up' && st.status === 'starting') st.status = 'running';
+      } else {
+        const count = (this.failureCounts.get(name) ?? 0) + 1;
+        this.failureCounts.set(name, count);
+        if (count >= threshold) {
+          const reason = result.reason ?? 'probe failed';
+          this.events.onLog(name, `[health] ✗ ${name}: ${reason} (${count} consecutive failure${count > 1 ? 's' : ''})`, st.colorIdx);
+          st.health = deriveHealth(false, st.status);
+        }
+      }
+
       if (prev !== st.health) this.events.onStateChange(name, st);
     }
   }

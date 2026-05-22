@@ -54,10 +54,15 @@ function tryBind(port: number, host: string): Promise<boolean> {
   });
 }
 
+export interface HealthCheckResult {
+  ok: boolean;
+  reason?: string;
+}
+
 export function checkHttp(
   port: number,
   opts: { path?: string; expect?: number | number[]; host?: string; timeoutMs?: number } = {},
-): Promise<boolean> {
+): Promise<HealthCheckResult> {
   const path = opts.path ?? '/';
   const host = opts.host ?? '127.0.0.1';
   const timeoutMs = opts.timeoutMs ?? 2000;
@@ -68,23 +73,23 @@ export function checkHttp(
   };
   return new Promise(resolve => {
     const req = http.get({ host, port, path, timeout: timeoutMs }, res => {
-      const ok = typeof res.statusCode === 'number' && accept(res.statusCode);
+      const code = res.statusCode ?? 0;
+      const ok = typeof res.statusCode === 'number' && accept(code);
       res.resume();
-      resolve(ok);
+      resolve(ok ? { ok: true } : { ok: false, reason: `HTTP ${code}` });
     });
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', (e: NodeJS.ErrnoException) => resolve({ ok: false, reason: e.code ?? e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, reason: `timed out after ${timeoutMs}ms` }); });
   });
 }
 
 /** Run the right check for a service, given its optional healthCheck config. */
-export function checkHealth(port: number, hc?: HealthCheckConfig): Promise<boolean> {
+export async function checkHealth(port: number, hc?: HealthCheckConfig): Promise<HealthCheckResult> {
   if (hc?.type === 'http') {
-    return checkHttp(port, {
-      path: hc.path, expect: hc.expect, host: hc.host, timeoutMs: hc.timeoutMs,
-    });
+    return checkHttp(port, { path: hc.path, expect: hc.expect, host: hc.host, timeoutMs: hc.timeoutMs });
   }
-  return checkPort(port, '127.0.0.1', hc?.timeoutMs);
+  const ok = await checkPort(port, '127.0.0.1', hc?.timeoutMs);
+  return ok ? { ok: true } : { ok: false, reason: `connection refused on :${port}` };
 }
 
 export function waitForPort(port: number, opts: { timeout?: number; interval?: number } = {}): Promise<boolean> {

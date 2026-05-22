@@ -15,7 +15,7 @@ const svc: ServiceConfig = { name: 'api', cwd: '.', cmd: 'node', args: [], type:
 function mkState(over: Partial<ProcessState> = {}): ProcessState {
   return {
     svc, proc: null, pid: 42, status: 'running', health: 'up',
-    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
+    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0, crashLog: null,
     ...over,
   };
 }
@@ -99,6 +99,36 @@ describe('runCtl', { skip: !isUnix }, () => {
       assert.equal(code, 0);
       assert.deepEqual(restarted, ['api']);
       assert.ok(lines[0].includes('restart sent'));
+    });
+  });
+
+  it('ctl restart --wait returns 0 when service becomes healthy', async () => {
+    const lines: string[] = [];
+    let callCount = 0;
+    const states = new Map([['api', mkState({ health: 'down' })]]);
+    await withServer(noopCtx({
+      restart: async () => {},
+      states: () => {
+        callCount++;
+        if (callCount >= 2) states.set('api', mkState({ health: 'up' }));
+        return states;
+      },
+    }), async path => {
+      const code = await runCtl(['restart', 'api', '--wait', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.ok(lines.some(l => l.includes('healthy')));
+    });
+  });
+
+  it('ctl status --json outputs JSON array', async () => {
+    const lines: string[] = [];
+    const states = new Map([['api', mkState({ status: 'running', health: 'up' })]]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['status', '--json'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      const parsed = JSON.parse(lines.join('\n'));
+      assert.ok(Array.isArray(parsed));
+      assert.equal(parsed[0].name, 'api');
     });
   });
 

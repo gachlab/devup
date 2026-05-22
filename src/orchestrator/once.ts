@@ -95,7 +95,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
 
 async function waitHealthy(svc: ServiceConfig, deadline: number): Promise<boolean> {
   while (Date.now() < deadline) {
-    const ok = await checkHealth(svc.port, svc.healthCheck);
+    const { ok } = await checkHealth(svc.port, svc.healthCheck);
     if (ok) return true;
     await new Promise(r => setTimeout(r, 500));
   }

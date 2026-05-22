@@ -229,6 +229,7 @@ function serializeState(name: string, st: ProcessState): Record<string, unknown>
     restarts: st.restarts,
     pid: st.pid,
     startedAt: st.startedAt,
+    crashLog: st.crashLog ?? null,
   };
 }
 

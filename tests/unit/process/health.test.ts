@@ -17,14 +17,12 @@ describe('checkPort', () => {
   });
 
   it('returns false for closed port', async () => {
-    // Port 1 is almost certainly not listening
     assert.equal(await checkPort(19999), false);
   });
 });
 
 describe('isPortBindable', () => {
   it('returns true for a free port', async () => {
-    // Find a free port by listening on 0, then immediately release.
     const probe = net.createServer();
     await new Promise<void>(r => probe.listen(0, r));
     const port = (probe.address() as net.AddressInfo).port;
@@ -43,12 +41,9 @@ describe('isPortBindable', () => {
     }
   });
 
-  it('returns false even for a server bound but not yet accepting (the case checkPort misses)', async () => {
-    // A net.Server that has called .listen() but is paused (not accepting yet)
-    // still holds the port. This is the bug the spawner pre-flight had: it used
-    // a connect-based check which would time out and falsely report "free".
+  it('returns false even for a server bound but not yet accepting', async () => {
     const occupier = net.createServer();
-    occupier.pause?.(); // best-effort; the bind already happened above
+    occupier.pause?.();
     await new Promise<void>(r => occupier.listen(0, '0.0.0.0', r));
     const port = (occupier.address() as net.AddressInfo).port;
     try {
@@ -84,33 +79,37 @@ describe('checkHttp', () => {
     try { await fn(port); } finally { await new Promise<void>(r => server.close(() => r())); }
   }
 
-  it('returns true on 2xx by default', async () => {
+  it('returns ok:true on 2xx by default', async () => {
     await withServer((_req, res) => { res.writeHead(204); res.end(); }, async port => {
-      assert.equal(await checkHttp(port, { path: '/' }), true);
+      assert.equal((await checkHttp(port, { path: '/' })).ok, true);
     });
   });
 
-  it('returns false on 4xx by default', async () => {
+  it('returns ok:false on 4xx by default with reason', async () => {
     await withServer((_req, res) => { res.writeHead(404); res.end(); }, async port => {
-      assert.equal(await checkHttp(port, { path: '/' }), false);
+      const r = await checkHttp(port, { path: '/' });
+      assert.equal(r.ok, false);
+      assert.ok(r.reason?.includes('404'));
     });
   });
 
   it('respects expect = single status', async () => {
     await withServer((_req, res) => { res.writeHead(418); res.end(); }, async port => {
-      assert.equal(await checkHttp(port, { path: '/', expect: 418 }), true);
-      assert.equal(await checkHttp(port, { path: '/', expect: 200 }), false);
+      assert.equal((await checkHttp(port, { path: '/', expect: 418 })).ok, true);
+      assert.equal((await checkHttp(port, { path: '/', expect: 200 })).ok, false);
     });
   });
 
   it('respects expect = array', async () => {
     await withServer((_req, res) => { res.writeHead(301, { Location: '/x' }); res.end(); }, async port => {
-      assert.equal(await checkHttp(port, { expect: [200, 301, 302] }), true);
+      assert.equal((await checkHttp(port, { expect: [200, 301, 302] })).ok, true);
     });
   });
 
-  it('returns false on connection refused', async () => {
-    assert.equal(await checkHttp(19997, { timeoutMs: 500 }), false);
+  it('returns ok:false on connection refused with reason', async () => {
+    const r = await checkHttp(19997, { timeoutMs: 500 });
+    assert.equal(r.ok, false);
+    assert.ok(r.reason != null);
   });
 
   it('hits the configured path', async () => {
@@ -123,15 +122,22 @@ describe('checkHttp', () => {
 });
 
 describe('checkHealth dispatcher', () => {
-  it('defaults to TCP when no config', async () => {
+  it('defaults to TCP when no config, returns ok:true', async () => {
     const server = net.createServer();
     await new Promise<void>(r => server.listen(0, r));
     const port = (server.address() as net.AddressInfo).port;
     try {
-      assert.equal(await checkHealth(port), true);
+      const r = await checkHealth(port);
+      assert.equal(r.ok, true);
     } finally {
       server.close();
     }
+  });
+
+  it('TCP check returns ok:false with reason when port closed', async () => {
+    const r = await checkHealth(19996);
+    assert.equal(r.ok, false);
+    assert.ok(r.reason != null);
   });
 
   it('uses HTTP when configured', async () => {
@@ -142,8 +148,8 @@ describe('checkHealth dispatcher', () => {
     await new Promise<void>(r => server.listen(0, r));
     const port = (server.address() as net.AddressInfo).port;
     try {
-      assert.equal(await checkHealth(port, { type: 'http', path: '/healthz' }), true);
-      assert.equal(await checkHealth(port, { type: 'http', path: '/other' }), false);
+      assert.equal((await checkHealth(port, { type: 'http', path: '/healthz' })).ok, true);
+      assert.equal((await checkHealth(port, { type: 'http', path: '/other' })).ok, false);
     } finally {
       await new Promise<void>(r => server.close(() => r()));
     }

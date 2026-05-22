@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
-import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown } from './orchestrator/subcommands.js';
+import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
 import { scanPortConflicts, resolvePortConflicts } from './process/port-conflicts.js';
 import { detectPlatform } from './platform/detect.js';
@@ -71,6 +71,7 @@ async function main() {
     if (subcmd === 'status')  process.exit(await runStatus(subOpts));
     if (subcmd === 'ctl')     process.exit(await runCtl(subArgs, subOpts));
     if (subcmd === 'down')    process.exit(await runDown(subOpts));
+    if (subcmd === 'config')  process.exit(await runConfig(subArgs, { cwd, configPath: cliArgs.configPath }));
     // `up` falls through to the full setup pipeline so it can boot the stack like the TUI does.
   }
 

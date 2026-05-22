@@ -15,7 +15,7 @@ const svc: ServiceConfig = { name: 'api', cwd: '.', cmd: 'node', args: [], type:
 function mkState(over: Partial<ProcessState>): ProcessState {
   return {
     svc, proc: null, pid: null, status: 'running', health: 'up',
-    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
+    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0, crashLog: null,
     ...over,
   };
 }
@@ -319,6 +319,25 @@ describe('socket-server', { skip: !isUnix }, () => {
       const elapsed = Date.now() - start;
       assert.ok(elapsed < 2000, `close() should complete fast; took ${elapsed}ms`);
       try { c.destroy(); } catch { /* already gone */ }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status includes crashLog when service is crashed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const states = new Map([
+        ['api', mkState({ status: 'crashed', crashLog: ['error: ENOENT', 'segfault'] })],
+      ]);
+      const handle = await startSocketServer('cl', noopCtx({ states: () => states }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'status' });
+        assert.deepEqual(res.result.services[0].crashLog, ['error: ENOENT', 'segfault']);
+      } finally {
+        await handle.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

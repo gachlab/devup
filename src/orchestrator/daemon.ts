@@ -316,7 +316,7 @@ async function bootLazy(
       svc: rewritten, proc: null, pid: null,
       status: 'idle', health: 'idle',
       errors: 0, restarts: 0, startedAt: null,
-      intentionalStop: false, colorIdx: ci,
+      intentionalStop: false, colorIdx: ci, crashLog: null,
     });
     const proxy = createLazyProxy({
       listenPort: svc.port, targetPort: rewritten.realPort, timeoutMin: lazyTimeout,

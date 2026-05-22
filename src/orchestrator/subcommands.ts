@@ -9,9 +9,12 @@ import { checkHealth } from '../process/health.js';
 import { needsInstall, writeInstallStamp } from '../utils.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists } from '../control-plane/client.js';
 import { stopDaemon } from './daemon.js';
+import { findConfigFile, loadConfig } from '../config/loader.js';
+import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
+import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
 
-const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down']);
+const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config']);
 
 /** Returns the subcommand name if the first arg is one we recognise, else null. */
 export function detectSubcommand(argv: string[]): string | null {
@@ -153,7 +156,7 @@ export async function runStatus(opts: SubOpts): Promise<number> {
   out('-'.repeat(maxLen + 24));
 
   for (const svc of opts.config.services) {
-    const up = await checkHealth(svc.port, svc.healthCheck);
+    const { ok: up } = await checkHealth(svc.port, svc.healthCheck);
     const health = up ? '✓ up' : '✗ down';
     out(`${svc.name.padEnd(maxLen)}  ${String(svc.port).padStart(5)}  ${svc.type.padEnd(4)}  ${health}`);
   }
@@ -216,13 +219,6 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       return 0;
     }
 
-    if (method === 'status' && !follow) {
-      const res = await sendRpc(socketPath, 'status') as { services: ServiceRow[] };
-      if (!res.services.length) { out('(no services)'); return 0; }
-      fmtStatus(res.services, out);
-      return 0;
-    }
-
     if (method === 'status' && follow) {
       return await new Promise<number>(resolve => {
         const abort = openStream(socketPath, 'status.follow', {}, frame => {
@@ -254,12 +250,39 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       });
     }
 
+    if (method === 'status' && !follow) {
+      const json = argv.includes('--json');
+      const res = await sendRpc(socketPath, 'status') as { services: ServiceRow[] };
+      if (json) {
+        out(JSON.stringify(res.services, null, 2));
+      } else {
+        if (!res.services.length) { out('(no services)'); return 0; }
+        fmtStatus(res.services, out);
+      }
+      return 0;
+    }
+
     if (method === 'restart') {
       const svc = argv[1];
-      if (!svc) { out('usage: devup ctl restart <service>'); return 1; }
+      if (!svc) { out('usage: devup ctl restart <service> [--wait] [--timeout <s>]'); return 1; }
+      const wait = argv.includes('--wait');
+      const timeoutIdx = argv.indexOf('--timeout');
+      const timeoutSec = timeoutIdx >= 0 ? Number(argv[timeoutIdx + 1] ?? 60) : 60;
       await sendRpc(socketPath, 'restart', { svc });
-      out(`✓ restart sent to ${svc}`);
-      return 0;
+      if (!wait) {
+        out(`✓ restart sent to ${svc}`);
+        return 0;
+      }
+      out(`⏳ waiting for ${svc} to become healthy…`);
+      const deadline = Date.now() + timeoutSec * 1000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 500));
+        const status = await sendRpc(socketPath, 'status') as { services: ServiceRow[] };
+        const row = status.services.find(s => s.name === svc);
+        if (row?.health === 'up') { out(`✓ ${svc} is healthy`); return 0; }
+      }
+      out(`✗ ${svc} did not become healthy within ${timeoutSec}s`);
+      return 1;
     }
 
     if (method === 'stop') {
@@ -276,6 +299,67 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out(`error: ${e.message}`);
     return 1;
   }
+}
+
+// ── devup config validate / show ──
+
+interface ConfigSubOpts {
+  cwd: string;
+  configPath?: string;
+  out?: (line: string) => void;
+}
+
+export async function runConfig(argv: string[], opts: ConfigSubOpts): Promise<number> {
+  const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
+  const subcmd = argv[0];
+  const json = argv.includes('--json');
+
+  if (!subcmd || subcmd === 'help') {
+    out('Usage: devup config <subcommand>');
+    out('  validate [--json]   Validate the config and print errors/warnings');
+    out('  show [--no-redact]  Print the fully-resolved config as JSON');
+    return 0;
+  }
+
+  let cfgPath: string;
+  try { cfgPath = findConfigFile(opts.cwd, opts.configPath); }
+  catch (e: any) { out(`❌ ${e.message}`); return 1; }
+
+  let config: DevStackConfig;
+  try { config = await loadConfig(cfgPath); }
+  catch (e: any) { out(`❌ failed to load config: ${e.message}`); return 1; }
+
+  if (subcmd === 'validate') {
+    const errors = validateConfig(config, opts.cwd);
+    const warnings = collectWarnings(config);
+    if (json) {
+      out(JSON.stringify({ valid: errors.length === 0, errors: errors.map(e => `${e.field}: ${e.message}`), warnings: warnings.map(w => `${w.field}: ${w.message}`) }, null, 2));
+    } else {
+      if (errors.length) { out(formatValidationErrors(errors)); }
+      if (warnings.length) { out(formatValidationWarnings(warnings)); }
+      if (!errors.length) out(`✓ config is valid (${config.services.length} services${warnings.length ? `, ${warnings.length} warning${warnings.length > 1 ? 's' : ''}` : ''})`);
+    }
+    return errors.length ? 1 : 0;
+  }
+
+  if (subcmd === 'show') {
+    const noRedact = argv.includes('--no-redact');
+    const resolved = noRedact ? config : redactConfig(config);
+    out(JSON.stringify(resolved, null, 2));
+    return 0;
+  }
+
+  out(`unknown config subcommand: ${subcmd}`);
+  return 1;
+}
+
+function redactConfig(config: DevStackConfig): DevStackConfig {
+  const clone = JSON.parse(JSON.stringify(config)) as DevStackConfig;
+  for (const svc of clone.services ?? []) {
+    if (svc.extraEnv) svc.extraEnv = redactSecrets(svc.extraEnv);
+  }
+  if (clone.env) clone.env = redactSecrets(clone.env);
+  return clone;
 }
 
 // ── devup down ──
