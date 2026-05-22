@@ -19,6 +19,7 @@ export interface CliArgs {
   logFile: boolean;
   logDir?: string;
   watchConfig: boolean;
+  killPortConflicts: boolean;
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
@@ -61,6 +62,11 @@ Hot reload:
   --watch-config           Watch devup.config.* and apply add/remove/restart
                            service changes without exiting the TUI
 
+Port conflicts:
+  --kill-port-conflicts    Kill any processes already holding a configured
+                           port before boot. Interactive prompt without it;
+                           required for non-TTY (daemon, --once, CI)
+
 Other:
   -h, --help               Show this help and exit
   -v, --version            Show version and exit
@@ -80,6 +86,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     onceTimeout: DEFAULT_ONCE_TIMEOUT,
     logFile: true,
     watchConfig: false,
+    killPortConflicts: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -107,6 +114,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
       case '--watch-config':     args.watchConfig = true; break;
+      case '--kill-port-conflicts': args.killPortConflicts = true; break;
     }
   }
 

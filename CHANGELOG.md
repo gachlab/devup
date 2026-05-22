@@ -5,6 +5,33 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-05-22
+
+Pre-boot port-conflict resolution. When devup detects another process already holding a port it needs, it now offers to take it over instead of silently marking the service as crashed.
+
+### Added
+- **Pre-boot port conflict scan.** Before mounting the TUI or starting the daemon, devup checks every API-typed service's port. Any conflict is shown to the user with the PID and process name (via `lsof`):
+  ```
+  ⚠ Port conflicts detected on the following services:
+
+    :3002   authorization-api  pid=12345  process=node
+    :3013   files-api          pid=99999  process=docker-proxy
+
+  Kill these processes and continue? [y/N]:
+  ```
+  Three flavours of resolution:
+  - **Interactive TTY** → y/N prompt (default).
+  - **`--kill-port-conflicts` flag** → auto-kill, no prompt. Required for `devup up -d`, `--once`, and any non-TTY context (CI).
+  - **Non-interactive without the flag** → fail fast with the conflict list as instructions.
+- **`devup up -d` runs the scan in the parent** before forking the daemon child, so the user gets the prompt (or the error) in their terminal, not buried in `~/.devup/<project>.boot-error`.
+
+### Internals
+- New `src/process/port-conflicts.ts` houses the scan, the lsof-based holder lookup (`findPortHolder`), the resolution flow (`resolvePortConflicts`), and the SIGTERM-then-SIGKILL helper (`killHolder`). Linux + macOS only — Windows holder detection (netstat / Get-NetTCPConnection) is deferred until daemon mode itself supports Windows.
+- Test suite: 372 → 384 (+12). New: 4 scan tests, 2 killHolder tests, 4 resolution-flow tests, 1 CLI flag test, 1 lsof-output parser test.
+
+### Notes
+- Webs are intentionally skipped from the scan — their dev servers (Vite, Angular CLI, etc.) often handle port reuse themselves, and the user's editor / preview tabs hold web ports far more often than stale dev processes do.
+
 ## [0.8.1] — 2026-05-22
 
 Patch focused on two real-world footguns surfaced as soon as 0.8.0 hit users.

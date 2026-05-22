@@ -41,6 +41,7 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 - **Subcommands** — `devup logs <svc> [--follow]`, `devup install`, `devup status`, `devup help` work without launching the TUI.
 - **CI-ready** — `--dry-run` prints the resolved boot plan; `--once` boots, waits for readiness, exits `0/1` without a TUI.
 - **Daemon mode** — `devup up -d` boots the stack detached (like `docker compose up -d`) so you can keep using the same terminal. `devup down` stops it. Linux + macOS.
+- **Port-conflict takeover** — when something else is already on a configured port, devup shows you the holder (PID + process name) and offers to kill it. `--kill-port-conflicts` for non-interactive runs.
 - **`devup ctl`** — CLI client for the control plane: `ping`, `status [--follow]`, `logs <svc> [--follow]`, `restart`, `stop`.
 - **Reverse-proxy config** — generate Traefik, Nginx, or Caddy config from running services; health-aware.
 - **Unix-socket control plane** — local JSON-RPC at `~/.devup/sock-<project>.sock` (chmod 0600); `status`, `restart`, `stop`, `logs.tail`, `logs.follow`, `status.follow`, `ping`.

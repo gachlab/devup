@@ -4,9 +4,11 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.8.0](https://github.com/gachlab/devup/releases/tag/0.8.0)** (2026-05-22) — **headless devup**. The control plane now streams (`logs.follow`, `status.follow`), there's a CLI client (`devup ctl`), and the long-requested daemon mode (`devup up -d` / `devup down`) is shipped.
+Last released: **[0.9.0](https://github.com/gachlab/devup/releases/tag/0.9.0)** (2026-05-22) — pre-boot port-conflict resolution. Detects other processes holding configured ports and offers to take them over (interactive prompt, or `--kill-port-conflicts` for daemon/CI).
 
-Next milestone: **[0.9.0](https://github.com/gachlab/devup/milestone/7)** — VS Code extension MVP ([#48](https://github.com/gachlab/devup/issues/48)). Consumes the headless devup + control plane that 0.8.0 stabilises. New repo: `gachlab/devup-vscode`.
+Previous: **[0.8.0](https://github.com/gachlab/devup/releases/tag/0.8.0)** — headless devup (streaming control plane, `devup ctl`, daemon mode with `up -d` / `down` / hot-reload).
+
+The VS Code extension MVP now lives in its own repo: **[gachlab/devup-vscode](https://github.com/gachlab/devup-vscode)**. It consumes this package's control plane and has its own release cadence (currently 0.1.0 scaffold).
 
 ## Conventions
 
