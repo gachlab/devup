@@ -1,11 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { createInterface } from 'node:readline';
 import { createReadStream, existsSync } from 'node:fs';
+import { totalmem, freemem, cpus } from 'node:os';
 import type { ProcessManager } from '../../process/manager.js';
 import type { LogSink } from '../../process/log-sink.js';
 import type { Broadcaster } from '../../utils/broadcaster.js';
 import type { ProcessState } from '../../process/types.js';
+import type { Platform } from '../../platform/types.js';
+import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
+import { calcCpuPercent } from '../../utils.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -19,8 +23,12 @@ export function useControlPlane(
   pushLog: (svc: string, msg: string, colorIdx?: number) => void,
   logBus: Broadcaster<{ svc: string; text: string }>,
   stateBus: Broadcaster<{ name: string; state: ProcessState }>,
+  platform: Platform,
+  proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
 ): React.RefObject<SocketServerHandle | null> {
   const handleRef = useRef<SocketServerHandle | null>(null);
+  const prevCpuMap = useRef(new Map<string, { time: number; cpu: number }>());
+
   useEffect(() => {
     if (!manager) return;
     let handle: SocketServerHandle | null = null;
@@ -50,6 +58,44 @@ export function useControlPlane(
           watchStatus: (onUpdate) => {
             return stateBus.subscribe(({ name, state }) => onUpdate(name, state));
           },
+          async getStats() {
+            const pids: number[] = [];
+            const pidToName = new Map<number, string>();
+            for (const [name, st] of manager.state) {
+              if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
+            }
+            const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
+            const services: Record<string, { cpu: number; memMB: number }> = {};
+            for (const [name] of manager.state) {
+              services[name] = { cpu: 0, memMB: 0 };
+            }
+            for (const [pid, data] of raw) {
+              const name = pidToName.get(pid);
+              if (!name) continue;
+              const prev = prevCpuMap.current.get(name) ?? { time: Date.now(), cpu: 0 };
+              const cpu = calcCpuPercent(data.cpuSeconds, prev.cpu, prev.time);
+              prevCpuMap.current.set(name, { time: Date.now(), cpu: data.cpuSeconds });
+              services[name] = { cpu: Math.round(cpu * 10) / 10, memMB: Math.round((data.rss / 1024) * 10) / 10 };
+            }
+            return {
+              services,
+              system: {
+                totalMemMB: Math.round(totalmem() / 1024 / 1024),
+                freeMemMB: Math.round(freemem() / 1024 / 1024),
+                cpuCores: cpus().length,
+              },
+            };
+          },
+          getProxyInfo() {
+            if (!proxy) return null;
+            return {
+              active: true,
+              provider: proxy.provider.name,
+              domain: proxy.opts.domain,
+              tls: proxy.opts.tls,
+              routes: proxy.opts.routes,
+            };
+          },
         }, { onLog: msg => pushLog('devup', msg, 12) });
         handleRef.current = handle;
       } catch (e: any) {
@@ -57,6 +103,6 @@ export function useControlPlane(
       }
     })();
     return () => { void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog, logBus, stateBus]);
+  }, [manager, projectName, logSink, pushLog, logBus, stateBus, platform, proxy]);
   return handleRef;
 }

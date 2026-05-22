@@ -30,6 +30,8 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     tailLogs: async () => [],
     watchLogs: () => () => {},
     watchStatus: () => () => {},
+    getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
+    getProxyInfo: () => null,
     ...over,
   };
 }

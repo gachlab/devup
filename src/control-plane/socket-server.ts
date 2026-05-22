@@ -16,6 +16,28 @@ import type { ProcessState } from '../process/types.js';
  *  additional auth needed. Strictly local; TCP exposure is intentionally
  *  out of scope. */
 
+export interface ServiceStatEntry {
+  cpu: number;   // percent (e.g. 2.3)
+  memMB: number; // RSS in MB (e.g. 184.2)
+}
+
+export interface StatsResult {
+  services: Record<string, ServiceStatEntry>;
+  system: {
+    totalMemMB: number;
+    freeMemMB: number;
+    cpuCores: number;
+  };
+}
+
+export interface ProxyInfo {
+  active: boolean;
+  provider: string;
+  domain: string;
+  tls: boolean;
+  routes: Record<string, string>;
+}
+
 export interface RpcContext {
   /** State of every service (read-only snapshot). */
   states(): Map<string, ProcessState>;
@@ -30,6 +52,10 @@ export interface RpcContext {
   watchLogs(svcName: string | null, onLine: (svc: string, line: string) => void): () => void;
   /** Subscribe to service-state changes. Returns an unsubscribe function. */
   watchStatus(onUpdate: (name: string, state: ProcessState) => void): () => void;
+  /** Per-service CPU/mem stats + system totals. */
+  getStats(): Promise<StatsResult>;
+  /** Active proxy configuration, or null when no proxy is running. */
+  getProxyInfo(): ProxyInfo | null;
 }
 
 export interface SocketServerHandle {
@@ -213,8 +239,10 @@ async function dispatch(
       for (const [name, st] of ctx.states()) {
         out.push(serializeState(name, st));
       }
-      return { services: out };
+      return { services: out, proxy: ctx.getProxyInfo() };
     }
+    case 'stats':
+      return await ctx.getStats();
     case 'restart': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
       await ctx.restart(svc);
