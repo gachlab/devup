@@ -10,14 +10,19 @@ export function buildProcessArgs(svc: ServiceConfig): string[] {
 }
 
 /** Builds the env for spawning a service: merges extraEnv and injects
- *  NODE_OPTIONS=--max-old-space-size when maxMem is set and cmd != 'node'. */
+ *  NODE_OPTIONS=--max-old-space-size when maxMem is set and cmd != 'node'.
+ *  maxMem always overrides any system-level NODE_OPTIONS; only yields to an
+ *  explicit max-old-space-size set by the user in extraEnv. */
 export function buildProcessEnv(svc: ServiceConfig, baseEnv: Record<string, string>): Record<string, string> {
   const env = { ...baseEnv, ...(svc.extraEnv ?? {}) };
   if (svc.maxMem && svc.cmd !== 'node') {
-    const existing = env['NODE_OPTIONS'] ?? '';
-    const flag = `--max-old-space-size=${svc.maxMem}`;
-    if (!existing.includes('max-old-space-size')) {
-      env['NODE_OPTIONS'] = existing ? `${existing} ${flag}` : flag;
+    const userExplicit = svc.extraEnv?.['NODE_OPTIONS'] ?? '';
+    if (!userExplicit.includes('max-old-space-size')) {
+      const existing = env['NODE_OPTIONS'] ?? '';
+      const flag = `--max-old-space-size=${svc.maxMem}`;
+      env['NODE_OPTIONS'] = existing.includes('max-old-space-size')
+        ? existing.replace(/--max-old-space-size=\d+/, flag)
+        : existing ? `${existing} ${flag}` : flag;
     }
   }
   return env;
