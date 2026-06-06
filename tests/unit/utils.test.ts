@@ -215,6 +215,16 @@ describe('buildProcessEnv', () => {
     assert.equal(env['FOO'], 'bar');
     assert.equal(env['PATH'], '/usr/bin');
   });
+  it('maxMem overrides max-old-space-size already present in base env (system env)', () => {
+    const svc = { name: 'a', cwd: '.', cmd: 'npx', args: ['ng', 'serve'], type: 'web' as const, port: 4201, phase: 4, maxMem: 512 };
+    const env = buildProcessEnv(svc, { NODE_OPTIONS: '--max-old-space-size=4096' });
+    assert.equal(env['NODE_OPTIONS'], '--max-old-space-size=512');
+  });
+  it('respects extraEnv NODE_OPTIONS with max-old-space-size over maxMem', () => {
+    const svc = { name: 'a', cwd: '.', cmd: 'npx', args: ['ng', 'serve'], type: 'web' as const, port: 4201, phase: 4, maxMem: 512, extraEnv: { NODE_OPTIONS: '--max-old-space-size=1024' } };
+    const env = buildProcessEnv(svc, {});
+    assert.equal(env['NODE_OPTIONS'], '--max-old-space-size=1024');
+  });
 });
 
 describe('parseEnvFile', () => {
