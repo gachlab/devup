@@ -5,6 +5,12 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] — 2026-06-06
+
+### Fixed
+
+- **`maxMem` now reliably caps the Node.js heap even when the host shell already has `NODE_OPTIONS=--max-old-space-size=<N>` set.** The previous guard compared against the fully-merged env (base + `extraEnv`), so any system-level value (e.g. from nvm, a global `.bashrc`, or a prior devup run) silently blocked the injection and the configured limit was never applied. The guard now compares against `svc.extraEnv` only — `maxMem` always overrides the system env. The sole exception is when the user explicitly places `--max-old-space-size` in `extraEnv`, which still takes precedence as intended. When overriding an existing flag, the value is replaced via regex rather than appended, avoiding duplicate flags.
+
 ## [0.9.3] — 2026-05-22
 
 Critical hotfix for `devup down` against the VS Code extension.
