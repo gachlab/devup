@@ -32,10 +32,11 @@ export function useControlPlane(
 
   useEffect(() => {
     if (!manager) return;
+    let cancelled = false;
     let handle: SocketServerHandle | null = null;
     (async () => {
       try {
-        handle = await startSocketServer(projectName, {
+        const started = await startSocketServer(projectName, {
           states: () => manager.state,
           restart: (name) => manager.restart(name),
           stop: (name) => manager.stop(name),
@@ -101,12 +102,16 @@ export function useControlPlane(
             return { project: projectName, profiles };
           },
         }, { onLog: msg => pushLog('devup', msg, 12) });
-        handleRef.current = handle;
+        // Unmounted while listen() was in flight: the cleanup below already ran
+        // and saw a null handle, so close here or the server leaks.
+        if (cancelled) { void started.close(); return; }
+        handle = started;
+        handleRef.current = started;
       } catch (e: any) {
-        pushLog('devup', `⚠ control plane disabled: ${e.message}`, 5);
+        if (!cancelled) pushLog('devup', `⚠ control plane disabled: ${e.message}`, 5);
       }
     })();
-    return () => { void handle?.close(); handleRef.current = null; };
+    return () => { cancelled = true; void handle?.close(); handleRef.current = null; };
   }, [manager, projectName, logSink, pushLog, logBus, stateBus, platform, proxy, profiles]);
   return handleRef;
 }

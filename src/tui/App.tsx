@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
 import type { Platform } from '../platform/types.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
@@ -70,8 +70,15 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     onToggleProxy: () => {},
   });
 
-  const proxyCtx = proxyProvider && proxyOpts ? { provider: proxyProvider, opts: proxyOpts } : null;
-  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, platform, proxyCtx, config.profiles ?? {});
+  // Both must keep a stable identity across renders: they are useControlPlane
+  // effect deps, and a fresh object per render tears down and rebuilds the
+  // socket server on every log line.
+  const proxyCtx = useMemo(
+    () => (proxyProvider && proxyOpts ? { provider: proxyProvider, opts: proxyOpts } : null),
+    [proxyProvider, proxyOpts],
+  );
+  const profiles = useMemo(() => config.profiles ?? {}, [config.profiles]);
+  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, platform, proxyCtx, profiles);
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
