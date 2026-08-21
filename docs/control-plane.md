@@ -66,7 +66,8 @@ Snapshot of every service.
           "name": "app-api",
           "status": "running",
           "health": "up",
-          "port": 3000,
+          "port": 13000,
+          "originalPort": 3000,
           "type": "api",
           "errors": 0,
           "restarts": 0,
@@ -84,7 +85,8 @@ Fields per service mirror `ProcessState`:
 - `name`: from config
 - `status`: `starting` | `running` | `stopped` | `crashed` | `idle` | `timeout`
 - `health`: `up` | `down` | `wait` | `idle`
-- `port`: from config
+- `port`: where the **service process** listens. For a lazy service this is *not* the configured port — devup runs it on `port + 10000` and keeps its on-demand proxy on the configured one. Use this to attach a debugger or read the service's own logs.
+- `originalPort`: the **configured** port, and the one to connect to — it is where the lazy proxy listens, so reaching it starts the service on demand. Equal to `port` for always-on services and whenever lazy mode is off. Added in 0.12.0; absent in earlier daemons.
 - `type`: `api` | `web`
 - `errors`: cumulative since spawn
 - `restarts`: cumulative since spawn
