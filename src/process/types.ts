@@ -24,4 +24,7 @@ export interface ProcessState {
 export interface ProcessManagerEvents {
   onLog: (svcName: string, text: string, colorIdx: number) => void;
   onStateChange: (name: string, state: ProcessState) => void;
+  /** A service left the running set — removed by a config reload, not stopped.
+   *  Optional so existing consumers (TUI, `--once`) need no change. */
+  onServiceRemoved?: (name: string) => void;
 }

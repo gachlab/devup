@@ -5,6 +5,24 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] — 2026-08-21
+
+Control-plane gaps found while building the VS Code extension against it. All additive.
+
+### Added
+
+- **`removed` frames on `status.follow`** (#82) — the stream only ever carried additions and updates, so a service dropped by a `--watch-config` reload stayed in every client until it reconnected. `ProcessManager.remove()` now stops the service, drops it from the state map and announces it; `config-watcher` uses it instead of deleting from `state` behind the manager's back.
+- **`start` in the control plane** (#85) — `restart` and `stop` existed with no way to bring a single stopped service up. `restart` happened to work on a stopped service, which was a coincidence rather than an interface.
+- **Host CPU in `stats`** (#83) — `system` carries `loadAvg1` and `cpuPercent` (load as a share of `cpuCores`, so it compares across machines). Both are **omitted on Windows**, where `os.loadavg()` is hardcoded to `[0, 0, 0]` and a zero would render as an idle machine. Clients previously had no CPU figure at all, and at least one filled the gap with a memory percentage.
+
+### Fixed
+
+- **`status.follow` now sends its initial snapshot even when empty** — previously suppressed, leaving a client unable to tell "connected, nothing configured" from "still waiting".
+
+### Documentation
+
+- `docs/control-plane.md` claimed **"No notifications (server-pushed events)"** and pointed readers at `tail -f`. `status.follow` and `logs.follow` have existed since 0.8.0. Both are now documented, along with `stats`, which had never been written up at all.
+
 ## [0.12.0] — 2026-08-21
 
 ### Added

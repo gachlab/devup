@@ -10,6 +10,7 @@ import { LogSink } from '../process/log-sink.js';
 import { groupByPhase, calcCpuPercent } from '../utils.js';
 import { waitForPort } from '../process/health.js';
 import { Broadcaster } from '../utils/broadcaster.js';
+import { systemLoad } from '../utils/system-load.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
@@ -83,6 +84,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
 
   const logBus = new Broadcaster<{ svc: string; text: string }>();
   const stateBus = new Broadcaster<{ name: string; state: ProcessState }>();
+  const removedBus = new Broadcaster<{ name: string }>();
   const lazyProxies = new Map<string, LazyProxy>();
   const prevCpuMap = new Map<string, { time: number; cpu: number }>();
   let externals: ExternalProc[] = [];
@@ -104,6 +106,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         logBus.emit({ svc: svcName, text });
       },
       onStateChange: (name, state) => stateBus.emit({ name, state }),
+      onServiceRemoved: (name) => removedBus.emit({ name }),
     },
   });
 
@@ -177,12 +180,20 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         if (svcName === null || svc === svcName) onLine(svc, text);
       }),
       watchStatus: (onUpdate) => stateBus.subscribe(({ name, state }) => onUpdate(name, state)),
+      watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+      async start(name) {
+        const st = mgr.state.get(name);
+        if (!st) throw new Error(`unknown service: ${name}`);
+        if (st.pid) return; // already running
+        await mgr.start(st.svc, st.colorIdx ?? 0, true);
+      },
       async getStats() {
         const pids: number[] = [];
         const pidToName = new Map<number, string>();
         for (const [name, st] of mgr.state) {
           if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
         }
+        const cores = cpus().length;
         const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
         const services: Record<string, { cpu: number; memMB: number }> = {};
         for (const [name] of mgr.state) {
@@ -201,7 +212,8 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
           system: {
             totalMemMB: Math.round(totalmem() / 1024 / 1024),
             freeMemMB: Math.round(freemem() / 1024 / 1024),
-            cpuCores: cpus().length,
+            cpuCores: cores,
+            ...systemLoad(cores),
           },
         };
       },

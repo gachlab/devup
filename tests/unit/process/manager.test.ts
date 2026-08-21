@@ -32,6 +32,7 @@ function makeSvc(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
 
 function makeManager(platform?: Platform) {
   const logs: string[] = [];
+  const removed: string[] = [];
   const p = platform ?? testPlatform();
   const mgr = new ProcessManager({
     baseCwd: process.cwd(),
@@ -40,10 +41,43 @@ function makeManager(platform?: Platform) {
     events: {
       onLog: (_name, text) => logs.push(text),
       onStateChange: () => {},
+      onServiceRemoved: (name) => removed.push(name),
     },
   });
-  return { mgr, logs, platform: p };
+  return { mgr, logs, removed, platform: p };
 }
+
+describe('ProcessManager.remove', () => {
+  it('drops the service from the state map and announces it', { timeout: 3000 }, async () => {
+    const { mgr, removed } = makeManager();
+    await mgr.start(makeSvc(), 0);
+    assert.ok(mgr.state.has('test-svc'));
+
+    mgr.remove('test-svc');
+
+    assert.equal(mgr.state.has('test-svc'), false);
+    // Deleting from `state` alone leaves every control-plane client showing a
+    // service that no longer exists, so the event is the point of the method.
+    assert.deepEqual(removed, ['test-svc']);
+    await new Promise(r => setTimeout(r, 100));
+  });
+
+  it('is a no-op for a service it does not have', () => {
+    const { mgr, removed } = makeManager();
+    mgr.remove('never-existed');
+    assert.deepEqual(removed, []);
+  });
+
+  it('does not announce anything on a plain stop', { timeout: 3000 }, async () => {
+    // stop means idle, remove means gone — clients treat them differently.
+    const { mgr, removed } = makeManager();
+    await mgr.start(makeSvc(), 0);
+    mgr.stop('test-svc');
+    assert.deepEqual(removed, []);
+    assert.ok(mgr.state.has('test-svc'));
+    await new Promise(r => setTimeout(r, 100));
+  });
+});
 
 describe('ProcessManager', () => {
   it('start sets state to starting', { timeout: 3000 }, async () => {

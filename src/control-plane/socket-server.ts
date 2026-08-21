@@ -27,6 +27,12 @@ export interface StatsResult {
     totalMemMB: number;
     freeMemMB: number;
     cpuCores: number;
+    /** 1-minute load average. Absent on platforms that do not report one
+     *  (Windows returns zeroes, so it is omitted there rather than sent as 0). */
+    loadAvg1?: number;
+    /** Load average as a percentage of available cores — comparable across
+     *  machines, and the figure a client wants to show as "CPU". */
+    cpuPercent?: number;
   };
 }
 
@@ -57,6 +63,12 @@ export interface RpcContext {
   watchLogs(svcName: string | null, onLine: (svc: string, line: string) => void): () => void;
   /** Subscribe to service-state changes. Returns an unsubscribe function. */
   watchStatus(onUpdate: (name: string, state: ProcessState) => void): () => void;
+  /** Subscribe to services leaving the set (config reload). Returns an
+   *  unsubscribe function. Without this a client can only ever add or update,
+   *  so a removed service lingers until it reconnects. */
+  watchRemoved(onRemoved: (name: string) => void): () => void;
+  /** Start a stopped service by name. No-op when it is already running. */
+  start(name: string): Promise<void>;
   /** Per-service CPU/mem stats + system totals. */
   getStats(): Promise<StatsResult>;
   /** Active proxy configuration, or null when no proxy is running. */
@@ -206,14 +218,19 @@ async function handleFollow(
     for (const [name, st] of ctx.states()) {
       snapshot.push(serializeState(name, st));
     }
-    if (snapshot.length) {
-      respond(socket, { id: req.id, event: 'status', data: snapshot });
-    }
+    // Sent even when empty: a client cannot otherwise tell "connected, nothing
+    // configured" from "still waiting for the first frame".
+    respond(socket, { id: req.id, event: 'status', data: snapshot });
 
     const unsub = ctx.watchStatus((name, state) => {
       respond(socket, { id: req.id, event: 'status', data: [serializeState(name, state)] });
     });
     unsubs.add(unsub);
+
+    const unsubRemoved = ctx.watchRemoved(name => {
+      respond(socket, { id: req.id, event: 'removed', data: [name] });
+    });
+    unsubs.add(unsubRemoved);
   }
 }
 
@@ -265,6 +282,11 @@ async function dispatch(
     case 'restart': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
       await ctx.restart(svc);
+      return { ok: true };
+    }
+    case 'start': {
+      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+      await ctx.start(svc);
       return { ok: true };
     }
     case 'stop': {

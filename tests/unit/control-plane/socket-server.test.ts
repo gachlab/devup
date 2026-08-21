@@ -27,6 +27,8 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     tailLogs: async () => [],
     watchLogs: () => () => {},
     watchStatus: () => () => {},
+    watchRemoved: () => () => {},
+    start: async () => {},
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -97,6 +99,40 @@ describe('socket-server', { skip: !isUnix }, () => {
         assert.equal(res.id, 1);
         assert.equal(res.result.ok, true);
         assert.ok(typeof res.result.ts === 'number');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('start forwards the service name to the context', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      let started: string | null = null;
+      const handle = await startSocketServer('s', noopCtx({ start: async (n) => { started = n; } }), { path });
+      try {
+        const res = await rpcCall(path, { id: 'x', method: 'start', params: { svc: 'api' } });
+        assert.deepEqual(res.result, { ok: true });
+        assert.equal(started, 'api');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('start rejects a missing svc param', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('s', noopCtx(), { path });
+      try {
+        const res = await rpcCall(path, { id: 'x', method: 'start', params: {} });
+        assert.ok(res.error, 'expected an error for a missing svc');
       } finally {
         await handle.close();
       }
@@ -282,6 +318,56 @@ describe('socket-server', { skip: !isUnix }, () => {
         assert.equal(frames[1].data, 'history-1');
         assert.equal(frames[2].data, 'history-2');
         assert.equal(frames[3].data, 'live-line');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status.follow announces a service that left the set', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      let removedCallback: ((name: string) => void) | null = null;
+      const initial = new Map([['api', mkState({ status: 'running' })]]);
+      const handle = await startSocketServer('sf', noopCtx({
+        states: () => initial,
+        watchRemoved: (cb) => {
+          removedCallback = cb;
+          return () => { removedCallback = null; };
+        },
+      }), { path });
+      try {
+        // ack + snapshot + removal = 3
+        const framesP = rpcStream(path, { id: 4, method: 'status.follow' }, 3);
+        await new Promise(r => setTimeout(r, 30));
+        removedCallback?.('api');
+
+        const frames = await framesP;
+        assert.equal(frames[2].event, 'removed');
+        assert.deepEqual(frames[2].data, ['api']);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('status.follow sends an empty snapshot rather than nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      // With no frame at all, a client cannot tell "connected, nothing
+      // configured" from "still waiting for the first update".
+      const handle = await startSocketServer('sf', noopCtx({ states: () => new Map() }), { path });
+      try {
+        const frames = await rpcStream(path, { id: 5, method: 'status.follow' }, 2);
+        assert.deepEqual(frames[0], { id: 5, result: { ok: true } });
+        assert.equal(frames[1].event, 'status');
+        assert.deepEqual(frames[1].data, []);
       } finally {
         await handle.close();
       }

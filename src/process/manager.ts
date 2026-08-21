@@ -77,6 +77,18 @@ export class ProcessManager {
     this.lifecycle.stop(name);
   }
 
+  /** Stop a service and drop it from the running set.
+   *
+   *  Distinct from `stop`: the service is gone, not idle, so anything mirroring
+   *  the state map has to be told. Deleting from `state` directly leaves every
+   *  control-plane client showing a service that no longer exists. */
+  remove(name: string): void {
+    if (!this.state.has(name)) return;
+    this.lifecycle.stop(name);
+    this.state.delete(name);
+    this.events.onServiceRemoved?.(name);
+  }
+
   restart(name: string): Promise<void> {
     return this.restarter.restart(name);
   }

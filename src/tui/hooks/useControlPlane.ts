@@ -10,6 +10,7 @@ import type { Platform } from '../../platform/types.js';
 import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 import { calcCpuPercent } from '../../utils.js';
+import { systemLoad } from '../../utils/system-load.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -23,6 +24,7 @@ export function useControlPlane(
   pushLog: (svc: string, msg: string, colorIdx?: number) => void,
   logBus: Broadcaster<{ svc: string; text: string }>,
   stateBus: Broadcaster<{ name: string; state: ProcessState }>,
+  removedBus: Broadcaster<{ name: string }>,
   platform: Platform,
   proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
   profiles: Record<string, string[]>,
@@ -59,12 +61,20 @@ export function useControlPlane(
           watchStatus: (onUpdate) => {
             return stateBus.subscribe(({ name, state }) => onUpdate(name, state));
           },
+          watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+          async start(name) {
+            const st = manager.state.get(name);
+            if (!st) throw new Error(`unknown service: ${name}`);
+            if (st.pid) return; // already running
+            await manager.start(st.svc, st.colorIdx ?? 0, true);
+          },
           async getStats() {
             const pids: number[] = [];
             const pidToName = new Map<number, string>();
             for (const [name, st] of manager.state) {
               if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
             }
+            const cores = cpus().length;
             const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
             const services: Record<string, { cpu: number; memMB: number }> = {};
             for (const [name] of manager.state) {
@@ -83,7 +93,8 @@ export function useControlPlane(
               system: {
                 totalMemMB: Math.round(totalmem() / 1024 / 1024),
                 freeMemMB: Math.round(freemem() / 1024 / 1024),
-                cpuCores: cpus().length,
+                cpuCores: cores,
+                ...systemLoad(cores),
               },
             };
           },
@@ -107,6 +118,6 @@ export function useControlPlane(
       }
     })();
     return () => { void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog, logBus, stateBus, platform, proxy, profiles]);
+  }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, platform, proxy, profiles]);
   return handleRef;
 }
