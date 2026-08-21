@@ -5,6 +5,7 @@ import {
   groupByPhase, buildProcessArgs, buildProcessEnv, compileSearchPattern,
   detectLogLevel, redactSecrets, nextRamBannerVisibility,
 } from '../../src/utils.js';
+import { systemLoad } from '../../src/utils/system-load.js';
 
 describe('nextRamBannerVisibility', () => {
   it('turns on at or above the high watermark', () => {
@@ -231,5 +232,43 @@ describe('parseEnvFile', () => {
   it('returns base when file missing', () => {
     const env = parseEnvFile('/nonexistent/.env', { EXISTING: 'yes' });
     assert.equal(env['EXISTING'], 'yes');
+  });
+});
+
+describe('systemLoad', () => {
+  it('reports the 1-minute average and its share of the cores', () => {
+    assert.deepEqual(systemLoad(4, { platform: 'linux', raw: [2, 1, 1] }), { loadAvg1: 2, cpuPercent: 50 });
+  });
+
+  it('rounds to something a UI can print', () => {
+    const out = systemLoad(6, { platform: 'linux', raw: [1.23456, 0, 0] });
+    assert.equal(out.loadAvg1, 1.23);
+    assert.equal(out.cpuPercent, 20.6);
+  });
+
+  it('can exceed 100% — load above the core count is real and worth showing', () => {
+    assert.equal(systemLoad(4, { platform: 'linux', raw: [8, 0, 0] }).cpuPercent, 200);
+  });
+
+  it('reports nothing on Windows, where loadavg is hardcoded to zero', () => {
+    // A 0 would render as an idle machine: a lie rather than a gap. Absent
+    // fields let the client hide the figure instead.
+    assert.deepEqual(systemLoad(8, { platform: 'win32', raw: [0, 0, 0] }), {});
+  });
+
+  it('accepts a genuinely idle machine elsewhere', () => {
+    assert.deepEqual(systemLoad(4, { platform: 'linux', raw: [0, 0, 0] }), { loadAvg1: 0, cpuPercent: 0 });
+  });
+
+  it('omits the percentage when the core count is unusable', () => {
+    const out = systemLoad(0, { platform: 'linux', raw: [1, 0, 0] });
+    assert.equal(out.loadAvg1, 1);
+    assert.equal(out.cpuPercent, undefined);
+  });
+
+  it('reports nothing for junk readings', () => {
+    assert.deepEqual(systemLoad(4, { platform: 'linux', raw: [NaN, 0, 0] }), {});
+    assert.deepEqual(systemLoad(4, { platform: 'linux', raw: [-1, 0, 0] }), {});
+    assert.deepEqual(systemLoad(4, { platform: 'linux', raw: [] }), {});
   });
 });

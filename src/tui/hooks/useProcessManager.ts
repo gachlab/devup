@@ -39,6 +39,7 @@ export function useProcessManager(
   // Stable broadcaster instances — control plane subscribers tap into these.
   const logBus = useRef(new Broadcaster<{ svc: string; text: string }>());
   const stateBus = useRef(new Broadcaster<{ name: string; state: ProcessState }>());
+  const removedBus = useRef(new Broadcaster<{ name: string }>());
 
   useEffect(() => {
     const mgr = new ProcessManager({
@@ -62,6 +63,10 @@ export function useProcessManager(
         },
         onStateChange: (name, state) => {
           stateBus.current.emit({ name, state });
+          setStates(new Map(mgr.state));
+        },
+        onServiceRemoved: (name) => {
+          removedBus.current.emit({ name });
           setStates(new Map(mgr.state));
         },
       },
@@ -147,5 +152,6 @@ export function useProcessManager(
     manager: mgr,
     logBus: logBus.current,
     stateBus: stateBus.current,
+    removedBus: removedBus.current,
   };
 }

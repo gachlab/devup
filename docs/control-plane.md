@@ -93,6 +93,17 @@ Fields per service mirror `ProcessState`:
 - `pid`: OS pid, `null` if not currently running
 - `startedAt`: epoch ms of the current spawn, `null` if not running
 
+### `start`
+
+Start a stopped service. No-op when it is already running.
+
+```json
+{ "method": "start", "params": { "svc": "app-api" } }
+→ { "result": { "ok": true } }
+```
+
+Errors with `unknown service: <name>` when the name is not in the current set.
+
 ### `restart`
 
 ```json
@@ -169,13 +180,57 @@ rl.on('line', l => console.log(JSON.parse(l)));
 socket.write(JSON.stringify({ method: 'status' }) + '\n');
 ```
 
+## Streaming
+
+`status.follow` and `logs.follow` keep the connection open and push frames until the client closes it. Both answer first with an ack (`{ "result": { "ok": true } }`), then stream.
+
+### `status.follow`
+
+```json
+{ "method": "status.follow" }
+→ { "result": { "ok": true } }                                  // ack
+→ { "event": "status",  "data": [ ...every service... ] }        // initial snapshot
+→ { "event": "status",  "data": [ ...one service... ] }          // on each change
+→ { "event": "removed", "data": ["legacy-api"] }                 // config reload dropped it
+```
+
+The initial snapshot arrives even when it is empty (`data: []`), so a client can distinguish "connected, nothing configured" from "still waiting".
+
+Subsequent `status` frames carry **one** service — they are updates, not snapshots. Merge them by `name`.
+
+`removed` frames name services that left the set after a `--watch-config` reload. **A client that ignores them will show services that no longer exist**, since nothing else signals a departure. Added in 0.13.0; earlier daemons never send this event.
+
+### `logs.follow`
+
+```json
+{ "method": "logs.follow", "params": { "svc": "app-api", "tail": 200 } }
+→ { "result": { "ok": true } }
+→ { "event": "log", "data": "…line…", "svc": "app-api" }
+```
+
+Omit `svc` (or pass `null`) to receive every service's output.
+
+### `stats`
+
+Per-service CPU and memory, plus host totals.
+
+```json
+{ "method": "stats" }
+→ { "result": {
+      "services": { "app-api": { "cpu": 2.3, "memMB": 184.2 } },
+      "system": { "totalMemMB": 31000, "freeMemMB": 18000, "cpuCores": 12,
+                  "loadAvg1": 1.42, "cpuPercent": 11.8 }
+   } }
+```
+
+`loadAvg1` and `cpuPercent` are **absent on Windows**, where `os.loadavg()` is hardcoded to zero and reporting it would look like an idle machine. Added in 0.13.0. `cpuPercent` is the load as a share of `cpuCores`, and can exceed 100.
+
 ## What's NOT there
 
 By design:
 
 - **No remote / TCP** exposure.
-- **No notifications** (server-pushed events). One request → one response. If you want `logs.follow` style streaming, use `tail -f ~/.devup/logs/<proj>/<svc>.log` or call `devup logs <svc> --follow` instead.
-- **No long-poll**. Each call returns a fresh snapshot.
+- **No long-poll**. A one-shot call returns a fresh snapshot; use the `*.follow` methods above for push.
 - **No transaction support** (multi-method atomic ops).
 
 Some of these may be added later if there's clear demand. Open an issue.

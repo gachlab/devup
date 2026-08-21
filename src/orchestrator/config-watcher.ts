@@ -31,8 +31,7 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
     if (!diff.added.length && !diff.removed.length && !diff.changed.length) return;
 
     for (const name of diff.removed) {
-      manager.stop(name);
-      manager.state.delete(name);
+      manager.remove(name);
     }
     let colorIdx = currentSvcs.length;
     for (const { next } of diff.changed) {

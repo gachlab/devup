@@ -23,11 +23,12 @@ interface MockMgrCalls {
   installed: Array<{ name: string; ci: number }>;
   started: Array<{ name: string; ci: number; isRestart?: boolean }>;
   stopped: string[];
+  removed: string[];
 }
 function mockManager(initial: ServiceConfig[] = []): { mgr: ProcessManager; calls: MockMgrCalls } {
   const state = new Map<string, ProcessState>();
   for (const s of initial) state.set(s.name, mkState(s));
-  const calls: MockMgrCalls = { installed: [], started: [], stopped: [] };
+  const calls: MockMgrCalls = { installed: [], started: [], stopped: [], removed: [] };
   const mgr = {
     state,
     install: async (svc: ServiceConfig, ci: number) => { calls.installed.push({ name: svc.name, ci }); return true; },
@@ -36,6 +37,10 @@ function mockManager(initial: ServiceConfig[] = []): { mgr: ProcessManager; call
       if (!state.has(svc.name)) state.set(svc.name, mkState(svc));
     },
     stop: (name: string) => { calls.stopped.push(name); },
+    // Mirrors the real manager: stop, drop from state, and announce. The
+    // announcement is what tells control-plane clients the service is gone
+    // rather than merely idle.
+    remove: (name: string) => { calls.stopped.push(name); calls.removed.push(name); state.delete(name); },
   } as unknown as ProcessManager;
   return { mgr, calls };
 }
@@ -98,6 +103,7 @@ describe('applyConfigChange', () => {
       await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: l => logs.push(l) });
 
       assert.deepEqual(calls.stopped, ['legacy']);
+      assert.deepEqual(calls.removed, ['legacy'], 'removal must go through remove(), not a bare state.delete');
       assert.equal(mgr.state.has('legacy'), false);
       assert.equal(mgr.state.has('api'), true);
     } finally { rmSync(dir, { recursive: true, force: true }); }
