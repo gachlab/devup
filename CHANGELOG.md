@@ -5,6 +5,14 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] — 2026-08-21
+
+### Added
+
+- **`originalPort` in the `status` snapshot.** For a lazy service, `port` is the *rewritten* port: `rewriteServicePort` moves the service to `port + 10000` and keeps devup's on-demand proxy on the configured one. Clients only ever saw the rewritten value, and nothing in the snapshot let them recover the configured port — which is where the proxy listens, and what applications are actually configured to call. Always-on services are never rewritten, so the two fields agree for them.
+
+  This is not cosmetic: the VS Code extension's remote port forwarding tunnelled `13002` instead of `3002`, reaching the service directly, bypassing the proxy that starts it, and missing the port the frontend calls. Deriving the configured port by subtracting the offset is not safe — lazy mode is opt-in, so in a non-lazy stack a service legitimately configured on `18080` would be misread as `8080`. Only the daemon knows which services were rewritten, so only the daemon can answer.
+
 ## [0.11.2] — 2026-06-06
 
 ### Fixed
