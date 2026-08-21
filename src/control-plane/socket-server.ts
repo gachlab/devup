@@ -223,6 +223,12 @@ function serializeState(name: string, st: ProcessState): Record<string, unknown>
     status: st.status,
     health: st.health,
     port: st.svc.port,
+    // For a lazy service `port` above is the rewritten internal port, because
+    // rewriteServicePort replaces it with port + LAZY_PORT_OFFSET and runs the
+    // service there. The configured port — where the on-demand proxy listens,
+    // and what clients are actually pointed at — survives as originalPort.
+    // Always-on services are never rewritten, so the two coincide.
+    originalPort: (st.svc as { originalPort?: number }).originalPort ?? st.svc.port,
     type: st.svc.type,
     phase: st.svc.phase,
     cmd: st.svc.cmd,

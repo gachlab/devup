@@ -105,6 +105,36 @@ describe('socket-server', { skip: !isUnix }, () => {
     }
   });
 
+  it('status reports originalPort so clients can reach the lazy proxy', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+    const path = join(dir, 's.sock');
+    try {
+      // A lazy service as the orchestrator holds it: rewriteServicePort has
+      // already moved `port` to port + LAZY_PORT_OFFSET and kept the configured
+      // one. Without originalPort a client cannot tell 13002 from a service
+      // genuinely configured on 13002.
+      const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 } as ServiceConfig;
+      const states = new Map([
+        ['auth', mkState({ svc: lazySvc })],
+        ['api', mkState({})],
+      ]);
+      const handle = await startSocketServer('s', noopCtx({ states: () => states }), { path });
+      try {
+        const res = await rpcCall(path, { id: 'x', method: 'status' });
+        const byName = Object.fromEntries(res.result.services.map((s: any) => [s.name, s]));
+        assert.equal(byName.auth.port, 13002);
+        assert.equal(byName.auth.originalPort, 3002);
+        // Always-on services are never rewritten, so both fields agree.
+        assert.equal(byName.api.port, 3000);
+        assert.equal(byName.api.originalPort, 3000);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('status returns a snapshot of every service', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
