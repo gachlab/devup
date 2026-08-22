@@ -135,10 +135,10 @@ describe('createLazyProxy', () => {
     await new Promise(r => setTimeout(r, 250));
     assert.equal(idleStopped, false, 'no debe pararse mientras el inspector está activo');
 
-    // Y al desacoplarse vuelve la regla normal. Esto no fija si la rama de
-    // depuración toca `lastActivity` o no: con periodos de 60 ms las dos
-    // variantes paran el servicio dentro de la misma ventana, así que no hay
-    // aserción honesta que las distinga.
+    // Y cuando deja de estar bajo el inspector vuelve la regla normal. Ojo:
+    // aquí se apaga el flag a mano; en producción `debugPort` sólo se limpia
+    // al apagar el debug o al morir el proceso, porque el inspector de Node
+    // sigue escuchando tras un desacople.
     debugging = false;
     await new Promise(r => setTimeout(r, 250));
     assert.equal(idleStopped, true, 'debe pararse una vez que ya no se depura');

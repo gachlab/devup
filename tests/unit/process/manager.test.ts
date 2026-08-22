@@ -59,9 +59,10 @@ describe('ProcessManager.start on a port its own process holds', () => {
     // la sesión.
     const { mgr } = makeManager();
     const port = 19881;
-    // Vida corta a propósito: si la prueba falla antes del `finally`, el hijo
-    // no debe quedarse con el puerto envenenando el resto de la suite.
-    const svc = makeSvc({ port, args: ['-e', `require('net').createServer().listen(${port}); setTimeout(()=>{},3000)`] });
+    // `process.exit`, no un setTimeout vacío: un servidor escuchando mantiene
+    // vivo el event loop para siempre, así que sin esto un fallo antes del
+    // `finally` deja el puerto tomado y envenena el resto de la suite.
+    const svc = makeSvc({ port, args: ['-e', `require('net').createServer().listen(${port}); setTimeout(()=>process.exit(0),3000)`] });
     try {
       await mgr.start(svc, 0);
       await new Promise(r => setTimeout(r, 300));

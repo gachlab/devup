@@ -56,9 +56,14 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
         // Un servicio pausado en un breakpoint no recibe tráfico por
         // definición: leer código, mirar otro archivo y volver son minutos sin
         // una sola conexión. Pararlo aquí mata la sesión de depuración justo
-        // cuando su dueño la está usando. `lastActivity` no se toca a
-        // propósito: al desacoplarse, el siguiente periodo lo para como
-        // siempre.
+        // cuando su dueño la está usando.
+        //
+        // Esto fija el servicio arriba mientras el inspector esté activo, y el
+        // inspector de Node sigue escuchando aunque el depurador se desacople:
+        // no hay señal de "ya no me estás depurando". Es decir, depurar un
+        // servicio lazy lo saca del ciclo de idle hasta que se apague el flag
+        // (`ctl debug --off`) o el proceso muera. Documentado en
+        // docs/lazy-mode.md.
         onLog?.(`🐛 idle ${timeoutMin}min pero bajo el inspector — se mantiene arriba`);
         scheduleIdleCheck();
         return;

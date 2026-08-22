@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import type { ServiceConfig } from '../config/types.js';
 import type { ProcessState, ProcessManagerEvents } from './types.js';
 import { isPortBindable } from './health.js';
-import { isRunning } from './liveness.js';
+import { isRunning, waitForExit } from './liveness.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
@@ -25,6 +25,10 @@ interface SpawnerOpts {
    *  await in start() so a removal that lands mid-start wins. */
   removals: Map<string, number>;
 }
+
+/** How long to let a service that is draining on SIGTERM take the port with
+ *  it. Same budget `startService` allows for the same reason. */
+const STOP_GRACE_MS = 5_000;
 
 export class Spawner {
   private readonly baseCwd: string;
@@ -57,28 +61,40 @@ export class Spawner {
     // it in every client that was already told it was gone.
     const generation = this.removals.get(svc.name) ?? 0;
 
-    // Clear any previous startup timer for this service on restart.
-    this.clearStartupTimer(svc.name);
-
     if (svc.type === 'api') {
-      const bindable = await isPortBindable(svc.port);
+      let bindable = await isPortBindable(svc.port);
       if (!bindable && !isRestart) {
-        // The port may be held by *our own* process: a service that is simply
-        // already running, or one paused under a debugger while its lazy proxy
-        // asks for an on-demand start. Recording a crash there is worse than
-        // doing nothing — it replaces the state with `proc: null`, so
-        // `lifecycle.stop` returns early forever and the daemon can never stop
-        // the process again. It keeps the port, unstoppable, for the rest of
-        // the session.
-        if (isRunning(this.state.get(svc.name))) {
-          this.log(svc.name, `↩ already running on ${svc.port} — leaving it alone`, colorIdx);
+        const st = this.state.get(svc.name);
+        if (isRunning(st)) {
+          // The port is held by *our own* process. Recording a crash here is
+          // worse than doing nothing: it replaces the state with `proc: null`,
+          // so `lifecycle.stop` returns early forever and the daemon can never
+          // stop the process again — it keeps the port, unstoppable, for the
+          // rest of the session.
+          if (!st!.intentionalStop) {
+            // Already up. Returning without clearing the startup timer is
+            // deliberate: the service may still be `starting`, and disarming
+            // its timeout would leave it in that state forever.
+            this.log(svc.name, `↩ already running on ${svc.port} — leaving it alone`, colorIdx);
+            return;
+          }
+          // A stop in flight looks alive too — `stop()` only sends SIGTERM, so
+          // a service that drains keeps a live process object. Let it finish
+          // and take the port with it, rather than calling it a crash.
+          await waitForExit(st!, STOP_GRACE_MS);
+          bindable = await isPortBindable(svc.port);
+        }
+        if (!bindable) {
+          this.clearStartupTimer(svc.name);
+          this.log(svc.name, `⚠ port ${svc.port} already in use — skipping`, colorIdx);
+          this.recordCrashedState(svc, colorIdx);
           return;
         }
-        this.log(svc.name, `⚠ port ${svc.port} already in use — skipping`, colorIdx);
-        this.recordCrashedState(svc, colorIdx);
-        return;
       }
     }
+
+    // Clear any previous startup timer for this service on restart.
+    this.clearStartupTimer(svc.name);
 
     if (svc.preBuild) {
       const built = await this.runPreBuild(svc, cwd, colorIdx);

@@ -76,7 +76,7 @@ lazy: {
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `alwaysOn` | `string[]` | ✅ | Services that always start immediately (use this for your gateway / entry-points) |
-| `timeout` | `number` | | Minutes of inactivity before an idle service shuts down. Default: `10` |
+| `timeout` | `number` | | Minutes of inactivity before an idle service shuts down. Default: `10`. A service running under the debugger is exempt — see [lazy mode](lazy-mode.md) |
 
 See [Lazy mode](./lazy-mode.md) for the on-demand spawning details.
 
