@@ -275,8 +275,12 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     if (method === 'start') {
       const svc = argv[1];
       if (!svc) { out('usage: devup ctl start <service>'); return 1; }
-      await sendRpc(socketPath, 'start', { svc });
-      out(`✓ start sent to ${svc}`);
+      const res = await sendRpc(socketPath, 'start', { svc }) as { ok: boolean };
+      if (!res.ok) {
+        out(`✗ ${svc} did not come up — check \`devup ctl logs ${svc}\``);
+        return 1;
+      }
+      out(`✓ ${svc} started`);
       return 0;
     }
 

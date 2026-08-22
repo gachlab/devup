@@ -79,6 +79,15 @@ export class ProcessManager {
     this.lifecycle.stop(name);
   }
 
+  /** Cancel a queued auto-restart without removing the service.
+   *
+   *  Any path that spawns outside the restarter must call this first, or the
+   *  stale timer spawns a second process for the same name a few seconds
+   *  later — `restart()` already does. */
+  cancelPendingRestart(name: string): void {
+    this.restarter.cancel(name);
+  }
+
   /** Stop a service and drop it from the running set.
    *
    *  Distinct from `stop`: the service is gone, not idle, so anything mirroring

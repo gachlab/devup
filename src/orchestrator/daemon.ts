@@ -14,7 +14,7 @@ import { systemLoad } from '../utils/system-load.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
-import { isRunning } from '../process/liveness.js';
+import { isRunning, waitForExit } from '../process/liveness.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import { watchConfig } from './config-watcher.js';
 import { findConfigFile } from '../config/loader.js';
@@ -201,17 +201,30 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         if (!st) throw new Error(`unknown service: ${name}`);
         // Liveness, not st.pid: a stopped service keeps a dead pid, so gating
         // on it would make this a permanent no-op for the one case it exists for.
-        if (isRunning(st)) return;
+        if (isRunning(st)) {
+          // ...unless a stop is in flight. stop() only sends SIGTERM, so a
+          // service that drains on shutdown still looks alive; returning here
+          // would report success and leave it down.
+          if (!st.intentionalStop) return true;
+          await waitForExit(st, 5000);
+        }
+        // A queued auto-restart would otherwise spawn a second process for the
+        // same name moments after this one.
+        mgr.cancelPendingRestart(name);
         const proxy = lazyProxies.get(name);
         if (proxy) {
           // Through the proxy, never around it: spawning directly leaves its
           // serviceReady flag false and the next request starts a second process.
-          await proxy.ensureStarted();
-          return;
+          return await proxy.ensureStarted();
         }
         await mgr.install(st.svc, st.colorIdx);
         await mgr.start(st.svc, st.colorIdx);
+        const after = mgr.state.get(name);
+        // Spawner returns normally after recording a crash (pre-build failed,
+        // watch path missing, port taken), so "no exception" is not success.
+        return !!after && after.status !== 'crashed';
       },
+
       async getStats() {
         const pids: number[] = [];
         const pidToName = new Map<number, string>();

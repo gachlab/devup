@@ -114,12 +114,19 @@ Start a stopped service. No-op when it is already running.
 → { "result": { "ok": true } }
 ```
 
+**`ok` is the outcome, not an acknowledgement.** The spawner returns normally
+after recording a crash — a failed pre-build, a missing watch path, a port
+already taken — so `ok: false` means the service did not come up. Check its
+logs.
+
 Errors with `unknown service: <name>` when the name is not in the current set.
 
-Two details worth knowing:
+Details worth knowing:
 
-- **Liveness is checked on the process, not on `pid`.** A stopped or crashed service keeps a dead `pid`, so a `pid`-based guard would make this a permanent no-op.
-- **A lazy service is started through its proxy**, not around it. Spawning it directly leaves the proxy's readiness flags false, and the next request to the public port would start a *second* process.
+- **Liveness is read from the process, not from `pid`.** A stopped or crashed service keeps a dead `pid`, so a `pid`-based guard would make this a permanent no-op.
+- **A stop in flight is awaited.** `stop` only sends SIGTERM, so a service that drains on shutdown still looks alive; `start` waits up to 5 s for it to exit rather than reporting success and leaving it down.
+- **A queued auto-restart is cancelled first**, or it would spawn a second process for the same name seconds later.
+- **A lazy service is started through its proxy**, not around it, and the proxy confirms something is actually listening rather than trusting its own readiness flag — which an external stop never clears.
 
 Added in 0.14.0.
 

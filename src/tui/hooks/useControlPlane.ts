@@ -11,7 +11,7 @@ import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 import { calcCpuPercent } from '../../utils.js';
 import { systemLoad } from '../../utils/system-load.js';
-import { isRunning } from '../../process/liveness.js';
+import { isRunning, waitForExit } from '../../process/liveness.js';
 import type { LazyProxy } from '../../lazy/proxy.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
@@ -71,14 +71,34 @@ export function useControlPlane(
           },
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
           async start(name) {
-            const st = manager.state.get(name);
-            if (!st) throw new Error(`unknown service: ${name}`);
-            if (isRunning(st)) return;
-            const proxy = lazyProxies.current?.get(name);
-            if (proxy) { await proxy.ensureStarted(); return; }
-            await manager.install(st.svc, st.colorIdx);
-            await manager.start(st.svc, st.colorIdx);
+          const st = manager.state.get(name);
+          if (!st) throw new Error(`unknown service: ${name}`);
+          // Liveness, not st.pid: a stopped service keeps a dead pid, so gating
+          // on it would make this a permanent no-op for the one case it exists for.
+          if (isRunning(st)) {
+            // ...unless a stop is in flight. stop() only sends SIGTERM, so a
+            // service that drains on shutdown still looks alive; returning here
+            // would report success and leave it down.
+            if (!st.intentionalStop) return true;
+            await waitForExit(st, 5000);
+          }
+          // A queued auto-restart would otherwise spawn a second process for the
+          // same name moments after this one.
+          manager.cancelPendingRestart(name);
+          const proxy = lazyProxies.current?.get(name);
+          if (proxy) {
+            // Through the proxy, never around it: spawning directly leaves its
+            // serviceReady flag false and the next request starts a second process.
+            return await proxy.ensureStarted();
+          }
+          await manager.install(st.svc, st.colorIdx);
+          await manager.start(st.svc, st.colorIdx);
+          const after = manager.state.get(name);
+          // Spawner returns normally after recording a crash (pre-build failed,
+          // watch path missing, port taken), so "no exception" is not success.
+          return !!after && after.status !== 'crashed';
           },
+
           async getStats() {
             const pids: number[] = [];
             const pidToName = new Map<number, string>();

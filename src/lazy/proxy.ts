@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { waitForPort } from '../process/health.js';
+import { checkPort, waitForPort } from '../process/health.js';
 
 export interface LazyProxyOpts {
   listenPort: number;
@@ -79,7 +79,17 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
    *  request from the control plane. One start at a time: later callers await
    *  the in-flight one instead of spawning again. */
   async function ensureStarted(): Promise<boolean> {
-    if (serviceReady && isAlive()) return true;
+    // An explicit start counts as activity: without this, a service started
+    // seconds before the idle timer fires is stopped again immediately.
+    bumpActivity();
+
+    // `serviceReady` is only cleared when *we* idle-stop the service. An
+    // external stop leaves it true, and isAlive() agrees for a while — proc is
+    // never nulled, .killed stays false for a group kill, and health lags the
+    // poller. Trusting it makes `ctl stop && ctl start` a silent no-op, so
+    // confirm something is actually listening before believing it.
+    if (serviceReady && isAlive() && await checkPort(targetPort, '127.0.0.1', 500)) return true;
+    serviceReady = false;
     if (!startInFlight) {
       startInFlight = (async () => {
         onLog?.('⚡ on-demand start');

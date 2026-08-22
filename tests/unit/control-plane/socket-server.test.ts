@@ -28,7 +28,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
-    start: async () => {},
+    start: async () => true,
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
