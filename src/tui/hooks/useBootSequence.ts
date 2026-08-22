@@ -98,8 +98,12 @@ export function useBootSequence(
             targetPort: rewritten.realPort,
             timeoutMin: lazyTimeout,
             onDemandStart: async () => {
-              await mgr.install(rewritten, ci);
-              await mgr.start(rewritten, ci);
+              // The live config, not the one captured at boot: a runtime
+              // `debug` toggle rewrites st.svc, and starting from the stale
+              // copy would drop the flag and write the stale copy back over it.
+              const cfg = mgr.state.get(svc.name)?.svc ?? rewritten;
+              await mgr.install(cfg, ci);
+              await mgr.start(cfg, ci);
               const ok = await waitForPort(rewritten.realPort, { timeout: 45000 });
               const st = mgr.state.get(svc.name);
               if (st) {
@@ -110,7 +114,7 @@ export function useBootSequence(
             onIdleStop: () => {
               mgr.stop(svc.name);
               const st = mgr.state.get(svc.name);
-              if (st) { st.status = 'idle'; st.health = 'idle'; st.pid = null; st.proc = null; st.startedAt = null; }
+              if (st) { st.status = 'idle'; st.health = 'idle'; st.pid = null; st.proc = null; st.startedAt = null; st.debugPort = null; }
             },
             isAlive: () => {
               const st = mgr.state.get(svc.name);

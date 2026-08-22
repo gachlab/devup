@@ -1,6 +1,13 @@
 import type { StartServiceHost } from './start-service.js';
 import { startService } from './start-service.js';
 
+/** Same range the config validator enforces: a bad value reaches
+ *  `--inspect=<n>`, Node refuses to start, and the flag persists on the service
+ *  so every later restart fails the same way. */
+function isInspectPort(p: unknown): p is number {
+  return typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535;
+}
+
 export interface DebugResult {
   /** Whether the service is now running under the inspector. */
   debug: boolean;
@@ -30,6 +37,9 @@ export async function debugService(
 ): Promise<DebugResult> {
   const st = host.state.get(name);
   if (!st) throw new Error(`unknown service: ${name}`);
+  if (inspectPort !== undefined && !isInspectPort(inspectPort)) {
+    throw new Error(`invalid inspector port: ${inspectPort} (must be 1-65535)`);
+  }
   if (st.svc.cmd !== 'node') {
     throw new Error(`${name} does not run node (cmd: ${st.svc.cmd}) — nothing to inspect`);
   }

@@ -49,6 +49,21 @@ describe('diffServices', () => {
     assert.equal(d.changed.length, 1);
   });
 
+  it('detects debug changes as changed', () => {
+    // debug alters the spawn argv, so a hot reload has to respawn. Missing from
+    // the list, the reload is classified `unchanged`, applyConfigChange returns
+    // early without logging, and the user waits for an inspector that never
+    // starts.
+    const off = diffServices([svc({ name: 'a' })], [svc({ name: 'a', debug: true })]);
+    assert.equal(off.changed.length, 1, 'turning debug on did not trigger a respawn');
+
+    const repin = diffServices([svc({ name: 'a', debug: true })], [svc({ name: 'a', debug: 9230 })]);
+    assert.equal(repin.changed.length, 1, 'changing the inspector port did not trigger a respawn');
+
+    const same = diffServices([svc({ name: 'a', debug: 9230 })], [svc({ name: 'a', debug: 9230 })]);
+    assert.deepEqual(same.unchanged, ['a']);
+  });
+
   it('detects healthCheck changes as changed', () => {
     const d = diffServices(
       [svc({ name: 'a', healthCheck: { type: 'tcp' } })],

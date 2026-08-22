@@ -88,4 +88,15 @@ describe('debugService', () => {
     const { host } = mkHost(new Map());
     await assert.rejects(() => debugService(host, undefined, 'nope', true), /unknown service/);
   });
+
+  it('rejects an out-of-range port before touching the service', async () => {
+    // The bad value would reach --inspect=<n>, Node would refuse to start, and
+    // the flag persists — so every later restart fails the same way until
+    // someone turns it off.
+    const state = new Map([['api', mkState()]]);
+    const { host, calls } = mkHost(state);
+    await assert.rejects(() => debugService(host, undefined, 'api', true, 70000), /invalid inspector port/);
+    await assert.rejects(() => debugService(host, undefined, 'api', true, 0), /invalid inspector port/);
+    assert.deepEqual(calls.stopped, []);
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDebugPort } from '../../../src/process/inspector.js';
+import { isInspectorNotice, parseDebugPort } from '../../../src/process/inspector.js';
 
 describe('parseDebugPort', () => {
   it('reads the port Node announces', () => {
@@ -29,5 +29,21 @@ describe('parseDebugPort', () => {
 
   it('rejects an impossible port', () => {
     assert.equal(parseDebugPort('Debugger listening on ws://127.0.0.1:99999/x'), null);
+  });
+});
+
+describe('isInspectorNotice', () => {
+  it('recognises the lines Node writes when inspecting', () => {
+    // Without an errorPattern every stderr line bumps state.errors, so a
+    // service under --inspect showed two errors before doing anything, and the
+    // TUI sorts services by error count.
+    assert.equal(isInspectorNotice('Debugger listening on ws://127.0.0.1:39481/abc'), true);
+    assert.equal(isInspectorNotice('For help, see: https://nodejs.org/en/docs/inspector'), true);
+    assert.equal(isInspectorNotice('Debugger attached.'), true);
+  });
+
+  it('does not swallow a real error', () => {
+    assert.equal(isInspectorNotice('Error: connect ECONNREFUSED 127.0.0.1:5432'), false);
+    assert.equal(isInspectorNotice('Debugger listening is what I would say if I were one'), false);
   });
 });

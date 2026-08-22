@@ -15,3 +15,16 @@ export function parseDebugPort(line: string): number | null {
   const port = Number(m[1]);
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
+
+/** Node's own inspector banner, which it writes to stderr.
+ *
+ *  Without an `errorPattern` every stderr line bumps `state.errors`, so a
+ *  service started under `--inspect` showed two errors before doing anything —
+ *  and the TUI sorts by error count. */
+export function isInspectorNotice(line: string): boolean {
+  const t = line.trim();
+  return DEBUGGER_LINE.test(t)
+    || t === 'Debugger attached.'
+    || t.startsWith('For help, see: https://nodejs.org/en/docs/inspector')
+    || t === 'Waiting for the debugger to disconnect...';
+}

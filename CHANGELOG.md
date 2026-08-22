@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   On demand through the control plane: `devup ctl debug <svc>` (and `--off`, `--port n`) restarts a service under the inspector without editing the config. The flag lives on the service, so it survives the crash and auto-restart that usually prompt a debugging session.
 
+  The lazy path needed a fix of its own: the on-demand start closed over the config captured at boot, so a runtime toggle set the flag and then had it overwritten — the feature was a silent no-op for exactly the services most worth debugging. It reads the live config now. `debug` also joins the respawn-relevant fields, so changing it under `--watch-config` actually restarts the service.
+
   **`debug: true` uses `--inspect=0`**, letting the OS pick: the fixed 9229 collides the moment two services are debugged at once. The port Node actually chose is parsed from its startup line and reported as `debugPort` in the status snapshot, so a client can attach without guessing — which is what the VS Code extension needs to offer "attach debugger".
 
 - **`start` in the control plane** (#85), with `devup ctl start <svc>` alongside it. `restart` and `stop` existed with no way to bring one stopped service up; `restart` happened to work, which was a coincidence rather than an interface.
