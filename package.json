@@ -46,6 +46,7 @@
   },
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly",
+    "contract:update": "node --import tsx scripts/update-contract.ts",
     "dev": "tsup --watch",
     "prepack": "npm pkg fix",
     "prepublishOnly": "npm run build",

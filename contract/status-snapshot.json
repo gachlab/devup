@@ -27,10 +27,39 @@
       "cmd": "node",
       "cwd": "authorization/api",
       "errors": 0,
-      "restarts": 1,
+      "restarts": 0,
       "pid": null,
-      "startedAt": 1755800000000,
+      "startedAt": null,
       "crashLog": null
+    },
+    {
+      "name": "app-web",
+      "status": "crashed",
+      "health": "down",
+      "port": 4201,
+      "originalPort": 4201,
+      "type": "web",
+      "phase": 4,
+      "cmd": "npx",
+      "cwd": "app/web",
+      "errors": 2,
+      "restarts": 3,
+      "pid": null,
+      "startedAt": null,
+      "crashLog": [
+        "Error: listen EADDRINUSE: address already in use :::4201",
+        "    at Server.setupListenHandle"
+      ]
     }
-  ]
+  ],
+  "proxy": {
+    "active": true,
+    "provider": "traefik",
+    "domain": "guesthub.test",
+    "tls": true,
+    "routes": {
+      "app-web": "",
+      "administration-web": "administration"
+    }
+  }
 }
