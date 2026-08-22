@@ -4,9 +4,15 @@ import type { ServiceConfig } from '../config/types.js';
  *  for `node` commands when maxMem is set, plus any nodeArgs overrides. */
 export function buildProcessArgs(svc: ServiceConfig): string[] {
   const extra = svc.nodeArgs ?? [];
-  if (!svc.maxMem) return [...extra, ...svc.args];
-  if (svc.cmd === 'node') return [`--max-old-space-size=${svc.maxMem}`, ...extra, ...svc.args];
-  return [...extra, ...svc.args];
+  if (svc.cmd !== 'node') return [...extra, ...svc.args];
+
+  const flags: string[] = [];
+  if (svc.maxMem) flags.push(`--max-old-space-size=${svc.maxMem}`);
+  // `--inspect=0` lets the OS pick: a fixed 9229 collides the moment two
+  // services are debugged at once. The chosen port is recovered from Node's
+  // startup line rather than guessed.
+  if (svc.debug) flags.push(`--inspect=${svc.debug === true ? 0 : svc.debug}`);
+  return [...flags, ...extra, ...svc.args];
 }
 
 /** Builds the env for spawning a service: merges extraEnv and injects

@@ -19,6 +19,9 @@ export interface ProcessState {
   crashLog: string[] | null;
   /** Side-car watch process spawned alongside the main one (when `watchBuild` is set). */
   watchProc?: ChildProcess | null;
+  /** Port the Node inspector bound to, parsed from the process's startup line.
+   *  Null unless the service is running under `--inspect`. */
+  debugPort?: number | null;
 }
 
 export interface ProcessManagerEvents {

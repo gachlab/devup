@@ -24,6 +24,7 @@ import type { Platform } from '../platform/types.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from '../proxy-config/types.js';
 import type { ProcessState } from '../process/types.js';
 import { startService } from '../process/start-service.js';
+import { debugService } from '../process/debug-service.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
 const sanitize = (n: string) => n.replace(SAFE, '_').replace(/^_+|_+$/g, '') || 'devup';
@@ -196,6 +197,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         onUpdate(name, state);
       }),
       watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+      debug: (name, enable, port) => debugService(mgr, lazyProxies, name, enable, port),
       start: (name) => startService(mgr, lazyProxies, name),
 
       async getStats() {

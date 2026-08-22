@@ -13,6 +13,7 @@ import { calcCpuPercent } from '../../utils.js';
 import { systemLoad } from '../../utils/system-load.js';
 import type { LazyProxy } from '../../lazy/proxy.js';
 import { startService } from '../../process/start-service.js';
+import { debugService } from '../../process/debug-service.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -70,6 +71,7 @@ export function useControlPlane(
             });
           },
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+          debug: (name, enable, port) => debugService(manager, lazyProxies.current, name, enable, port),
           start: (name) => startService(manager, lazyProxies.current, name),
 
           async getStats() {

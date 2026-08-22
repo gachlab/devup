@@ -14,7 +14,25 @@
       "restarts": 1,
       "pid": 4242,
       "startedAt": 1755800000000,
-      "crashLog": null
+      "crashLog": null,
+      "debugPort": null
+    },
+    {
+      "name": "app-api",
+      "status": "running",
+      "health": "up",
+      "port": 3000,
+      "originalPort": 3000,
+      "type": "api",
+      "phase": 0,
+      "cmd": "node",
+      "cwd": "app/api",
+      "errors": 0,
+      "restarts": 0,
+      "pid": 4243,
+      "startedAt": 1755800000000,
+      "crashLog": null,
+      "debugPort": 39481
     },
     {
       "name": "authorization-api",
@@ -30,7 +48,8 @@
       "restarts": 0,
       "pid": null,
       "startedAt": null,
-      "crashLog": null
+      "crashLog": null,
+      "debugPort": null
     },
     {
       "name": "app-web",
@@ -49,7 +68,8 @@
       "crashLog": [
         "Error: listen EADDRINUSE: address already in use :::4201",
         "    at Server.setupListenHandle"
-      ]
+      ],
+      "debugPort": null
     }
   ],
   "proxy": {

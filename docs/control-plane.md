@@ -104,6 +104,7 @@ Fields per service mirror `ProcessState`:
 - `pid`: OS pid, `null` if not currently running
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
+- `debugPort`: port the Node inspector bound to, parsed from the process's startup line. `null` unless the service is running under `--inspect`
 
 ### `start`
 
@@ -129,6 +130,33 @@ Details worth knowing:
 - **A lazy service is started through its proxy**, not around it, and the proxy confirms something is actually listening rather than trusting its own readiness flag — which an external stop never clears.
 - **An API is "up" when its port answers**, the same bar `bootNormal` uses; a web service is reported started once spawned, as at boot.
 - **The restart budget is reset**, so a service that exhausted `MAX_RESTARTS` auto-restarts again after an explicit start.
+
+Added in 0.14.0.
+
+### `debug`
+
+Restart a service under the Node inspector, or without it.
+
+```json
+{ "method": "debug", "params": { "svc": "app-api", "enable": true } }
+→ { "result": { "debug": true, "port": 39481, "ok": true } }
+```
+
+`port` is where the inspector is listening — attach to `127.0.0.1:<port>`. It
+is `null` while the service is still starting; `status` reports it as
+`debugPort` once Node announces it.
+
+Pass `"port": 9230` to pin one instead of letting the OS choose. Pass
+`"enable": false` to restart without the inspector.
+
+Errors when the service does not run `node`: the flag would be handed to the
+command as a script argument and silently ignored, leaving you waiting for a
+debugger that never listens.
+
+The flag is stored on the service, so it survives crashes and auto-restarts —
+a debugging session usually outlives whatever prompted it. It is the same
+field as the config's `debug`, so a transient toggle and a declared setting
+cannot disagree.
 
 Added in 0.14.0.
 

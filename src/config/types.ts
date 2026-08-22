@@ -21,6 +21,16 @@ export interface ServiceConfig {
    *  bump `state.errors`. Without it, every non-empty stderr line counts.
    *  Useful for libraries that write info messages to stderr (Angular CLI). */
   errorPattern?: string;
+  /** Run this service under the Node inspector.
+   *
+   *  `true` uses `--inspect=0` so the OS picks a free port — with a dozen
+   *  services the fixed 9229 collides immediately. The port Node actually
+   *  chose is reported back as `debugPort` in the status snapshot, parsed from
+   *  its startup line, so a client can attach without guessing.
+   *
+   *  A number pins the port instead, for a launch config that has to be
+   *  written down. Only applies when `cmd` is `node`. */
+  debug?: boolean | number;
 }
 
 export interface HealthCheckConfig {

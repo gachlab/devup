@@ -7,6 +7,7 @@ import { isPortBindable } from './health.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
+import { parseDebugPort } from './inspector.js';
 
 const CRASH_LOG_LINES = 20;
 const STARTUP_TIMEOUT_DEFAULT_MS = 45_000;
@@ -148,6 +149,14 @@ export class Spawner {
         this.events.onStateChange(svc.name, state);
       }
     };
+    const captureDebugPort = (line: string) => {
+      if (!svc.debug || state.debugPort) return;
+      const port = parseDebugPort(line);
+      if (port === null) return;
+      state.debugPort = port;
+      this.log(svc.name, `🐛 inspector on :${port}`, colorIdx);
+      this.events.onStateChange(svc.name, state);
+    };
     const errorRegex = compileReadyPattern(svc.errorPattern);
     const countsAsError = (line: string) => errorRegex ? errorRegex.test(line) : true;
 
@@ -156,6 +165,7 @@ export class Spawner {
 
     const stdoutBuf = lineBuffer(line => { markReadyIfMatch(line); this.log(svc.name, line, colorIdx); });
     const stderrLineBuf = lineBuffer(line => {
+      captureDebugPort(line);
       if (countsAsError(line)) state.errors += 1;
       markReadyIfMatch(line);
       stderrBuf.push(line);

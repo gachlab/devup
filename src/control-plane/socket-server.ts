@@ -67,6 +67,8 @@ export interface RpcContext {
    *  unsubscribe function. Without this a client can only ever add or update,
    *  so a removed service lingers until it reconnects. */
   watchRemoved(onRemoved: (name: string) => void): () => void;
+  /** Turn the Node inspector on or off for a service, restarting it. */
+  debug(name: string, enable: boolean, port?: number): Promise<{ debug: boolean; port: number | null; ok: boolean }>;
   /** Start a stopped service. Resolves to whether it is up: the spawner
    *  returns normally after recording a crash, so "no exception" is not
    *  success. Already running counts as up. */
@@ -264,6 +266,7 @@ export function serializeState(name: string, st: ProcessState): Record<string, u
     pid: st.pid,
     startedAt: st.startedAt,
     crashLog: st.crashLog ?? null,
+    debugPort: st.debugPort ?? null,
   };
 }
 
@@ -298,6 +301,13 @@ async function dispatch(
       // `ok` reflects the outcome, not merely that the request was accepted —
       // otherwise a client reports success while the service sits crashed.
       return { ok: await ctx.start(svc) };
+    }
+    case 'debug': {
+      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+      const enable = params['enable'] === undefined ? true : params['enable'] === true;
+      const rawPort = params['port'];
+      const port = typeof rawPort === 'number' ? rawPort : undefined;
+      return await ctx.debug(svc, enable, port);
     }
     case 'stop': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
