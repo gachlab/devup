@@ -91,7 +91,12 @@ export function openStream(
       return;
     }
     // Deliberately outside the try: a throw from onFrame is a bug in the
-    // consumer, not a malformed frame, and swallowing it hides the failure.
+    // consumer, not a malformed frame, and swallowing it hides the failure —
+    // that is how `ctl status --follow` came to print nothing at all when the
+    // `removed` event was added. A throw here escapes the 'line' listener and
+    // ends the process, which is the right trade for the only caller: the
+    // short-lived `devup ctl` CLI, where a visible stack beats silence. Should
+    // the daemon or TUI ever consume this, revisit.
     if (msg.event) onFrame(msg as StreamFrame);
   });
 
