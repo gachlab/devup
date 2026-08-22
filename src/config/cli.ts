@@ -32,7 +32,7 @@ Usage: devup [options]
 Service selection:
   --only apis | webs       Start only APIs or only webs
   --services a,b,c         Start only the named services
-  --profile <name>         Start the services in a named profile (see ROADMAP)
+  --profile <name>         Start the services in a named profile (see docs/profiles.md)
   --skip a,b,c             Start everything except these
   --config <path>          Use a custom config file
 
