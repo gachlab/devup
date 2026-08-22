@@ -33,6 +33,7 @@ function makeSvc(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
 function makeManager(platform?: Platform) {
   const logs: string[] = [];
   const removed: string[] = [];
+  const states: string[] = [];
   const p = platform ?? testPlatform();
   const mgr = new ProcessManager({
     baseCwd: process.cwd(),
@@ -40,11 +41,11 @@ function makeManager(platform?: Platform) {
     platform: p,
     events: {
       onLog: (_name, text) => logs.push(text),
-      onStateChange: () => {},
+      onStateChange: (_name, st) => states.push(st.status),
       onServiceRemoved: (name) => removed.push(name),
     },
   });
-  return { mgr, logs, removed, platform: p };
+  return { mgr, logs, removed, states, platform: p };
 }
 
 describe('ProcessManager.remove', () => {
@@ -101,6 +102,51 @@ describe('ProcessManager.remove', () => {
     await new Promise(r => setTimeout(r, 2600)); // past the 2 s first backoff
 
     assert.equal(mgr.state.has('test-svc'), false, 'the queued restart brought it back');
+  });
+
+  it('aborts a start that was in flight when the service was removed', { timeout: 9000 }, async () => {
+    // The real shape: `restart` settles 1500 ms before spawning, and a config
+    // reload lands inside that window. Spawning afterwards re-inserts the
+    // service and resurrects it in every client already told it was gone.
+    // (A lazy proxy awaiting onDemandStart is the same story.)
+    const { mgr } = makeManager();
+    await mgr.start(makeSvc(), 0);
+    assert.ok(mgr.state.has('test-svc'));
+
+    const restarting = mgr.restart('test-svc');
+    await new Promise(r => setTimeout(r, 300)); // inside the settle
+    mgr.remove('test-svc');
+    await restarting;
+
+    assert.equal(mgr.state.has('test-svc'), false, 'the in-flight start re-added the removed service');
+    await new Promise(r => setTimeout(r, 100));
+  });
+
+  it('a manual restart cancels the queued auto-restart', { timeout: 9000 }, async () => {
+    // Otherwise the stale timer spawns a second process for the same name: the
+    // first is overwritten in `state` but stays in `procs`, so two processes
+    // fight over the port behind a single row.
+    const { mgr, states } = makeManager();
+    await mgr.start(makeSvc({ args: ['-e', 'process.exit(1)'] }), 0);
+    await new Promise(r => setTimeout(r, 400)); // crash + auto-restart queued
+    assert.ok((mgr.state.get('test-svc')?.restarts ?? 0) > 0, 'expected a queued auto-restart');
+
+    // Swap in a long-lived command first: otherwise the restarted process
+    // crashes again and queues its own auto-restart, and the extra spawn would
+    // be legitimate rather than the stale timer this test is about.
+    mgr.state.get('test-svc')!.svc = makeSvc();
+    const spawnsBefore = states.filter(s => s === 'starting').length;
+    await mgr.restart('test-svc');
+    const spawnsAfterManual = states.filter(s => s === 'starting').length;
+    await new Promise(r => setTimeout(r, 2600)); // past the 2 s backoff
+
+    assert.equal(
+      states.filter(s => s === 'starting').length, spawnsAfterManual,
+      'the stale auto-restart fired on top of the manual one',
+    );
+    assert.ok(spawnsAfterManual > spawnsBefore, 'the manual restart itself should have spawned');
+    mgr.stop('test-svc');
+    await new Promise(r => setTimeout(r, 100));
   });
 
   it('is a no-op for a service it does not have', () => {

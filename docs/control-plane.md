@@ -197,7 +197,7 @@ Subsequent `status` frames carry **one** service — they are updates, not snaps
 → { "event": "log", "data": "…line…", "svc": "app-api" }
 ```
 
-Omit `svc` (or pass `null`) to receive every service's output.
+Omit `svc` (or pass `null`) to receive every service's output. Replayed tail lines carry `svc` too, so a client can route every frame the same way.
 
 ### `stats`
 

@@ -59,7 +59,12 @@ export function useControlPlane(
             });
           },
           watchStatus: (onUpdate) => {
-            return stateBus.subscribe(({ name, state }) => onUpdate(name, state));
+            // See the daemon: a removed service can still emit, and forwarding
+            // it would push `status` after `removed`.
+            return stateBus.subscribe(({ name, state }) => {
+              if (!manager.state.has(name)) return;
+              onUpdate(name, state);
+            });
           },
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
           async getStats() {

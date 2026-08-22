@@ -198,7 +198,9 @@ async function handleFollow(
     if (svcName) {
       const lines = await ctx.tailLogs(svcName, tail);
       for (const l of lines) {
-        respond(socket, { id: req.id, event: 'log', data: l });
+        // `svc` on the replay too: a client routing by frame.svc would drop or
+        // misattribute the whole tail otherwise.
+        respond(socket, { id: req.id, event: 'log', data: l, svc: svcName });
       }
     }
 

@@ -19,6 +19,9 @@ interface SpawnerOpts {
   events: ProcessManagerEvents;
   lifecycle: Lifecycle;
   onCrash: (svc: ServiceConfig, state: ProcessState, colorIdx: number) => void;
+  /** Bumped by ProcessManager.remove(). Shared reference, read after every
+   *  await in start() so a removal that lands mid-start wins. */
+  removals: Map<string, number>;
 }
 
 export class Spawner {
@@ -30,6 +33,7 @@ export class Spawner {
   private readonly lifecycle: Lifecycle;
   private readonly onCrash: SpawnerOpts['onCrash'];
   private readonly startupTimers = new Map<string, NodeJS.Timeout>();
+  private readonly removals: Map<string, number>;
 
   constructor(opts: SpawnerOpts) {
     this.baseCwd = opts.baseCwd;
@@ -38,11 +42,18 @@ export class Spawner {
     this.procs = opts.procs;
     this.events = opts.events;
     this.lifecycle = opts.lifecycle;
+    this.removals = opts.removals;
     this.onCrash = opts.onCrash;
   }
 
   async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
     const cwd = join(this.baseCwd, svc.cwd);
+    // start() awaits the port check and the pre-build, and a caller may have
+    // awaited before that (Restarter settles 1500 ms, a lazy proxy awaits
+    // onDemandStart). A removal landing in any of those windows has to win:
+    // spawning afterwards re-inserts the service into `state` and resurrects
+    // it in every client that was already told it was gone.
+    const generation = this.removals.get(svc.name) ?? 0;
 
     // Clear any previous startup timer for this service on restart.
     this.clearStartupTimer(svc.name);
@@ -69,6 +80,11 @@ export class Spawner {
     if (missingWatchPaths.length) {
       this.log(svc.name, `⚠ missing watch paths: ${missingWatchPaths.join(', ')}`, colorIdx);
       this.recordCrashedState(svc, colorIdx);
+      return;
+    }
+
+    if ((this.removals.get(svc.name) ?? 0) !== generation) {
+      this.log(svc.name, '⏹ start aborted — removed while starting', colorIdx);
       return;
     }
 

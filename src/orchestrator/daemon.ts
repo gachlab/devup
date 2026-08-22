@@ -186,7 +186,14 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       watchLogs: (svcName, onLine) => logBus.subscribe(({ svc, text }) => {
         if (svcName === null || svc === svcName) onLine(svc, text);
       }),
-      watchStatus: (onUpdate) => stateBus.subscribe(({ name, state }) => onUpdate(name, state)),
+      // Guarded here rather than per-emitter: a removed service can still
+      // produce a state change — buffered stdout matching readyPattern after
+      // the kill, a health probe landing late — and forwarding it pushes a
+      // `status` frame *after* `removed`, re-adding it in every client.
+      watchStatus: (onUpdate) => stateBus.subscribe(({ name, state }) => {
+        if (!mgr.state.has(name)) return;
+        onUpdate(name, state);
+      }),
       watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
       async getStats() {
         const pids: number[] = [];
