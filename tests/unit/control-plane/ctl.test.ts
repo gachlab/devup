@@ -31,7 +31,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
-    start: async () => {},
+    start: async () => true,
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -168,13 +168,29 @@ describe('runCtl', { skip: !isUnix }, () => {
     const path = join(dir, 's.sock');
     try {
       let started: string | null = null;
-      const handle = await startSocketServer('t', noopCtx({ start: async (n) => { started = n; } }), { path });
+      const handle = await startSocketServer('t', noopCtx({ start: async (n) => { started = n; return true; } }), { path });
       const lines: string[] = [];
       try {
         const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
         assert.equal(code, 0);
         assert.equal(started, 'api');
-        assert.ok(lines.some(l => l.includes('api')), JSON.stringify(lines));
+        assert.ok(lines.some(l => l.includes('api') && l.includes('started')), JSON.stringify(lines));
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('start reports failure when the service does not come up', async () => {
+    // The spawner returns normally after recording a crash, so a client that
+    // trusts "request accepted" prints a tick over a dead service.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('t', noopCtx({ start: async () => false }), { path });
+      const lines: string[] = [];
+      try {
+        const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+        assert.equal(code, 1);
+        assert.ok(lines.some(l => l.includes('did not come up')), JSON.stringify(lines));
       } finally { await handle.close(); }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
