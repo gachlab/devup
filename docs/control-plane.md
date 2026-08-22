@@ -69,16 +69,25 @@ Snapshot of every service.
           "port": 13000,
           "originalPort": 3000,
           "type": "api",
+          "phase": 1,
+          "cmd": "node",
+          "cwd": "app/api",
           "errors": 0,
           "restarts": 0,
           "pid": 12345,
-          "startedAt": 1716279183421
+          "startedAt": 1716279183421,
+          "crashLog": null
         },
         ...
-      ]
+      ],
+      "proxy": { "active": true, "provider": "traefik", "domain": "guesthub.test",
+                 "tls": true, "routes": { "app-web": "" } }
     }
   }
 ```
+
+`proxy` is `null` when no proxy is running. Note that `status.follow` frames
+carry the **bare array** as `data`, not this wrapper.
 
 Fields per service mirror `ProcessState`:
 
@@ -88,10 +97,13 @@ Fields per service mirror `ProcessState`:
 - `port`: where the **service process** listens. For a lazy service this is *not* the configured port — devup runs it on `port + 10000` and keeps its on-demand proxy on the configured one. Use this to attach a debugger or read the service's own logs.
 - `originalPort`: the **configured** port, and the one to connect to — it is where the lazy proxy listens, so reaching it starts the service on demand. Equal to `port` for always-on services and whenever lazy mode is off. Added in 0.12.0; absent in earlier daemons.
 - `type`: `api` | `web`
+- `phase`: boot phase from config
+- `cmd`, `cwd`: as resolved for the spawn — `cwd` is relative to the project root
 - `errors`: cumulative since spawn
 - `restarts`: cumulative since spawn
 - `pid`: OS pid, `null` if not currently running
-- `startedAt`: epoch ms of the current spawn, `null` if not running
+- `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
+- `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
 
 ### `restart`
 
@@ -236,8 +248,12 @@ the `port` / `originalPort` distinction is pinned rather than described.
 Regenerate deliberately, and treat the diff as an API change:
 
 ```bash
-UPDATE_CONTRACT=1 npm run test:unit
+npm run contract:update
 ```
+
+Regeneration is a separate entry point on purpose: doing it from inside the
+golden test lets the test compare the fixture against itself, which makes the
+only cross-repo check in the suite unfailable.
 
 ## What's NOT there
 
