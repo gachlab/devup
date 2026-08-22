@@ -44,11 +44,21 @@ export async function debugService(
     throw new Error(`${name} does not run node (cmd: ${st.svc.cmd}) — nothing to inspect`);
   }
 
+  const before = st.svc;
   st.svc = { ...st.svc, debug: enable ? (inspectPort ?? true) : undefined };
   // Stale the moment the process restarts; the new one announces its own.
   st.debugPort = null;
 
   host.stop(name);
   const ok = await startService(host, lazyProxies, name);
-  return { debug: enable, port: host.state.get(name)?.debugPort ?? null, ok };
+  if (!ok) {
+    // Leaving the flag on a service that would not start makes it unstartable:
+    // every auto-restart and every later `ctl start` reuses the same bad value
+    // — a port already in use, most likely — until someone thinks to run
+    // `ctl debug --off`.
+    const now = host.state.get(name);
+    if (now) now.svc = before;
+    return { debug: before.debug !== undefined && before.debug !== false, port: null, ok: false };
+  }
+  return { debug: enable, port: host.state.get(name)?.debugPort ?? null, ok: true };
 }

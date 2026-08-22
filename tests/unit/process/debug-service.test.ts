@@ -99,4 +99,21 @@ describe('debugService', () => {
     await assert.rejects(() => debugService(host, undefined, 'api', true, 0), /invalid inspector port/);
     assert.deepEqual(calls.stopped, []);
   });
+
+  it('rolls the flag back when the restart fails', async () => {
+    // Otherwise the service is unstartable: every auto-restart and every later
+    // `ctl start` reuses the same bad value — a port already in use, most
+    // likely — until someone thinks to run `ctl debug --off`.
+    const state = new Map([['api', mkState()]]);
+    const host: DebugServiceHost = {
+      state,
+      stop: () => {},
+      install: async () => true,
+      start: async (s, ci) => { state.set(s.name, { ...mkState({ status: 'crashed', colorIdx: ci }), svc: s }); },
+      cancelPendingRestart: () => {},
+    };
+    const res = await debugService(host, undefined, 'api', true, 9230);
+    assert.equal(res.ok, false);
+    assert.equal(state.get('api')!.svc.debug, undefined, 'the bad flag survived a failed restart');
+  });
 });

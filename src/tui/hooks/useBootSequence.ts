@@ -98,10 +98,11 @@ export function useBootSequence(
             targetPort: rewritten.realPort,
             timeoutMin: lazyTimeout,
             onDemandStart: async () => {
-              // The live config, not the one captured at boot: a runtime
-              // `debug` toggle rewrites st.svc, and starting from the stale
-              // copy would drop the flag and write the stale copy back over it.
-              const cfg = mgr.state.get(svc.name)?.svc ?? rewritten;
+              // Only the debug flag is read back from state. Taking the whole live
+              // config would be wrong: a --watch-config reload writes the *raw* file
+              // config into state, and starting a lazy service from that puts it on
+              // the public port its own proxy is already listening on.
+              const cfg = { ...rewritten, debug: mgr.state.get(svc.name)?.svc.debug };
               await mgr.install(cfg, ci);
               await mgr.start(cfg, ci);
               const ok = await waitForPort(rewritten.realPort, { timeout: 45000 });

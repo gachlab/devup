@@ -21,7 +21,7 @@ function mkState(svc: ServiceConfig): ProcessState {
 
 interface MockMgrCalls {
   installed: Array<{ name: string; ci: number }>;
-  started: Array<{ name: string; ci: number; isRestart?: boolean }>;
+  started: Array<{ name: string; ci: number; isRestart?: boolean; svc: ServiceConfig }>;
   stopped: string[];
   removed: string[];
 }
@@ -33,7 +33,7 @@ function mockManager(initial: ServiceConfig[] = []): { mgr: ProcessManager; call
     state,
     install: async (svc: ServiceConfig, ci: number) => { calls.installed.push({ name: svc.name, ci }); return true; },
     start: async (svc: ServiceConfig, ci: number, isRestart?: boolean) => {
-      calls.started.push({ name: svc.name, ci, isRestart });
+      calls.started.push({ name: svc.name, ci, isRestart, svc });
       if (!state.has(svc.name)) state.set(svc.name, mkState(svc));
     },
     stop: (name: string) => { calls.stopped.push(name); },
@@ -87,6 +87,30 @@ describe('applyConfigChange', () => {
       assert.deepEqual(calls.started.map(c => c.name), ['web']);
       assert.equal(calls.stopped.length, 0);
       assert.ok(logs.some(l => l.includes('reloaded') && l.includes('+1')));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('keeps a runtime debug toggle across a reload', async () => {
+    // `ctl debug` lives on the service, not in the file, so a reload that
+    // rebuilt from the file alone would silently drop it — disconnecting an
+    // attached debugger on the next unrelated save.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      const before = [mkSvc('api', 3000)];
+      const after = [mkSvc('api', 3001)]; // an unrelated edit
+      const cfgPath = join(dir, 'devup.config.json');
+      writeConfig(cfgPath, after);
+      const { mgr, calls } = mockManager(before);
+      mgr.state.get('api')!.svc = { ...mgr.state.get('api')!.svc, debug: 9230 };
+
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: () => {} });
+
+      const started = calls.started.find(c => c.name === 'api');
+      assert.ok(started, 'api should have been restarted');
+      // Asserted on what it was restarted *with*: the mock does not write back
+      // into state, so reading state.svc afterwards would pass either way.
+      assert.equal(started.svc.debug, 9230, 'the reload dropped the runtime toggle');
+      assert.equal(started.svc.port, 3001, 'the file edit should still apply');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
