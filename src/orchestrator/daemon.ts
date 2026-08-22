@@ -13,7 +13,7 @@ import { Broadcaster } from '../utils/broadcaster.js';
 import { systemLoad } from '../utils/system-load.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
-import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
+import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import { watchConfig } from './config-watcher.js';
 import { findConfigFile } from '../config/loader.js';
@@ -106,7 +106,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         logBus.emit({ svc: svcName, text });
       },
       onStateChange: (name, state) => stateBus.emit({ name, state }),
-      onServiceRemoved: (name) => removedBus.emit({ name }),
+      onServiceRemoved: (name) => {
+        releaseLazyProxy(lazyProxies, name);
+        removedBus.emit({ name });
+      },
     },
   });
 

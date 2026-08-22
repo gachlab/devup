@@ -16,6 +16,7 @@ Control-plane gaps found while building the VS Code extension against it. All ad
 
 ### Fixed
 
+- **Removal now releases what the service owned.** `remove()` dropped the state entry and left the rest behind: the `HealthPoller` kept its failure streak, so a service re-added under the same name inherited it and could trip the threshold on its first probe; and the **lazy proxy stayed listening on the public port**, so a single connection re-entered the on-demand start path and resurrected a service every client had just been told was gone. Both are released now, and the proxy goes down *before* the announcement rather than after.
 - **`status.follow` now sends its initial snapshot even when empty** — previously suppressed, leaving a client unable to tell "connected, nothing configured" from "still waiting".
 - **`devup ctl status --follow` no longer goes silent on a removal.** The new `removed` frames carry names, not service rows, and the handler read `.name` off a string. The resulting `TypeError` was swallowed by the client's frame loop, so the CLI printed nothing further and kept listing the departed service — the exact failure the new event was added to prevent.
 - **The stream client no longer swallows consumer errors.** Its `try/catch` wrapped both `JSON.parse` and the `onFrame` callback, so a bug in a frame handler was indistinguishable from a malformed frame. Only the parse is guarded now.

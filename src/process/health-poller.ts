@@ -19,6 +19,16 @@ export class HealthPoller {
     this.events = opts.events;
   }
 
+  /** Drop the failure streak for a service that no longer exists.
+   *
+   *  `checkAll` iterates `state`, so a removed service stops being probed on
+   *  its own — but its count would survive and be inherited by a service later
+   *  re-added under the same name, which could then be marked down on its very
+   *  first failed probe. */
+  forget(name: string): void {
+    this.failureCounts.delete(name);
+  }
+
   async checkAll(): Promise<void> {
     for (const [name, st] of this.state) {
       if (!st.pid || st.status === 'idle' || st.status === 'timeout') {

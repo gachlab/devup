@@ -62,6 +62,29 @@ describe('ProcessManager.remove', () => {
     await new Promise(r => setTimeout(r, 100));
   });
 
+  it('forgets the health failure streak', { timeout: 6000 }, async () => {
+    // Otherwise a service re-added under the same name inherits the streak and
+    // trips the failure threshold on its first probe. Asserted on the log,
+    // because health stays 'wait' while status is 'starting' — so `health` can
+    // never read 'down' here and asserting on it would prove nothing.
+    const { mgr, logs } = makeManager();
+    const svc = makeSvc({ healthCheck: { type: 'tcp' as const, failureThreshold: 2 } });
+    await mgr.start(svc, 0);
+    await mgr.checkAllHealth();
+    await mgr.checkAllHealth();
+    const failuresBefore = logs.filter(l => l.includes('[health] ✗')).length;
+    assert.ok(failuresBefore > 0, 'the streak should have tripped before removal');
+
+    mgr.remove('test-svc');
+    await mgr.start(svc, 0);
+    await mgr.checkAllHealth();
+
+    const failuresAfter = logs.filter(l => l.includes('[health] ✗')).length;
+    assert.equal(failuresAfter, failuresBefore, 'a fresh service must start from a clean streak');
+    mgr.stop('test-svc');
+    await new Promise(r => setTimeout(r, 100));
+  });
+
   it('is a no-op for a service it does not have', () => {
     const { mgr, removed } = makeManager();
     mgr.remove('never-existed');

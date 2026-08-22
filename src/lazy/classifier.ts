@@ -30,3 +30,22 @@ export function rewriteServicePort(svc: ServiceConfig): ServiceConfig & { realPo
   const extraEnv = { ...svc.extraEnv, PORT_OVERRIDE: String(realPort) };
   return { ...svc, port: realPort, args, extraEnv, realPort, originalPort: svc.port };
 }
+
+/** Tear down and forget the lazy proxy for a service that has been removed.
+ *
+ *  The proxy listens on the service's *public* port, so it outlives the process
+ *  it fronts: until it is destroyed, a single connection re-enters the
+ *  on-demand start path and resurrects a service every client was just told had
+ *  gone. Call this before announcing the removal, not after.
+ *
+ *  Returns whether a proxy was actually released, which callers can log. */
+export function releaseLazyProxy(
+  proxies: Map<string, { destroy: () => void }> | undefined | null,
+  name: string,
+): boolean {
+  const proxy = proxies?.get(name);
+  if (!proxy) return false;
+  proxy.destroy();
+  proxies!.delete(name);
+  return true;
+}
