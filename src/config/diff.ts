@@ -10,7 +10,7 @@ export interface ServiceDiff {
 /** Fields whose change requires a respawn. Anything else (icon, etc.) is metadata. */
 const SPAWN_RELEVANT: (keyof ServiceConfig)[] = [
   'cwd', 'cmd', 'args', 'port', 'phase', 'maxMem', 'preBuild', 'watchBuild',
-  'nodeArgs', 'extraEnv', 'healthCheck', 'readyPattern', 'errorPattern', 'type',
+  'nodeArgs', 'extraEnv', 'healthCheck', 'readyPattern', 'errorPattern', 'type', 'debug',
 ];
 
 function hasSpawnRelevantChange(prev: ServiceConfig, next: ServiceConfig): boolean {

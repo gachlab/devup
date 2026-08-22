@@ -278,7 +278,17 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       if (!svc) { out('usage: devup ctl debug <service> [--off] [--port <n>]'); return 1; }
       const enable = !argv.includes('--off');
       const portIdx = argv.indexOf('--port');
-      const port = portIdx >= 0 ? Number(argv[portIdx + 1]) : undefined;
+      let port: number | undefined;
+      if (portIdx >= 0) {
+        port = Number(argv[portIdx + 1]);
+        // Without this, NaN survives as far as JSON.stringify, becomes null,
+        // and the request quietly falls back to an OS-chosen port — the exact
+        // opposite of what someone pinning a port for a launch config wants.
+        if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+          out(`invalid --port: ${argv[portIdx + 1] ?? '(missing)'}`);
+          return 1;
+        }
+      }
       const res = await sendRpc(socketPath, 'debug', { svc, enable, port }) as { debug: boolean; port: number | null; ok: boolean };
       if (!res.ok) { out(`✗ ${svc} did not come back up — check \`devup ctl logs ${svc}\``); return 1; }
       if (!res.debug) { out(`✓ ${svc} restarted without the inspector`); return 0; }

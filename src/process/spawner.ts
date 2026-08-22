@@ -7,7 +7,7 @@ import { isPortBindable } from './health.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
-import { parseDebugPort } from './inspector.js';
+import { isInspectorNotice, parseDebugPort } from './inspector.js';
 
 const CRASH_LOG_LINES = 20;
 const STARTUP_TIMEOUT_DEFAULT_MS = 45_000;
@@ -166,7 +166,8 @@ export class Spawner {
     const stdoutBuf = lineBuffer(line => { markReadyIfMatch(line); this.log(svc.name, line, colorIdx); });
     const stderrLineBuf = lineBuffer(line => {
       captureDebugPort(line);
-      if (countsAsError(line)) state.errors += 1;
+      // The inspector's own banner is not the service failing.
+      if (!isInspectorNotice(line) && countsAsError(line)) state.errors += 1;
       markReadyIfMatch(line);
       stderrBuf.push(line);
       if (stderrBuf.length > CRASH_LOG_LINES) stderrBuf.shift();
@@ -188,6 +189,9 @@ export class Spawner {
       this.procs.delete(proc);
       this.lifecycle.stopWatchProc(state);
       this.clearStartupTimer(svc.name);
+      // The inspector went with the process; leaving the port set points a
+      // client at a dead endpoint for the whole restart window.
+      state.debugPort = null;
       if (state.intentionalStop) { state.intentionalStop = false; return; }
       if (code === 0) {
         state.status = 'stopped'; state.health = 'down';
