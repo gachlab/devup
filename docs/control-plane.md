@@ -127,6 +127,8 @@ Details worth knowing:
 - **A stop in flight is awaited.** `stop` only sends SIGTERM, so a service that drains on shutdown still looks alive; `start` waits up to 5 s for it to exit rather than reporting success and leaving it down.
 - **A queued auto-restart is cancelled first**, or it would spawn a second process for the same name seconds later.
 - **A lazy service is started through its proxy**, not around it, and the proxy confirms something is actually listening rather than trusting its own readiness flag — which an external stop never clears.
+- **An API is "up" when its port answers**, the same bar `bootNormal` uses; a web service is reported started once spawned, as at boot.
+- **The restart budget is reset**, so a service that exhausted `MAX_RESTARTS` auto-restarts again after an explicit start.
 
 Added in 0.14.0.
 

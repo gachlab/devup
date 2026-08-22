@@ -97,8 +97,15 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
         try {
           await onDemandStart();
           ok = await waitForPort(targetPort, { timeout: 45000, interval: 500 });
-          if (ok) serviceReady = true;
-          else onLog?.('⚠ timeout waiting for service');
+          if (ok) {
+            serviceReady = true;
+            // Re-arm: scheduleIdleCheck stops rescheduling itself once it fires
+            // onIdleStop, so without this a service brought back never idles
+            // again and holds its memory for the rest of the session.
+            scheduleIdleCheck();
+          } else {
+            onLog?.('⚠ timeout waiting for service');
+          }
         } catch (e: unknown) {
           onLog?.(`❌ start failed: ${(e as Error).message}`);
         }
