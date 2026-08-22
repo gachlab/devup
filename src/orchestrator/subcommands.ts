@@ -201,6 +201,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  status [--follow]            Service snapshot, or live updates');
     out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
     out('  start <svc>                  Start a stopped service');
+    out('  debug <svc> [--off] [--port n] Restart a service under the Node inspector');
     out('  restart <svc>                Restart a service');
     out('  stop <svc>                   Stop a service');
     return 0;
@@ -269,6 +270,21 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
         if (!res.services.length) { out('(no services)'); return 0; }
         fmtStatus(res.services, out);
       }
+      return 0;
+    }
+
+    if (method === 'debug') {
+      const svc = argv[1];
+      if (!svc) { out('usage: devup ctl debug <service> [--off] [--port <n>]'); return 1; }
+      const enable = !argv.includes('--off');
+      const portIdx = argv.indexOf('--port');
+      const port = portIdx >= 0 ? Number(argv[portIdx + 1]) : undefined;
+      const res = await sendRpc(socketPath, 'debug', { svc, enable, port }) as { debug: boolean; port: number | null; ok: boolean };
+      if (!res.ok) { out(`✗ ${svc} did not come back up — check \`devup ctl logs ${svc}\``); return 1; }
+      if (!res.debug) { out(`✓ ${svc} restarted without the inspector`); return 0; }
+      out(res.port
+        ? `✓ ${svc} running under the inspector on :${res.port}  —  attach to 127.0.0.1:${res.port}`
+        : `✓ ${svc} restarted with the inspector; port not announced yet, see \`devup ctl status\``);
       return 0;
     }
 
@@ -421,6 +437,7 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('  status [--follow]            Service snapshot, or live state-change stream');
     out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
     out('  start <svc>                  Start the named service if stopped');
+    out('  debug <svc> [--off] [--port n] Restart the named service under the Node inspector');
     out('  restart <svc>                Restart the named service');
     out('  stop <svc>                   Stop the named service');
     out('');

@@ -69,4 +69,10 @@ describe('control-plane contract', () => {
       assert.ok(k in golden.proxy, `proxy.${k} missing — ProxyInfo drift would go unnoticed`);
     }
   });
+
+  it('pins debugPort as a number, not only as null', () => {
+    const withPort = golden.services.filter((s: { debugPort: unknown }) => typeof s.debugPort === 'number');
+    assert.ok(withPort.length > 0, 'no entry runs under the inspector');
+    assert.ok(withPort.every((s: { debugPort: number }) => s.debugPort > 0 && s.debugPort <= 65535));
+  });
 });

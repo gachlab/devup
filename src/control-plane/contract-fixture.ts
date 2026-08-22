@@ -44,6 +44,12 @@ export function buildContractSnapshot(): Record<string, unknown> {
       serializeState('configurations-api', mkState(alwaysOn, {
         pid: 4242, status: 'running', health: 'up', restarts: 1, startedAt: 1755800000000,
       })),
+      // Under the inspector, so debugPort is pinned as a number rather than
+      // only ever null — a client generating a type from nulls learns nothing.
+      serializeState('app-api', mkState(
+        { ...alwaysOn, name: 'app-api', cwd: 'app/api', port: 3000, debug: true },
+        { pid: 4243, status: 'running', health: 'up', startedAt: 1755800000000, debugPort: 39481 },
+      )),
       // Lazy and asleep. The daemon nulls pid *and* startedAt when idling, so a
       // client must not treat startedAt as a liveness signal.
       serializeState('authorization-api', mkState(lazy, {

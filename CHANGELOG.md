@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Debugging** (#84), both declared and on demand.
+
+  Per service in the config: `debug: true` runs it under `--inspect`, or `debug: 9230` to pin the port. Only meaningful for `cmd: 'node'`, and the validator says so rather than letting the flag be swallowed as a script argument.
+
+  On demand through the control plane: `devup ctl debug <svc>` (and `--off`, `--port n`) restarts a service under the inspector without editing the config. The flag lives on the service, so it survives the crash and auto-restart that usually prompt a debugging session.
+
+  **`debug: true` uses `--inspect=0`**, letting the OS pick: the fixed 9229 collides the moment two services are debugged at once. The port Node actually chose is parsed from its startup line and reported as `debugPort` in the status snapshot, so a client can attach without guessing — which is what the VS Code extension needs to offer "attach debugger".
+
 - **`start` in the control plane** (#85), with `devup ctl start <svc>` alongside it. `restart` and `stop` existed with no way to bring one stopped service up; `restart` happened to work, which was a coincidence rather than an interface.
 
   The policy lives in one place (`startService`) rather than being duplicated between the daemon and the TUI, so `devup` foreground and `devup up -d` cannot drift on what the same command means.

@@ -272,3 +272,33 @@ describe('systemLoad', () => {
     assert.deepEqual(systemLoad(4, { platform: 'linux', raw: [] }), {});
   });
 });
+
+describe('buildProcessArgs with debug', () => {
+  const base = { name: 'a', cwd: '.', cmd: 'node', args: ['index.js'], type: 'api' as const, port: 3000, phase: 0 };
+
+  it('asks the OS for a free port when debug is true', () => {
+    // A fixed 9229 collides the moment two services are debugged at once.
+    assert.deepEqual(buildProcessArgs({ ...base, debug: true }), ['--inspect=0', 'index.js']);
+  });
+
+  it('pins the port when given a number', () => {
+    assert.deepEqual(buildProcessArgs({ ...base, debug: 9230 }), ['--inspect=9230', 'index.js']);
+  });
+
+  it('adds nothing when debug is off', () => {
+    assert.deepEqual(buildProcessArgs({ ...base, debug: false }), ['index.js']);
+    assert.deepEqual(buildProcessArgs(base), ['index.js']);
+  });
+
+  it('coexists with maxMem, in a fixed order', () => {
+    assert.deepEqual(
+      buildProcessArgs({ ...base, maxMem: 256, debug: true }),
+      ['--max-old-space-size=256', '--inspect=0', 'index.js'],
+    );
+  });
+
+  it('leaves a non-node command alone', () => {
+    // The flag would be passed straight through to npx/vite as a script arg.
+    assert.deepEqual(buildProcessArgs({ ...base, cmd: 'npx', args: ['vite'], debug: true }), ['vite']);
+  });
+});

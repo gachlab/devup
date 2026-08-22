@@ -80,6 +80,17 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     if (!svc.type || !['api', 'web'].includes(svc.type)) {
       errors.push({ field: `services[${svc.name}].type`, message: `Invalid type: ${svc.type} (must be "api" or "web")` });
     }
+    if (svc.debug !== undefined) {
+      const d = svc.debug as unknown;
+      const validPort = typeof d === 'number' && Number.isInteger(d) && d > 0 && d <= 65535;
+      if (typeof d !== 'boolean' && !validPort) {
+        errors.push({ field: `services[${svc.name}].debug`, message: `Invalid debug: ${String(d)} (must be true, false, or a port)` });
+      } else if (d !== false && svc.cmd !== 'node') {
+        // The inspector flag only means anything to node; silently ignoring it
+        // would leave the user waiting for a debugger that never listens.
+        errors.push({ field: `services[${svc.name}].debug`, message: `debug is set but cmd is "${svc.cmd}" — the Node inspector only applies to node` });
+      }
+    }
     if (typeof svc.port !== 'number' || svc.port <= 0) {
       errors.push({ field: `services[${svc.name}].port`, message: `Invalid port: ${svc.port}` });
     }
