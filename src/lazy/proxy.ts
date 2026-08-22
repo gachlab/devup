@@ -8,6 +8,11 @@ export interface LazyProxyOpts {
   onDemandStart: () => Promise<void>;
   onIdleStop: () => void;
   isAlive: () => boolean;
+  /** Whether a debugger is attached (or waiting to be) — the service's
+   *  inspector is listening. Idle time means something different then: someone
+   *  is sitting on a breakpoint reading code, and stopping the service ends
+   *  their session. Optional; absent means "not debugging". */
+  isDebugging?: () => boolean;
   onLog?: (msg: string) => void;
 }
 
@@ -24,7 +29,7 @@ export interface LazyProxy {
 }
 
 export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
-  const { listenPort, targetPort, timeoutMin, onDemandStart, onIdleStop, isAlive, onLog } = opts;
+  const { listenPort, targetPort, timeoutMin, onDemandStart, onIdleStop, isAlive, isDebugging, onLog } = opts;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let lastActivity = Date.now();
   let startInFlight: Promise<boolean> | null = null;
@@ -44,6 +49,17 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
       const elapsed = Date.now() - lastActivity;
       if (activeConns.size > 0 || elapsed < periodMs) {
         // Aún activa o tráfico reciente — re-agenda
+        scheduleIdleCheck();
+        return;
+      }
+      if (isDebugging?.()) {
+        // Un servicio pausado en un breakpoint no recibe tráfico por
+        // definición: leer código, mirar otro archivo y volver son minutos sin
+        // una sola conexión. Pararlo aquí mata la sesión de depuración justo
+        // cuando su dueño la está usando. `lastActivity` no se toca a
+        // propósito: al desacoplarse, el siguiente periodo lo para como
+        // siempre.
+        onLog?.(`🐛 idle ${timeoutMin}min pero bajo el inspector — se mantiene arriba`);
         scheduleIdleCheck();
         return;
       }

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import type { ServiceConfig } from '../config/types.js';
 import type { ProcessState, ProcessManagerEvents } from './types.js';
 import { isPortBindable } from './health.js';
+import { isRunning } from './liveness.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
@@ -62,6 +63,17 @@ export class Spawner {
     if (svc.type === 'api') {
       const bindable = await isPortBindable(svc.port);
       if (!bindable && !isRestart) {
+        // The port may be held by *our own* process: a service that is simply
+        // already running, or one paused under a debugger while its lazy proxy
+        // asks for an on-demand start. Recording a crash there is worse than
+        // doing nothing — it replaces the state with `proc: null`, so
+        // `lifecycle.stop` returns early forever and the daemon can never stop
+        // the process again. It keeps the port, unstoppable, for the rest of
+        // the session.
+        if (isRunning(this.state.get(svc.name))) {
+          this.log(svc.name, `↩ already running on ${svc.port} — leaving it alone`, colorIdx);
+          return;
+        }
         this.log(svc.name, `⚠ port ${svc.port} already in use — skipping`, colorIdx);
         this.recordCrashedState(svc, colorIdx);
         return;

@@ -363,6 +363,7 @@ async function bootLazy(
         const st = mgr.state.get(svc.name);
         if (st) { st.status = 'idle'; st.health = 'idle'; st.pid = null; st.proc = null; st.startedAt = null; st.debugPort = null; }
       },
+      isDebugging: () => typeof mgr.state.get(svc.name)?.debugPort === 'number',
       isAlive: () => {
         const st = mgr.state.get(svc.name);
         return !!st && !!st.proc && !st.proc.killed && st.health === 'up';
