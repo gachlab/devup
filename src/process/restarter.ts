@@ -33,11 +33,19 @@ export class Restarter {
   async restart(name: string): Promise<void> {
     const st = this.state.get(name);
     if (!st) return;
+    // Otherwise a queued auto-restart fires ~2 s later and spawns a *second*
+    // process for the same name: the first is overwritten in `state` but stays
+    // in `procs`, so two processes fight over the port behind one row.
+    this.cancel(name);
     this.lifecycle.stop(name);
     // Manual restart: reset auto-restart counter so user gets a fresh budget
     st.restarts = 0;
     const delay = st.proc ? 1500 : 100;
     await new Promise(r => setTimeout(r, delay));
+    // A config reload can drop the service inside that settle. Spawner guards
+    // its own awaits, but it captures its baseline on entry — by then the
+    // removal has already happened, so it has nothing to compare against.
+    if (!this.state.has(name)) return;
     await this.spawner.start(st.svc, st.colorIdx, true);
     this.events.onLog(name, '🔄 manual restart', st.colorIdx);
   }

@@ -21,6 +21,7 @@ export { compileReadyPattern, extractWatchPaths } from './internals.js';
 export class ProcessManager {
   readonly state = new Map<string, ProcessState>();
   private readonly procs = new Set<ChildProcess>();
+  private readonly removals = new Map<string, number>();
   private readonly baseCwd: string;
   private readonly env: Record<string, string>;
   private readonly events: ProcessManagerEvents;
@@ -50,6 +51,7 @@ export class ProcessManager {
       baseCwd: opts.baseCwd, env: opts.env,
       state: this.state, procs: this.procs,
       events: opts.events, lifecycle: this.lifecycle,
+      removals: this.removals,
       onCrash: (svc, state, colorIdx) => restarterRef?.scheduleAutoRestart(svc, state, colorIdx),
     });
     this.restarter = new Restarter({
@@ -84,6 +86,7 @@ export class ProcessManager {
    *  control-plane client showing a service that no longer exists. */
   remove(name: string): void {
     if (!this.state.has(name)) return;
+    this.removals.set(name, (this.removals.get(name) ?? 0) + 1);
     this.lifecycle.stop(name);
     this.state.delete(name);
     this.restarter.cancel(name);
