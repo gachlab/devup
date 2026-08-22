@@ -89,7 +89,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     process.exit(0);
   }, [pm, logSink, platform, baseCwd, env, socketServer]);
 
-  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog);
+  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services);
   useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);

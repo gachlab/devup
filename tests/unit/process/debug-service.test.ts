@@ -116,4 +116,37 @@ describe('debugService', () => {
     assert.equal(res.ok, false);
     assert.equal(state.get('api')!.svc.debug, undefined, 'the bad flag survived a failed restart');
   });
+
+  it('does not re-arm the inspector when turning it off fails', async () => {
+    // Rolling back on --off restores the flag the user just disabled, and the
+    // next restart brings --inspect back. Turning it off is never the cause of
+    // an unstartable service.
+    const state = new Map([['api', mkState({ svc: { ...svc, debug: 9230 } })]]);
+    const host: DebugServiceHost = {
+      state,
+      stop: () => {},
+      install: async () => true,
+      start: async (s, ci) => { state.set(s.name, { ...mkState({ status: 'crashed', colorIdx: ci }), svc: s }); },
+      cancelPendingRestart: () => {},
+    };
+    const res = await debugService(host, undefined, 'api', false);
+    assert.equal(res.ok, false);
+    assert.equal(state.get('api')!.svc.debug, undefined, 'the flag the user disabled came back');
+  });
+
+  it('cancels the queued auto-restart when rolling back', async () => {
+    // Restarter re-spawns the config captured at crash time, so without this
+    // it keeps retrying with the bad flag no matter what state says.
+    const state = new Map([['api', mkState()]]);
+    const cancelled: string[] = [];
+    const host: DebugServiceHost = {
+      state,
+      stop: () => {},
+      install: async () => true,
+      start: async (s, ci) => { state.set(s.name, { ...mkState({ status: 'crashed', colorIdx: ci }), svc: s }); },
+      cancelPendingRestart: (n) => { cancelled.push(n); },
+    };
+    await debugService(host, undefined, 'api', true, 9230);
+    assert.ok(cancelled.filter(n => n === 'api').length >= 2, 'the pending restart survived the rollback');
+  });
 });

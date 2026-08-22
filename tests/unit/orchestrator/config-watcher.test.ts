@@ -60,7 +60,7 @@ describe('applyConfigChange', () => {
       const logs: string[] = [];
 
       await applyConfigChange({
-        configPath: cfgPath, baseCwd: dir, manager: mgr,
+        configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: svcs,
         log: l => logs.push(l),
       });
 
@@ -81,12 +81,34 @@ describe('applyConfigChange', () => {
       const { mgr, calls } = mockManager(before);
       const logs: string[] = [];
 
-      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: l => logs.push(l) });
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: before, log: l => logs.push(l) });
 
       assert.deepEqual(calls.installed.map(c => c.name), ['web']);
       assert.deepEqual(calls.started.map(c => c.name), ['web']);
       assert.equal(calls.stopped.length, 0);
       assert.ok(logs.some(l => l.includes('reloaded') && l.includes('+1')));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('leaves an untouched lazy service alone across a reload', async () => {
+    // The state carries the lazy rewrite (port + 10000, rewritten args and
+    // env) and any `ctl debug` toggle; the file carries neither. Diffing state
+    // against the file made every lazy service "changed" on every save — and
+    // the changed path restarts them from the file config, onto the public
+    // port their own proxy is holding. See #93.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      const baseline = [mkSvc('auth', 3002), mkSvc('web', 4200)];
+      const cfgPath = join(dir, 'devup.config.json');
+      writeConfig(cfgPath, [mkSvc('auth', 3002), mkSvc('web', 4201)]); // only web moved
+      const { mgr, calls } = mockManager(baseline);
+      // As the orchestrator holds them: auth is lazy and debugged.
+      const auth = mgr.state.get('auth')!;
+      auth.svc = { ...auth.svc, port: 13002, debug: 9230, extraEnv: { PORT_OVERRIDE: '13002' } };
+
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline, log: () => {} });
+
+      assert.deepEqual(calls.started.map(c => c.name), ['web'], 'an untouched lazy service was restarted');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -103,7 +125,7 @@ describe('applyConfigChange', () => {
       const { mgr, calls } = mockManager(before);
       mgr.state.get('api')!.svc = { ...mgr.state.get('api')!.svc, debug: 9230 };
 
-      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: () => {} });
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: before, log: () => {} });
 
       const started = calls.started.find(c => c.name === 'api');
       assert.ok(started, 'api should have been restarted');
@@ -124,7 +146,7 @@ describe('applyConfigChange', () => {
       const { mgr, calls } = mockManager(before);
       const logs: string[] = [];
 
-      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: l => logs.push(l) });
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: before, log: l => logs.push(l) });
 
       assert.deepEqual(calls.stopped, ['legacy']);
       assert.deepEqual(calls.removed, ['legacy'], 'removal must go through remove(), not a bare state.delete');
@@ -143,7 +165,7 @@ describe('applyConfigChange', () => {
       const { mgr, calls } = mockManager(before);
       const logs: string[] = [];
 
-      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: l => logs.push(l) });
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: before, log: l => logs.push(l) });
 
       assert.deepEqual(calls.stopped, ['api']);
       assert.deepEqual(calls.installed.map(c => c.name), ['api']);
@@ -157,10 +179,11 @@ describe('applyConfigChange', () => {
       const cfgPath = join(dir, 'devup.config.json');
       // Invalid: empty services array
       writeFileSync(cfgPath, JSON.stringify({ name: 'WatchTest', services: [] }));
-      const { mgr, calls } = mockManager([mkSvc('api', 3000)]);
+      const baseline = [mkSvc('api', 3000)];
+      const { mgr, calls } = mockManager(baseline);
       const logs: string[] = [];
 
-      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: l => logs.push(l) });
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline, log: l => logs.push(l) });
 
       assert.equal(calls.installed.length, 0);
       assert.equal(calls.started.length, 0);
@@ -181,7 +204,7 @@ describe('watchConfig', () => {
       const { mgr, calls } = mockManager(before);
       const logs: string[] = [];
 
-      const stop = watchConfig({ configPath: cfgPath, baseCwd: dir, manager: mgr, log: l => logs.push(l) });
+      const stop = watchConfig({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: before, log: l => logs.push(l) });
       try {
         // Give the polling watcher a moment to read the initial stat.
         await sleep(200);
