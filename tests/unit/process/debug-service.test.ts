@@ -33,6 +33,42 @@ function mkHost(state: Map<string, ProcessState>, onStart?: (s: ServiceConfig) =
   return { host, calls };
 }
 
+describe('debugService con brk', () => {
+  // El fixture de arriba es `type: 'web'`, que se salta la espera del puerto en
+  // startService — justo la rama donde el tercer timeout de 45 s dejaba esto
+  // inservible. Este usa 'api' a propósito.
+  const apiSvc: ServiceConfig = { ...svc, type: 'api' };
+
+  it('pide --inspect-brk y no espera a que el puerto abra', async () => {
+    // Un servicio detenido en su primera línea nunca abre su puerto hasta que
+    // alguien se acopla. Si `startService` lo esperara, esto devolvería
+    // ok:false a los 45 s y `debugService` desharía el flag.
+    const state = new Map([['api', mkState({ svc: apiSvc })]]);
+    const { host, calls } = mkHost(state);
+
+    const res = await debugService(host, undefined, 'api', true, undefined, true);
+
+    assert.equal(res.ok, true);
+    assert.equal(res.debug, true);
+    assert.deepEqual(calls.startedWith.at(-1)?.debug, { port: undefined, brk: true });
+  });
+
+  it('pincha el puerto junto con brk', async () => {
+    const state = new Map([['api', mkState({ svc: apiSvc })]]);
+    const { host, calls } = mkHost(state);
+    await debugService(host, undefined, 'api', true, 9230, true);
+    assert.deepEqual(calls.startedWith.at(-1)?.debug, { port: 9230, brk: true });
+  });
+
+  it('sin brk sigue usando la forma corta', async () => {
+    // No convertir todo en objetos: la config común no debe cambiar de forma.
+    const state = new Map([['api', mkState({ svc: apiSvc })]]);
+    const { host, calls } = mkHost(state);
+    await debugService(host, undefined, 'api', true);
+    assert.equal(calls.startedWith.at(-1)?.debug, true);
+  });
+});
+
 describe('debugService', () => {
   it('restarts the service with the inspector flag set', async () => {
     const state = new Map([['api', mkState()]]);

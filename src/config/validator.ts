@@ -86,12 +86,25 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
       // The object form: { port?, brk? }. A bad value here reaches
       // `--inspect=<n>`, node refuses to start, and the flag sticks to the
       // service so every later restart fails the same way.
-      const validObject = !!d && typeof d === 'object'
-        && Object.keys(d).every(k => k === 'port' || k === 'brk')
-        && ((d as { port?: unknown }).port === undefined || validPort((d as { port?: unknown }).port))
+      //
+      // A plain object specifically: `[]`, `new Date()` and friends have no
+      // own keys, so an `every()` over them is vacuously true and `debug: []`
+      // would sail through into `--inspect=0`.
+      const plainObject = !!d && typeof d === 'object' && !Array.isArray(d)
+        && (Object.getPrototypeOf(d) === Object.prototype || Object.getPrototypeOf(d) === null);
+      const validObject = plainObject
+        && Object.keys(d as object).every(k => k === 'port' || k === 'brk')
+        // 0 is the long form of "let the OS pick", the same value an omitted
+        // port normalises to.
+        && ((d as { port?: unknown }).port === undefined || (d as { port?: unknown }).port === 0 || validPort((d as { port?: unknown }).port))
         && ((d as { brk?: unknown }).brk === undefined || typeof (d as { brk?: unknown }).brk === 'boolean');
       if (typeof d !== 'boolean' && !validPort(d) && !validObject) {
-        errors.push({ field: `services[${svc.name}].debug`, message: `Invalid debug: ${JSON.stringify(d)} (must be true, false, a port, or { port?, brk? })` });
+        // `JSON.stringify` shows an object usefully but turns NaN into "null"
+        // and a function into `undefined`; `String` is the opposite. Each for
+        // what it is good at, so the message names the value someone has to
+        // find in their config.
+        const shown = typeof d === 'object' && d !== null ? (JSON.stringify(d) ?? String(d)) : String(d);
+        errors.push({ field: `services[${svc.name}].debug`, message: `Invalid debug: ${shown} (must be true, false, a port, or { port?, brk? })` });
       } else if (d !== false && svc.cmd !== 'node') {
         // The inspector flag only means anything to node; silently ignoring it
         // would leave the user waiting for a debugger that never listens.

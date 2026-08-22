@@ -23,7 +23,9 @@ describe('validateConfig: debug', () => {
     validateConfig(cfg, tmp).filter(e => e.field.endsWith('.debug'));
 
   it('acepta las tres formas válidas', () => {
-    for (const d of [true, false, 9229, {}, { port: 9229 }, { brk: true }, { port: 9229, brk: false }]) {
+    // `{ port: 0 }` es la forma larga de "que elija el SO", el mismo valor al
+    // que normaliza un puerto omitido.
+    for (const d of [true, false, 9229, {}, { port: 0 }, { port: 9229 }, { brk: true }, { port: 9229, brk: false }]) {
       assert.deepEqual(debugErrors(withDebug(d)), [], `rechazó ${JSON.stringify(d)}`);
     }
   });
@@ -31,7 +33,7 @@ describe('validateConfig: debug', () => {
   it('rechaza un puerto imposible, venga como venga', () => {
     // Un valor malo llega a `--inspect=<n>`, node se niega a arrancar, y la
     // flag se queda pegada al servicio: cada reinicio falla igual.
-    for (const d of [0, -1, 70000, 1.5, '9229', { port: 0 }, { port: 70000 }, { port: '9229' }]) {
+    for (const d of [-1, 70000, 1.5, '9229', { port: -1 }, { port: 70000 }, { port: '9229' }]) {
       assert.equal(debugErrors(withDebug(d)).length, 1, `aceptó ${JSON.stringify(d)}`);
     }
   });
@@ -40,6 +42,20 @@ describe('validateConfig: debug', () => {
     assert.equal(debugErrors(withDebug({ brk: 'yes' })).length, 1);
     assert.equal(debugErrors(withDebug({ port: 9229, inspect: true })).length, 1);
     assert.equal(debugErrors(withDebug(null)).length, 1);
+  });
+
+  it('rechaza cosas que son objetos pero no configuración', () => {
+    // Un `every()` sobre las claves propias de `[]` o `new Date()` es
+    // vacuosamente cierto, así que sin comprobar que sea un objeto plano
+    // `debug: []` acabaría en `--inspect=0`.
+    for (const d of [[], new Date(), new Map(), () => {}]) {
+      assert.equal(debugErrors(withDebug(d)).length, 1, `aceptó ${Object.prototype.toString.call(d)}`);
+    }
+  });
+
+  it('nombra el valor malo aunque JSON.stringify no pueda', () => {
+    const msg = validateConfig(withDebug(Number.NaN), tmp).find(e => e.field.endsWith('.debug'))?.message ?? '';
+    assert.match(msg, /NaN/);
   });
 
   it('sigue rechazando el inspector fuera de node', () => {

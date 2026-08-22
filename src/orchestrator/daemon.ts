@@ -359,15 +359,22 @@ async function bootLazy(
         const cfg = { ...rewritten, debug: mgr.state.get(svc.name)?.svc.debug };
         await mgr.install(cfg, ci);
         await mgr.start(cfg, ci);
-        // Un servicio con `--inspect-brk` no escucha hasta que alguien se
-        // acopla y lo reanuda, y eso puede tardar lo que tarde una persona.
-        // Con 45 s el arranque bajo demanda se declararía fallido y el proxy
-        // destruiría las conexiones en cola.
+        // Un servicio con `--inspect-brk` no escucha hasta que alguien se acopla
+        // y lo reanuda, y eso tarda lo que tarde una persona.
+        const suspended = startsSuspended(cfg);
         const ok = await waitForPort(rewritten.realPort, {
-          timeout: startsSuspended(cfg) ? SUSPENDED_READY_TIMEOUT_MS : 45000,
+          timeout: suspended ? SUSPENDED_READY_TIMEOUT_MS : 45000,
         });
         const st = mgr.state.get(svc.name);
-        if (st) { st.status = ok ? 'running' : 'timeout'; if (ok) st.health = 'up'; }
+        if (st) {
+          if (ok) { st.status = 'running'; st.health = 'up'; }
+          // `timeout` es un estado del que no se vuelve: el health poller
+          // salta cualquier servicio que esté en él, así que un arranque
+          // suspendido que tarde más de la cuenta quedaría marcado como
+          // caído para siempre aunque luego sirva tráfico. Se queda en
+          // `starting`, que es lo que de verdad es.
+          else if (!suspended) st.status = 'timeout';
+        }
       },
       onIdleStop: () => {
         mgr.stop(svc.name);
