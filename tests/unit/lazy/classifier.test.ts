@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyServices, getLazyRealPort, rewriteServicePort, LAZY_PORT_OFFSET } from '../../../src/lazy/classifier.js';
+import { classifyServices, getLazyRealPort, rewriteServicePort, LAZY_PORT_OFFSET, releaseLazyProxy } from '../../../src/lazy/classifier.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 
 const svc = (name: string, port = 3000): ServiceConfig => ({
@@ -59,5 +59,43 @@ describe('rewriteServicePort', () => {
     const rewritten = rewriteServicePort(s);
     assert.equal(rewritten.extraEnv!['FOO'], 'bar');
     assert.equal(rewritten.extraEnv!['PORT_OVERRIDE'], '13000');
+  });
+});
+
+describe('releaseLazyProxy', () => {
+  function fakeProxy() {
+    let destroyed = 0;
+    return { proxy: { destroy: () => { destroyed++; } }, destroyed: () => destroyed };
+  }
+
+  it('destroys the proxy and drops it from the map', () => {
+    const f = fakeProxy();
+    const proxies = new Map([['api', f.proxy]]);
+
+    assert.equal(releaseLazyProxy(proxies, 'api'), true);
+
+    assert.equal(f.destroyed(), 1);
+    // Both matter: a proxy left listening resurrects a service that clients
+    // were just told had gone, and a stale map entry leaks it.
+    assert.equal(proxies.has('api'), false);
+  });
+
+  it('reports false when the service has no proxy', () => {
+    const proxies = new Map([['api', fakeProxy().proxy]]);
+    assert.equal(releaseLazyProxy(proxies, 'other'), false);
+    assert.equal(proxies.size, 1);
+  });
+
+  it('tolerates a missing map — not every orchestrator runs lazy mode', () => {
+    assert.equal(releaseLazyProxy(undefined, 'api'), false);
+    assert.equal(releaseLazyProxy(null, 'api'), false);
+  });
+
+  it('is idempotent', () => {
+    const f = fakeProxy();
+    const proxies = new Map([['api', f.proxy]]);
+    releaseLazyProxy(proxies, 'api');
+    assert.equal(releaseLazyProxy(proxies, 'api'), false);
+    assert.equal(f.destroyed(), 1, 'destroy must not run twice');
   });
 });

@@ -6,6 +6,7 @@ import type { ServiceConfig } from '../../config/types.js';
 import { calcCpuPercent, detectLogLevel, type LogLevel } from '../../utils.js';
 import { LogSink } from '../../process/log-sink.js';
 import { Broadcaster } from '../../utils/broadcaster.js';
+import { releaseLazyProxy } from '../../lazy/classifier.js';
 
 export interface LogEntry {
   svcName: string;
@@ -25,6 +26,7 @@ export function useProcessManager(
   baseCwd: string,
   env: Record<string, string>,
   logSink: LogSink | null = null,
+  lazyProxies?: React.RefObject<Map<string, { destroy: () => void }>>,
 ) {
   const [states, setStates] = useState<Map<string, ProcessState>>(new Map());
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -66,6 +68,7 @@ export function useProcessManager(
           setStates(new Map(mgr.state));
         },
         onServiceRemoved: (name) => {
+          releaseLazyProxy(lazyProxies?.current, name);
           removedBus.current.emit({ name });
           setStates(new Map(mgr.state));
         },

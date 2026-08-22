@@ -60,8 +60,9 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const statsHeight = rows - logsHeight - 2; // 2 for header + statusbar
   const maxNameLen = Math.max(...services.map(s => s.name.length), 10);
 
-  const pm = useProcessManager(platform, baseCwd, env, logSink);
+  // Declared before the manager so it can tear a proxy down as part of removal.
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
+  const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies);
   const externals = useRef<ExternalProc[]>([]);
 
   const kb = useKeyBindings({
