@@ -149,6 +149,12 @@ is `null` while the service is still starting; `status` reports it as
 Pass `"port": 9230` to pin one instead of letting the OS choose. Pass
 `"enable": false` to restart without the inspector.
 
+Pass `"brk": true` to start the service with `--inspect-brk`, stopped before
+its first line, so its startup path can be debugged. Note what that implies:
+the service does not open its own port until a debugger attaches and resumes
+it, so devup suspends its startup timeout, and a lazy on-demand start waits
+ten minutes rather than 45 seconds.
+
 Errors when the service does not run `node`: the flag would be handed to the
 command as a script argument and silently ignored, leaving you waiting for a
 debugger that never listens.

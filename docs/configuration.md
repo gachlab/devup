@@ -45,6 +45,7 @@ One per service.
 | `preBuild` | `string` | | Shell command run **before** the service spawns. Non-zero exit marks the service `crashed`. See [Build hooks](./build-hooks.md) |
 | `watchBuild` | `string` | | Shell command spawned **alongside** the service (e.g. `npx tsup --watch`). Killed when the service stops. See [Build hooks](./build-hooks.md) |
 | `nodeArgs` | `string[]` | | Extra Node.js arguments prepended before `args` |
+| `debug` | `boolean \| number \| { port?, brk? }` | | Run under the Node inspector. `true` uses `--inspect=0` (the OS picks; the choice comes back as `debugPort`), a number pins the port, and `{ brk: true }` stops the service **before its first line** so the startup path can be debugged. `node` only. See [debugging](#debugging) |
 | `extraEnv` | `Record<string, string>` | | Extra environment variables for this service only |
 | `healthCheck` | `HealthCheckConfig` | | Override the readiness check. Default: TCP probe on `port`. See [Health checks](./health-checks.md) |
 | `readyPattern` | `string` | | Regex matched against stdout/stderr; on match the service is marked `up` immediately. Plain string or vim-style `/pattern/flags`. See [Health checks](./health-checks.md) |
@@ -143,3 +144,31 @@ devup runs two passes at config-load time:
 2. **Warnings** (printed, boot continues): things that look suspicious but might be intentional — e.g. `extraEnv.PORT` set to a value different from `svc.port`.
 
 Both blocks are printed grouped, with the field path so you can find them fast.
+
+## Debugging
+
+```ts
+{ name: 'app-api', cmd: 'node', args: ['index.js'], type: 'api', port: 3000, phase: 1,
+  debug: true }                       // --inspect=0, the OS picks the port
+  // debug: 9229                      // pinned, for a launch config written by hand
+  // debug: { brk: true }             // stops before the first line
+```
+
+The port Node chose is reported as `debugPort` in the status snapshot, parsed
+from its own startup line — attach to `127.0.0.1:<debugPort>`. It changes on
+every restart when the port is not pinned.
+
+Debug can also be toggled at runtime without editing the config, through the
+[`debug` RPC](./control-plane.md#debug) or `devup ctl debug <svc>`. The flag
+lives on the service until it is turned off, so it survives the crash and
+restart that usually prompt a debugging session.
+
+Two things behave differently while a service is debugged:
+
+- **A lazy service under the inspector does not idle-stop.** It is pinned up
+  until debug is turned off — see [lazy mode](./lazy-mode.md).
+- **`brk` suspends the startup timeout.** A service stopped on its first line
+  never opens its port, so the usual 45 s deadline would put it in `timeout`,
+  a state the health poller skips for good. In lazy mode the on-demand start
+  waits ten minutes instead of 45 seconds, since what it is waiting for is a
+  person.

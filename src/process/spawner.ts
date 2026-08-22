@@ -6,6 +6,7 @@ import type { ProcessState, ProcessManagerEvents } from './types.js';
 import { isPortBindable } from './health.js';
 import { isRunning, waitForExit } from './liveness.js';
 import { buildProcessArgs, buildProcessEnv } from '../utils.js';
+import { startsSuspended } from '../utils/process-args.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
 import { isInspectorNotice, parseDebugPort } from './inspector.js';
@@ -147,6 +148,15 @@ export class Spawner {
   }
 
   private scheduleStartupTimeout(svc: ServiceConfig, state: ProcessState, colorIdx: number): void {
+    // `--inspect-brk` stops the service before its first line, so it does not
+    // listen until someone attaches and resumes it. Timing that out would put
+    // it in `timeout`, which the health poller then skips for good — the
+    // service would never be reported healthy again, even after the debugger
+    // let it run.
+    if (startsSuspended(svc)) {
+      this.log(svc.name, `⏸ waiting for a debugger (--inspect-brk) — startup timeout suspended`, colorIdx);
+      return;
+    }
     const timeoutMs = svc.healthCheck?.startupTimeoutMs ?? STARTUP_TIMEOUT_DEFAULT_MS;
     if (timeoutMs <= 0) return;
     const timer = setTimeout(() => {

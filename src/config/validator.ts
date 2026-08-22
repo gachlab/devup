@@ -82,9 +82,16 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     }
     if (svc.debug !== undefined) {
       const d = svc.debug as unknown;
-      const validPort = typeof d === 'number' && Number.isInteger(d) && d > 0 && d <= 65535;
-      if (typeof d !== 'boolean' && !validPort) {
-        errors.push({ field: `services[${svc.name}].debug`, message: `Invalid debug: ${String(d)} (must be true, false, or a port)` });
+      const validPort = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v > 0 && v <= 65535;
+      // The object form: { port?, brk? }. A bad value here reaches
+      // `--inspect=<n>`, node refuses to start, and the flag sticks to the
+      // service so every later restart fails the same way.
+      const validObject = !!d && typeof d === 'object'
+        && Object.keys(d).every(k => k === 'port' || k === 'brk')
+        && ((d as { port?: unknown }).port === undefined || validPort((d as { port?: unknown }).port))
+        && ((d as { brk?: unknown }).brk === undefined || typeof (d as { brk?: unknown }).brk === 'boolean');
+      if (typeof d !== 'boolean' && !validPort(d) && !validObject) {
+        errors.push({ field: `services[${svc.name}].debug`, message: `Invalid debug: ${JSON.stringify(d)} (must be true, false, a port, or { port?, brk? })` });
       } else if (d !== false && svc.cmd !== 'node') {
         // The inspector flag only means anything to node; silently ignoring it
         // would leave the user waiting for a debugger that never listens.

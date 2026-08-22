@@ -68,7 +68,7 @@ export interface RpcContext {
    *  so a removed service lingers until it reconnects. */
   watchRemoved(onRemoved: (name: string) => void): () => void;
   /** Turn the Node inspector on or off for a service, restarting it. */
-  debug(name: string, enable: boolean, port?: number): Promise<{ debug: boolean; port: number | null; ok: boolean }>;
+  debug(name: string, enable: boolean, port?: number, brk?: boolean): Promise<{ debug: boolean; port: number | null; ok: boolean }>;
   /** Start a stopped service. Resolves to whether it is up: the spawner
    *  returns normally after recording a crash, so "no exception" is not
    *  success. Already running counts as up. */
@@ -314,7 +314,11 @@ async function dispatch(
       if (rawPort !== undefined && rawPort !== null && typeof rawPort !== 'number') {
         throw new Error('param "port" must be a number');
       }
-      return await ctx.debug(svc, rawEnable ?? true, typeof rawPort === 'number' ? rawPort : undefined);
+      const rawBrk = params['brk'];
+      if (rawBrk !== undefined && typeof rawBrk !== 'boolean') {
+        throw new Error('param "brk" must be a boolean');
+      }
+      return await ctx.debug(svc, rawEnable ?? true, typeof rawPort === 'number' ? rawPort : undefined, rawBrk === true);
     }
     case 'stop': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');

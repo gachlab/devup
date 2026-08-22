@@ -8,6 +8,10 @@ import { groupByPhase } from '../../utils.js';
 import { waitForPort } from '../../process/health.js';
 import { classifyServices, rewriteServicePort } from '../../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../../lazy/proxy.js';
+import { startsSuspended } from '../../utils/process-args.js';
+
+/** See daemon.ts — a service suspended on its first line waits for a person. */
+const SUSPENDED_READY_TIMEOUT_MS = 10 * 60_000;
 import { startExternals, type ExternalProc } from '../../process/external.js';
 
 interface BootRefs {
@@ -105,7 +109,13 @@ export function useBootSequence(
               const cfg = { ...rewritten, debug: mgr.state.get(svc.name)?.svc.debug };
               await mgr.install(cfg, ci);
               await mgr.start(cfg, ci);
-              const ok = await waitForPort(rewritten.realPort, { timeout: 45000 });
+              // Un servicio con `--inspect-brk` no escucha hasta que alguien se
+        // acopla y lo reanuda, y eso puede tardar lo que tarde una persona.
+        // Con 45 s el arranque bajo demanda se declararía fallido y el proxy
+        // destruiría las conexiones en cola.
+        const ok = await waitForPort(rewritten.realPort, {
+          timeout: startsSuspended(cfg) ? SUSPENDED_READY_TIMEOUT_MS : 45000,
+        });
               const st = mgr.state.get(svc.name);
               if (st) {
                 st.status = ok ? 'running' : 'timeout';

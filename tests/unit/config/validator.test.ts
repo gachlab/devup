@@ -14,6 +14,40 @@ const minimal = (): DevStackConfig => ({
   ],
 });
 
+describe('validateConfig: debug', () => {
+  const withDebug = (debug: unknown, cmd = 'node'): DevStackConfig => ({
+    name: 'Test',
+    services: [{ name: 'api-a', cwd: '.', cmd, args: [], type: 'api', port: 3000, phase: 0, debug } as never],
+  });
+  const debugErrors = (cfg: DevStackConfig) =>
+    validateConfig(cfg, tmp).filter(e => e.field.endsWith('.debug'));
+
+  it('acepta las tres formas válidas', () => {
+    for (const d of [true, false, 9229, {}, { port: 9229 }, { brk: true }, { port: 9229, brk: false }]) {
+      assert.deepEqual(debugErrors(withDebug(d)), [], `rechazó ${JSON.stringify(d)}`);
+    }
+  });
+
+  it('rechaza un puerto imposible, venga como venga', () => {
+    // Un valor malo llega a `--inspect=<n>`, node se niega a arrancar, y la
+    // flag se queda pegada al servicio: cada reinicio falla igual.
+    for (const d of [0, -1, 70000, 1.5, '9229', { port: 0 }, { port: 70000 }, { port: '9229' }]) {
+      assert.equal(debugErrors(withDebug(d)).length, 1, `aceptó ${JSON.stringify(d)}`);
+    }
+  });
+
+  it('rechaza claves y tipos que no existen en la forma objeto', () => {
+    assert.equal(debugErrors(withDebug({ brk: 'yes' })).length, 1);
+    assert.equal(debugErrors(withDebug({ port: 9229, inspect: true })).length, 1);
+    assert.equal(debugErrors(withDebug(null)).length, 1);
+  });
+
+  it('sigue rechazando el inspector fuera de node', () => {
+    assert.equal(debugErrors(withDebug({ brk: true }, 'npx')).length, 1);
+    assert.equal(debugErrors(withDebug(false, 'npx')).length, 0);
+  });
+});
+
 describe('validateConfig', () => {
   it('passes valid config', () => {
     const errors = validateConfig(minimal(), tmp);

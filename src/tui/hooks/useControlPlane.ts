@@ -71,7 +71,7 @@ export function useControlPlane(
             });
           },
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
-          debug: (name, enable, port) => debugService(manager, lazyProxies.current, name, enable, port),
+          debug: (name, enable, port, brk) => debugService(manager, lazyProxies.current, name, enable, port, brk),
           start: (name) => startService(manager, lazyProxies.current, name),
 
           async getStats() {

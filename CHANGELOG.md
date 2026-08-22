@@ -5,6 +5,13 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`debug: { brk: true }`** — start a service with `--inspect-brk`, stopped before its first line, so its startup path can be debugged instead of everything that happens after it. Available in config and through the `debug` RPC (`"brk": true`). `debug` now also accepts an object form, `{ port?, brk? }`; `true` and `<port>` keep working unchanged.
+
+  Two timeouts had to learn about it, and both would have been silent failures: a service stopped on its first line never opens its port, so the 45 s startup deadline put it in `timeout` — a state the health poller then skips for good, meaning the service was never reported healthy again even after the debugger let it run. And a lazy on-demand start gave up after 45 s and destroyed the queued connections. Both now wait for what they are actually waiting for: a person.
+
 ## [0.14.0] — 2026-08-22
 
 ### Fixed
