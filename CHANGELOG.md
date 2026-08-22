@@ -5,6 +5,20 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A contract fixture for the `status` wire shape** (#87). `contract/status-snapshot.json` is generated from `serializeState` itself and ships with the package, covering an always-on service and a lazy one so the `port` / `originalPort` distinction is pinned rather than described in prose.
+
+  The shape is written down twice — here, and by hand in the VS Code extension, which deliberately has no runtime dependency on this package. Nothing kept the two honest: `docs/control-plane.md` described `port` as "from config", the extension believed it, and shipped a release connecting to the wrong port. Renaming a field now fails a golden test here, and clients can assert against the fixture instead of trusting the documentation:
+
+  ```js
+  import golden from '@gachlab/devup/contract/status-snapshot.json' with { type: 'json' };
+  ```
+
+  Regenerate deliberately with `UPDATE_CONTRACT=1 npm run test:unit` and treat the diff as an API change.
+
 ## [0.13.0] — 2026-08-21
 
 Control-plane gaps found while building the VS Code extension against it. All additive.

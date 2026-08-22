@@ -214,6 +214,31 @@ Per-service CPU and memory, plus host totals.
 
 `loadAvg1` and `cpuPercent` are **absent on Windows**, where `os.loadavg()` is hardcoded to zero and reporting it would look like an idle machine. Added in 0.13.0. `cpuPercent` is the load as a share of `cpuCores`, and can exceed 100.
 
+## The contract fixture
+
+The snapshot shape is written down twice: by `serializeState` here, and by hand
+in [gachlab/devup-vscode](https://github.com/gachlab/devup-vscode), which
+deliberately does not depend on this package at runtime. Nothing used to keep
+the two honest — this document once described `port` as "from config", the
+extension believed it, and shipped a release connecting to the wrong port.
+
+`contract/status-snapshot.json` is **generated from `serializeState` itself**
+and ships with the package. It covers an always-on service and a lazy one, so
+the `port` / `originalPort` distinction is pinned rather than described.
+
+- Renaming a field here fails a golden test in this repo.
+- Clients can assert against the fixture instead of trusting prose:
+
+  ```js
+  import golden from '@gachlab/devup/contract/status-snapshot.json' with { type: 'json' };
+  ```
+
+Regenerate deliberately, and treat the diff as an API change:
+
+```bash
+UPDATE_CONTRACT=1 npm run test:unit
+```
+
 ## What's NOT there
 
 By design:

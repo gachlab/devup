@@ -12,13 +12,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./contract/status-snapshot.json": "./contract/status-snapshot.json"
   },
   "files": [
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "contract"
   ],
   "keywords": [
     "dev",
