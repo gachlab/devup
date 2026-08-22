@@ -85,6 +85,24 @@ describe('ProcessManager.remove', () => {
     await new Promise(r => setTimeout(r, 100));
   });
 
+  it('cancels a queued auto-restart', { timeout: 6000 }, async () => {
+    // spawner.start re-inserts into `state`, so a timer surviving removal
+    // resurrects the service after clients were told it was gone — and leaves
+    // the daemon running a process that is no longer in the config.
+    const { mgr } = makeManager();
+    const svc = makeSvc({ args: ['-e', 'process.exit(1)'] });
+    await mgr.start(svc, 0);
+    await new Promise(r => setTimeout(r, 400)); // let it crash and queue a restart
+
+    const crashed = mgr.state.get('test-svc');
+    assert.ok(crashed && crashed.restarts > 0, 'expected an auto-restart to be queued');
+
+    mgr.remove('test-svc');
+    await new Promise(r => setTimeout(r, 2600)); // past the 2 s first backoff
+
+    assert.equal(mgr.state.has('test-svc'), false, 'the queued restart brought it back');
+  });
+
   it('is a no-op for a service it does not have', () => {
     const { mgr, removed } = makeManager();
     mgr.remove('never-existed');

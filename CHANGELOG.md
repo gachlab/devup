@@ -16,7 +16,12 @@ Control-plane gaps found while building the VS Code extension against it. All ad
 
 ### Fixed
 
-- **Removal now releases what the service owned.** `remove()` dropped the state entry and left the rest behind: the `HealthPoller` kept its failure streak, so a service re-added under the same name inherited it and could trip the threshold on its first probe; and the **lazy proxy stayed listening on the public port**, so a single connection re-entered the on-demand start path and resurrected a service every client had just been told was gone. Both are released now, and the proxy goes down *before* the announcement rather than after.
+- **Removal now releases what the service owned.** `remove()` dropped the state entry and left everything else running, so a removed service could come back three different ways:
+  - the **lazy proxy kept listening on the public port**, and one connection re-entered the on-demand start path;
+  - a **queued auto-restart** fired its 2/4/8 s timer and `spawner.start` re-inserted the service into the state map, leaving the daemon running a process no longer in the config;
+  - a **health probe still in flight** wrote its result afterwards, pushing a `status` frame *after* the `removed` one.
+
+  All three are closed, and the lazy proxy is torn down *before* the announcement rather than after. The `HealthPoller` failure streak and the per-name CPU baseline are also cleared — the streak would be inherited by a service re-added under the same name and could trip the threshold on its first probe, and the stale CPU baseline made the next `stats` sample report a large negative percentage.
 - **`status.follow` now sends its initial snapshot even when empty** — previously suppressed, leaving a client unable to tell "connected, nothing configured" from "still waiting".
 - **`devup ctl status --follow` no longer goes silent on a removal.** The new `removed` frames carry names, not service rows, and the handler read `.name` off a string. The resulting `TypeError` was swallowed by the client's frame loop, so the CLI printed nothing further and kept listing the departed service — the exact failure the new event was added to prevent.
 - **The stream client no longer swallows consumer errors.** Its `try/catch` wrapped both `JSON.parse` and the `onFrame` callback, so a bug in a frame handler was indistinguishable from a malformed frame. Only the parse is guarded now.

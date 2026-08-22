@@ -85,6 +85,9 @@ export function openStream(
     } catch {
       return; // malformed frame — skip it
     }
+    // `null` parses fine but is not a frame; reading .error off it would throw
+    // out of this listener and take the process down.
+    if (!msg || typeof msg !== 'object') return;
     if (!ackDone) {
       ackDone = true;
       if (msg.error) { onError?.(new Error(msg.error.message ?? String(msg.error))); c.destroy(); }

@@ -40,6 +40,10 @@ export class HealthPoller {
         continue;
       }
       const result = await checkHealth(st.svc.port, st.svc.healthCheck);
+      // The probe can outlive the service: a config reload during it removes
+      // the entry, and writing the result would push a `status` frame *after*
+      // the `removed` one, re-adding the service in every client.
+      if (this.state.get(name) !== st) continue;
       const threshold = st.svc.healthCheck?.failureThreshold ?? 2;
       const prev = st.health;
 

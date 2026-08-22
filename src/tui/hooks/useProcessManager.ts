@@ -69,6 +69,7 @@ export function useProcessManager(
         },
         onServiceRemoved: (name) => {
           releaseLazyProxy(lazyProxies?.current, name);
+          prevCpu.current?.delete(name);
           removedBus.current.emit({ name });
           setStates(new Map(mgr.state));
         },

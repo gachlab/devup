@@ -93,17 +93,6 @@ Fields per service mirror `ProcessState`:
 - `pid`: OS pid, `null` if not currently running
 - `startedAt`: epoch ms of the current spawn, `null` if not running
 
-### `start`
-
-Start a stopped service. No-op when it is already running.
-
-```json
-{ "method": "start", "params": { "svc": "app-api" } }
-→ { "result": { "ok": true } }
-```
-
-Errors with `unknown service: <name>` when the name is not in the current set.
-
 ### `restart`
 
 ```json
