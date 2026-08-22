@@ -15,13 +15,19 @@ export interface LazyProxy {
   server: net.Server;
   resetTimer: () => void;
   destroy: () => void;
+  /** Bring the service up as a connection would, and report whether it is
+   *  reachable. Callers outside the proxy — the control plane's `start` — must
+   *  go through this rather than spawning directly: the proxy's own
+   *  `serviceReady` / in-flight flags would otherwise stay false and the next
+   *  request would start a *second* process. Concurrent calls share one start. */
+  ensureStarted: () => Promise<boolean>;
 }
 
 export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
   const { listenPort, targetPort, timeoutMin, onDemandStart, onIdleStop, isAlive, onLog } = opts;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let lastActivity = Date.now();
-  let starting = false;
+  let startInFlight: Promise<boolean> | null = null;
   let serviceReady = false;
   let pendingConns: net.Socket[] = [];
   const activeConns = new Set<net.Socket>();
@@ -69,6 +75,29 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
     });
   }
 
+  /** The on-demand start, shared by an incoming connection and by an explicit
+   *  request from the control plane. One start at a time: later callers await
+   *  the in-flight one instead of spawning again. */
+  async function ensureStarted(): Promise<boolean> {
+    if (serviceReady && isAlive()) return true;
+    if (!startInFlight) {
+      startInFlight = (async () => {
+        onLog?.('⚡ on-demand start');
+        let ok = false;
+        try {
+          await onDemandStart();
+          ok = await waitForPort(targetPort, { timeout: 45000, interval: 500 });
+          if (ok) serviceReady = true;
+          else onLog?.('⚠ timeout waiting for service');
+        } catch (e: unknown) {
+          onLog?.(`❌ start failed: ${(e as Error).message}`);
+        }
+        return ok;
+      })().finally(() => { startInFlight = null; });
+    }
+    return startInFlight;
+  }
+
   async function handleConnection(client: net.Socket) {
     bumpActivity();
     client.on('error', () => {}); // Prevent uncaught ECONNRESET
@@ -81,20 +110,7 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
     pendingConns.push(client);
     client.on('close', () => { pendingConns = pendingConns.filter(s => s !== client); });
 
-    if (starting) return;
-    starting = true;
-
-    onLog?.('⚡ on-demand start');
-    let ok = false;
-    try {
-      await onDemandStart();
-      ok = await waitForPort(targetPort, { timeout: 45000, interval: 500 });
-      if (ok) serviceReady = true;
-      else onLog?.('⚠ timeout waiting for service');
-    } catch (e: unknown) {
-      onLog?.(`❌ start failed: ${(e as Error).message}`);
-    }
-    starting = false;
+    const ok = await ensureStarted();
 
     const conns = pendingConns.splice(0);
     if (!ok) {
@@ -115,6 +131,7 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
   return {
     server,
     resetTimer: bumpActivity,
+    ensureStarted,
     destroy: () => {
       if (idleTimer) clearTimeout(idleTimer);
       pendingConns.forEach(s => s.destroy());

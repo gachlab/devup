@@ -4,6 +4,7 @@ import net from 'node:net';
 import { ProcessManager } from '../../../src/process/manager.js';
 import type { Platform } from '../../../src/platform/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
+import { isRunning } from '../../../src/process/liveness.js';
 
 // Use a real killTree so spawned processes actually die
 function testPlatform(): Platform {
@@ -384,5 +385,27 @@ describe('ProcessManager', () => {
     assert.equal(st.status, 'crashed', 'service should be marked crashed before spawn');
     assert.equal(st.pid, null);
     assert.ok(logs.some(l => l.includes('missing watch paths') && l.includes('this/does/not/exist')));
+  });
+});
+
+describe('isRunning', () => {
+  it('is false for a stopped service, whose pid outlives the process', { timeout: 4000 }, async () => {
+    // Spawner's close handler returns early on an intentional stop and
+    // otherwise only touches status/health, so `pid` stays set. Anything
+    // gating on `st.pid` becomes a permanent no-op after the first stop.
+    const { mgr } = makeManager();
+    await mgr.start(makeSvc(), 0);
+    assert.equal(isRunning(mgr.state.get('test-svc')), true);
+
+    mgr.stop('test-svc');
+    await new Promise(r => setTimeout(r, 300));
+
+    const st = mgr.state.get('test-svc');
+    assert.ok(st!.pid, 'the dead pid is still there — that is the trap');
+    assert.equal(isRunning(st), false);
+  });
+
+  it('is false for a service that was never started, and for none at all', () => {
+    assert.equal(isRunning(undefined), false);
   });
 });

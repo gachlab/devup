@@ -67,6 +67,8 @@ export interface RpcContext {
    *  unsubscribe function. Without this a client can only ever add or update,
    *  so a removed service lingers until it reconnects. */
   watchRemoved(onRemoved: (name: string) => void): () => void;
+  /** Start a stopped service. No-op when it is already running. */
+  start(name: string): Promise<void>;
   /** Per-service CPU/mem stats + system totals. */
   getStats(): Promise<StatsResult>;
   /** Active proxy configuration, or null when no proxy is running. */
@@ -287,6 +289,11 @@ async function dispatch(
     case 'restart': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
       await ctx.restart(svc);
+      return { ok: true };
+    }
+    case 'start': {
+      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+      await ctx.start(svc);
       return { ok: true };
     }
     case 'stop': {

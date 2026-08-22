@@ -14,6 +14,7 @@ import { systemLoad } from '../utils/system-load.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
+import { isRunning } from '../process/liveness.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import { watchConfig } from './config-watcher.js';
 import { findConfigFile } from '../config/loader.js';
@@ -195,6 +196,22 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         onUpdate(name, state);
       }),
       watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+      async start(name) {
+        const st = mgr.state.get(name);
+        if (!st) throw new Error(`unknown service: ${name}`);
+        // Liveness, not st.pid: a stopped service keeps a dead pid, so gating
+        // on it would make this a permanent no-op for the one case it exists for.
+        if (isRunning(st)) return;
+        const proxy = lazyProxies.get(name);
+        if (proxy) {
+          // Through the proxy, never around it: spawning directly leaves its
+          // serviceReady flag false and the next request starts a second process.
+          await proxy.ensureStarted();
+          return;
+        }
+        await mgr.install(st.svc, st.colorIdx);
+        await mgr.start(st.svc, st.colorIdx);
+      },
       async getStats() {
         const pids: number[] = [];
         const pidToName = new Map<number, string>();
