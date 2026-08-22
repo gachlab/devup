@@ -49,6 +49,52 @@ function makeManager(platform?: Platform) {
   return { mgr, logs, removed, states, platform: p };
 }
 
+describe('ProcessManager.start on a port its own process holds', () => {
+  it('leaves the live process alone instead of reporting a crash', { timeout: 6000 }, async () => {
+    // Un `start` sin isRestart sobre un servicio que ya corre — lo que hace el
+    // proxy lazy en `onDemandStart` — encontraba el puerto ocupado por el
+    // proceso propio y lo registraba como crash. Eso reemplaza el estado por
+    // uno con `proc: null`, y a partir de ahí `lifecycle.stop` sale temprano
+    // para siempre: el proceso se queda con el puerto, imparable, el resto de
+    // la sesión.
+    const { mgr } = makeManager();
+    const port = 19881;
+    // `process.exit`, no un setTimeout vacío: un servidor escuchando mantiene
+    // vivo el event loop para siempre, así que sin esto un fallo antes del
+    // `finally` deja el puerto tomado y envenena el resto de la suite.
+    const svc = makeSvc({ port, args: ['-e', `require('net').createServer().listen(${port}); setTimeout(()=>process.exit(0),3000)`] });
+    try {
+      await mgr.start(svc, 0);
+      await new Promise(r => setTimeout(r, 300));
+      const before = mgr.state.get('test-svc');
+      assert.ok(isRunning(before), 'el servicio debería estar corriendo antes del segundo start');
+
+      await mgr.start(svc, 0);
+
+      const after = mgr.state.get('test-svc');
+      assert.equal(after?.status === 'crashed', false, 'no es un crash: el puerto lo tiene su propio proceso');
+      assert.ok(isRunning(after), 'el daemon debe conservar el handle del proceso vivo');
+      assert.equal(after?.proc, before?.proc, 'y debe ser el mismo proceso, no uno nuevo');
+    } finally {
+      mgr.stop('test-svc');
+      await new Promise(r => setTimeout(r, 200));
+    }
+  });
+
+  it('still reports a crash when the port belongs to something else', { timeout: 6000 }, async () => {
+    // La guarda no debe tragarse un conflicto real.
+    const { mgr } = makeManager();
+    const squatter = net.createServer();
+    await new Promise<void>(r => squatter.listen(19877, () => r()));
+    try {
+      await mgr.start(makeSvc({ port: 19877 }), 0);
+      assert.equal(mgr.state.get('test-svc')?.status, 'crashed');
+    } finally {
+      squatter.close();
+    }
+  });
+});
+
 describe('ProcessManager.remove', () => {
   it('drops the service from the state map and announces it', { timeout: 3000 }, async () => {
     const { mgr, removed } = makeManager();

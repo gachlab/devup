@@ -114,6 +114,36 @@ describe('createLazyProxy', () => {
     assert.equal(idleStopped, true);
   });
 
+  it('does not stop a service that is under the inspector', { timeout: 4000 }, async () => {
+    // Un servicio pausado en un breakpoint no recibe tráfico por definición:
+    // leer código y volver son minutos sin una sola conexión. Pararlo ahí mata
+    // la sesión de depuración mientras su dueño la está usando.
+    const listenPort = await findFreePort();
+    let idleStopped = false;
+    let debugging = true;
+
+    const proxy = createLazyProxy({
+      listenPort, targetPort: 19999, timeoutMin: 0.001,
+      onDemandStart: async () => {},
+      onIdleStop: () => { idleStopped = true; },
+      isAlive: () => true,
+      isDebugging: () => debugging,
+    });
+    proxies.push(proxy);
+
+    // Varios periodos de sobra: sin la guarda, el primero ya lo habría parado.
+    await new Promise(r => setTimeout(r, 250));
+    assert.equal(idleStopped, false, 'no debe pararse mientras el inspector está activo');
+
+    // Y cuando deja de estar bajo el inspector vuelve la regla normal. Ojo:
+    // aquí se apaga el flag a mano; en producción `debugPort` sólo se limpia
+    // al apagar el debug o al morir el proceso, porque el inspector de Node
+    // sigue escuchando tras un desacople.
+    debugging = false;
+    await new Promise(r => setTimeout(r, 250));
+    assert.equal(idleStopped, true, 'debe pararse una vez que ya no se depura');
+  });
+
   it('destroy cleans up server', { timeout: 3000 }, async () => {
     const listenPort = await findFreePort();
     const proxy = createLazyProxy({

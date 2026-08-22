@@ -16,6 +16,8 @@ When you launch with lazy mode (the default if `lazy` is set in your config), fo
 4. The TCP proxy keeps tunnelling traffic between the public port and the real port.
 5. After `timeout` minutes with no active connections AND no recent activity, the service shuts down and returns to idle — the proxy stays bound, ready for the next connection.
 
+   **Exception: a service under the debugger never idle-stops.** A service paused on a breakpoint receives no traffic by definition, and stopping it would end the debugging session. Note that this pins the service up until the debug flag is turned off (`devup ctl debug <svc> --off`) or the process dies: Node keeps its inspector listening after a debugger detaches, so there is no signal for "nobody is debugging me any more".
+
 ```
               Client                          Devup proxy                     Real service
   --:3000 ─────────────────────────────────►  :3000  ────────────────────►   :13000
