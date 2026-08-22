@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Two timeouts had to learn about it, and both would have been silent failures: a service stopped on its first line never opens its port, so the 45 s startup deadline put it in `timeout` — a state the health poller then skips for good, meaning the service was never reported healthy again even after the debugger let it run. And a lazy on-demand start gave up after 45 s and destroyed the queued connections. Both now wait for what they are actually waiting for: a person.
 
+### Fixed
+- **El reaper de inactividad ya no para un servicio que está bajo el inspector** (#95). Un servicio pausado en un breakpoint no recibe tráfico por definición, así que el modo lazy lo apagaba a los diez minutos y se llevaba por delante la sesión de depuración. Ojo al alcance: esto **fija** el servicio arriba hasta que se apague el flag de debug — el inspector de Node sigue escuchando tras un desacople, así que no hay señal de "ya nadie me depura". Documentado en [lazy mode](docs/lazy-mode.md).
+- **Un puerto ocupado por el propio proceso del servicio ya no se reporta como crash** (#96). `Spawner.start` no distinguía "otro programa tiene mi puerto" de "mi proceso, que sigue vivo, lo tiene", y el segundo caso era peor que no hacer nada: registrar el crash reemplazaba el estado por uno con `proc: null`, y a partir de ahí `lifecycle.stop` salía temprano para siempre — el proceso se quedaba con el puerto, imparable, el resto de la sesión. Un stop en curso también cuenta como vivo (`stop()` sólo manda SIGTERM), así que ahora se espera a que drene en vez de declararlo caído.
+
 ## [0.14.0] — 2026-08-22
 
 ### Fixed
