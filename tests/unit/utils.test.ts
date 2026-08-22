@@ -6,6 +6,7 @@ import {
   detectLogLevel, redactSecrets, nextRamBannerVisibility,
 } from '../../src/utils.js';
 import { systemLoad } from '../../src/utils/system-load.js';
+import { parseDebugSpec, startsSuspended } from '../../src/utils/process-args.js';
 
 describe('nextRamBannerVisibility', () => {
   it('turns on at or above the high watermark', () => {
@@ -196,6 +197,59 @@ describe('buildProcessArgs', () => {
   it('no maxMem returns args as-is', () => {
     const svc = { name: 'a', cwd: '.', cmd: 'node', args: ['index.js'], type: 'api' as const, port: 3000, phase: 0 };
     assert.deepEqual(buildProcessArgs(svc), ['index.js']);
+  });
+});
+
+describe('buildProcessArgs con debug', () => {
+  const node = (debug: unknown) => ({
+    name: 'a', cwd: '.', cmd: 'node', args: ['index.js'],
+    type: 'api' as const, port: 3000, phase: 0, debug,
+  } as Parameters<typeof buildProcessArgs>[0]);
+
+  it('las tres formas cortas significan lo mismo', () => {
+    assert.deepEqual(buildProcessArgs(node(true)), ['--inspect=0', 'index.js']);
+    assert.deepEqual(buildProcessArgs(node(9229)), ['--inspect=9229', 'index.js']);
+    assert.deepEqual(buildProcessArgs(node({ port: 9229 })), ['--inspect=9229', 'index.js']);
+  });
+
+  it('brk cambia la flag, no el puerto', () => {
+    // --inspect-brk detiene el servicio antes de su primera línea; sin esto no
+    // hay forma de depurar el arranque.
+    assert.deepEqual(buildProcessArgs(node({ brk: true })), ['--inspect-brk=0', 'index.js']);
+    assert.deepEqual(buildProcessArgs(node({ port: 9229, brk: true })), ['--inspect-brk=9229', 'index.js']);
+  });
+
+  it('sin debug no mete flags de inspector', () => {
+    assert.deepEqual(buildProcessArgs(node(undefined)), ['index.js']);
+    assert.deepEqual(buildProcessArgs(node(false)), ['index.js']);
+    assert.deepEqual(buildProcessArgs(node({ brk: false })), ['--inspect=0', 'index.js']);
+  });
+});
+
+describe('parseDebugSpec y startsSuspended', () => {
+  const svc = (debug: unknown, cmd = 'node') => ({
+    name: 'a', cwd: '.', cmd, args: [], type: 'api' as const, port: 3000, phase: 0, debug,
+  } as Parameters<typeof startsSuspended>[0]);
+
+  it('normaliza las tres formas', () => {
+    assert.deepEqual(parseDebugSpec(true), { port: 0, brk: false });
+    assert.deepEqual(parseDebugSpec(9229), { port: 9229, brk: false });
+    assert.deepEqual(parseDebugSpec({ port: 9229, brk: true }), { port: 9229, brk: true });
+    assert.deepEqual(parseDebugSpec({}), { port: 0, brk: false });
+    assert.equal(parseDebugSpec(undefined), null);
+    assert.equal(parseDebugSpec(false), null);
+  });
+
+  it('sólo un node con brk arranca detenido', () => {
+    // De esto dependen los timeouts que se suspenden, así que un falso
+    // positivo dejaría un servicio sin vigilancia de arranque.
+    assert.equal(startsSuspended(svc({ brk: true })), true);
+    assert.equal(startsSuspended(svc(true)), false);
+    assert.equal(startsSuspended(svc(9229)), false);
+    assert.equal(startsSuspended(svc(undefined)), false);
+    // El inspector no significa nada fuera de node, y el validador ya lo
+    // rechaza — pero esta función no debe fiarse de eso.
+    assert.equal(startsSuspended(svc({ brk: true }, 'npx')), false);
   });
 });
 

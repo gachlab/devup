@@ -2,6 +2,7 @@ import type { ProcessState } from './types.js';
 import type { ServiceConfig } from '../config/types.js';
 import { isRunning, waitForExit } from './liveness.js';
 import { waitForPort } from './health.js';
+import { startsSuspended } from '../utils/process-args.js';
 
 /** How long to let a service finish a graceful shutdown before giving up. */
 const STOP_GRACE_MS = 5_000;
@@ -62,6 +63,12 @@ export async function startService(
   // The spawner returns normally after recording a crash — failed pre-build,
   // missing watch path, port already taken — so "no exception" is not success.
   if (!after || after.status === 'crashed') return false;
+  // A service started with `--inspect-brk` is stopped before its first line
+  // and will not open its port until a person attaches and resumes it. Waiting
+  // for the port here would report failure after 45 s on a service that
+  // started exactly as asked — and `debugService` would then roll the debug
+  // flag back, leaving the process suspended while state says debugging is off.
+  if (startsSuspended(after.svc)) return true;
   // And it returns as soon as the child is spawned, so for an API "up" means
   // the port answers, the same bar `bootNormal` uses. A web service has no
   // equivalent signal at this level; boot treats it as started too.

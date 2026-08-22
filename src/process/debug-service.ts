@@ -34,6 +34,7 @@ export async function debugService(
   name: string,
   enable: boolean,
   inspectPort?: number,
+  brk = false,
 ): Promise<DebugResult> {
   const st = host.state.get(name);
   if (!st) throw new Error(`unknown service: ${name}`);
@@ -45,7 +46,10 @@ export async function debugService(
   }
 
   const before = st.svc;
-  st.svc = { ...st.svc, debug: enable ? (inspectPort ?? true) : undefined };
+  // The object form only when it says something the shorthands cannot: `brk`.
+  // Keeping `true` / `<port>` otherwise leaves the common config untouched.
+  const debug = brk ? { port: inspectPort, brk: true } : (inspectPort ?? true);
+  st.svc = { ...st.svc, debug: enable ? debug : undefined };
   // Stale the moment the process restarts; the new one announces its own.
   st.debugPort = null;
 

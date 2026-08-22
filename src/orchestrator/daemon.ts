@@ -15,6 +15,11 @@ import { startSocketServer, type SocketServerHandle } from '../control-plane/soc
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
+import { startsSuspended } from '../utils/process-args.js';
+
+/** How long an on-demand start waits for a service that begins suspended under
+ *  `--inspect-brk`: as long as it takes someone to attach and hit resume. */
+const SUSPENDED_READY_TIMEOUT_MS = 10 * 60_000;
 import { watchConfig } from './config-watcher.js';
 import { findConfigFile } from '../config/loader.js';
 
@@ -197,7 +202,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         onUpdate(name, state);
       }),
       watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
-      debug: (name, enable, port) => debugService(mgr, lazyProxies, name, enable, port),
+      debug: (name, enable, port, brk) => debugService(mgr, lazyProxies, name, enable, port, brk),
       start: (name) => startService(mgr, lazyProxies, name),
 
       async getStats() {
@@ -354,9 +359,22 @@ async function bootLazy(
         const cfg = { ...rewritten, debug: mgr.state.get(svc.name)?.svc.debug };
         await mgr.install(cfg, ci);
         await mgr.start(cfg, ci);
-        const ok = await waitForPort(rewritten.realPort, { timeout: 45000 });
+        // Un servicio con `--inspect-brk` no escucha hasta que alguien se acopla
+        // y lo reanuda, y eso tarda lo que tarde una persona.
+        const suspended = startsSuspended(cfg);
+        const ok = await waitForPort(rewritten.realPort, {
+          timeout: suspended ? SUSPENDED_READY_TIMEOUT_MS : 45000,
+        });
         const st = mgr.state.get(svc.name);
-        if (st) { st.status = ok ? 'running' : 'timeout'; if (ok) st.health = 'up'; }
+        if (st) {
+          if (ok) { st.status = 'running'; st.health = 'up'; }
+          // `timeout` es un estado del que no se vuelve: el health poller
+          // salta cualquier servicio que esté en él, así que un arranque
+          // suspendido que tarde más de la cuenta quedaría marcado como
+          // caído para siempre aunque luego sirva tráfico. Se queda en
+          // `starting`, que es lo que de verdad es.
+          else if (!suspended) st.status = 'timeout';
+        }
       },
       onIdleStop: () => {
         mgr.stop(svc.name);

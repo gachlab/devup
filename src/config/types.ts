@@ -29,8 +29,25 @@ export interface ServiceConfig {
    *  its startup line, so a client can attach without guessing.
    *
    *  A number pins the port instead, for a launch config that has to be
-   *  written down. Only applies when `cmd` is `node`. */
-  debug?: boolean | number;
+   *  written down. The object form adds `brk`, which stops the service on its
+   *  first line so the startup path can be debugged too. Only applies when
+   *  `cmd` is `node`. */
+  debug?: boolean | number | DebugOptions;
+}
+
+export interface DebugOptions {
+  /** Inspector port. Omitted means `0`: the OS picks, and the choice is
+   *  reported back as `debugPort` in the status snapshot. */
+  port?: number;
+  /** Start with `--inspect-brk`, stopping before the first line of the
+   *  service's own code.
+   *
+   *  The service does **not** listen on its own port until a debugger attaches
+   *  and resumes it, so devup suspends the startup timeout for it — otherwise
+   *  the service lands in `timeout`, a state the health poller then skips for
+   *  good. In lazy mode the on-demand start waits far longer for the same
+   *  reason. */
+  brk?: boolean;
 }
 
 export interface HealthCheckConfig {

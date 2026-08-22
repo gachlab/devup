@@ -5,6 +5,19 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`debug: { brk: true }`** — start a service with `--inspect-brk`, stopped before its first line, so its startup path can be debugged instead of everything that happens after it. Available in config and through the `debug` RPC (`"brk": true`). `debug` now also accepts an object form, `{ port?, brk? }`; `true` and `<port>` keep working unchanged.
+
+  **Tres** timeouts tuvieron que aprender de esto, y los tres eran fallos silenciosos: un servicio detenido en su primera línea no abre su puerto hasta que alguien se acopla, así que (1) el `startupTimeout` de 45 s lo dejaba en `timeout`, estado del que el health poller ya no lo saca nunca; (2) el arranque bajo demanda de lazy se rendía a los 45 s y destruía las conexiones en cola; y (3) `startService` esperaba el puerto otros 45 s y devolvía fallo, con lo que el propio RPC `debug` deshacía el flag y contestaba "no volvió a levantar" — sobre un proceso que estaba corriendo, suspendido, exactamente como se le pidió. Ese tercero hacía la función inservible justo para los servicios `type: 'api'`, que son su público.
+
+  También: `devup ctl debug <svc> --brk`.
+
+### Fixed
+- **El reaper de inactividad ya no para un servicio que está bajo el inspector** (#95). Un servicio pausado en un breakpoint no recibe tráfico por definición, así que el modo lazy lo apagaba a los diez minutos y se llevaba por delante la sesión de depuración. Ojo al alcance: esto **fija** el servicio arriba hasta que se apague el flag de debug — el inspector de Node sigue escuchando tras un desacople, así que no hay señal de "ya nadie me depura". Documentado en [lazy mode](docs/lazy-mode.md).
+- **Un puerto ocupado por el propio proceso del servicio ya no se reporta como crash** (#96). `Spawner.start` no distinguía "otro programa tiene mi puerto" de "mi proceso, que sigue vivo, lo tiene", y el segundo caso era peor que no hacer nada: registrar el crash reemplazaba el estado por uno con `proc: null`, y a partir de ahí `lifecycle.stop` salía temprano para siempre — el proceso se quedaba con el puerto, imparable, el resto de la sesión. Un stop en curso también cuenta como vivo (`stop()` sólo manda SIGTERM), así que ahora se espera a que drene en vez de declararlo caído.
+
 ## [0.14.0] — 2026-08-22
 
 ### Fixed
