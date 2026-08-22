@@ -28,7 +28,6 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
-    start: async () => {},
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -99,40 +98,6 @@ describe('socket-server', { skip: !isUnix }, () => {
         assert.equal(res.id, 1);
         assert.equal(res.result.ok, true);
         assert.ok(typeof res.result.ts === 'number');
-      } finally {
-        await handle.close();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('start forwards the service name to the context', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
-    const path = join(dir, 's.sock');
-    try {
-      let started: string | null = null;
-      const handle = await startSocketServer('s', noopCtx({ start: async (n) => { started = n; } }), { path });
-      try {
-        const res = await rpcCall(path, { id: 'x', method: 'start', params: { svc: 'api' } });
-        assert.deepEqual(res.result, { ok: true });
-        assert.equal(started, 'api');
-      } finally {
-        await handle.close();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('start rejects a missing svc param', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
-    const path = join(dir, 's.sock');
-    try {
-      const handle = await startSocketServer('s', noopCtx(), { path });
-      try {
-        const res = await rpcCall(path, { id: 'x', method: 'start', params: {} });
-        assert.ok(res.error, 'expected an error for a missing svc');
       } finally {
         await handle.close();
       }
