@@ -31,6 +31,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
+    start: async () => {},
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -160,6 +161,36 @@ describe('runCtl', { skip: !isUnix }, () => {
       assert.ok(Array.isArray(parsed));
       assert.equal(parsed[0].name, 'api');
     });
+  });
+
+  it('start sends rpc and prints confirmation', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
+    const path = join(dir, 's.sock');
+    try {
+      let started: string | null = null;
+      const handle = await startSocketServer('t', noopCtx({ start: async (n) => { started = n; } }), { path });
+      const lines: string[] = [];
+      try {
+        const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+        assert.equal(code, 0);
+        assert.equal(started, 'api');
+        assert.ok(lines.some(l => l.includes('api')), JSON.stringify(lines));
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('start without a service name returns 1 with usage', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('t', noopCtx(), { path });
+      const lines: string[] = [];
+      try {
+        const code = await runCtl(['start'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+        assert.equal(code, 1);
+        assert.ok(lines.some(l => l.includes('usage')), JSON.stringify(lines));
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('stop sends rpc and prints confirmation', async () => {

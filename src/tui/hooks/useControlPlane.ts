@@ -11,6 +11,8 @@ import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 import { calcCpuPercent } from '../../utils.js';
 import { systemLoad } from '../../utils/system-load.js';
+import { isRunning } from '../../process/liveness.js';
+import type { LazyProxy } from '../../lazy/proxy.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -25,6 +27,7 @@ export function useControlPlane(
   logBus: Broadcaster<{ svc: string; text: string }>,
   stateBus: Broadcaster<{ name: string; state: ProcessState }>,
   removedBus: Broadcaster<{ name: string }>,
+  lazyProxies: React.RefObject<Map<string, LazyProxy>>,
   platform: Platform,
   proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
   profiles: Record<string, string[]>,
@@ -67,6 +70,15 @@ export function useControlPlane(
             });
           },
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+          async start(name) {
+            const st = manager.state.get(name);
+            if (!st) throw new Error(`unknown service: ${name}`);
+            if (isRunning(st)) return;
+            const proxy = lazyProxies.current?.get(name);
+            if (proxy) { await proxy.ensureStarted(); return; }
+            await manager.install(st.svc, st.colorIdx);
+            await manager.start(st.svc, st.colorIdx);
+          },
           async getStats() {
             const pids: number[] = [];
             const pidToName = new Map<number, string>();
@@ -117,6 +129,6 @@ export function useControlPlane(
       }
     })();
     return () => { void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, platform, proxy, profiles]);
+  }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, lazyProxies, platform, proxy, profiles]);
   return handleRef;
 }

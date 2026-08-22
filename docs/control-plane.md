@@ -105,6 +105,24 @@ Fields per service mirror `ProcessState`:
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
 
+### `start`
+
+Start a stopped service. No-op when it is already running.
+
+```json
+{ "method": "start", "params": { "svc": "app-api" } }
+→ { "result": { "ok": true } }
+```
+
+Errors with `unknown service: <name>` when the name is not in the current set.
+
+Two details worth knowing:
+
+- **Liveness is checked on the process, not on `pid`.** A stopped or crashed service keeps a dead `pid`, so a `pid`-based guard would make this a permanent no-op.
+- **A lazy service is started through its proxy**, not around it. Spawning it directly leaves the proxy's readiness flags false, and the next request to the public port would start a *second* process.
+
+Added in 0.14.0.
+
 ### `restart`
 
 ```json

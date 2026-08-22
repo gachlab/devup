@@ -200,6 +200,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  ping                         Check if devup is running');
     out('  status [--follow]            Service snapshot, or live updates');
     out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
+    out('  start <svc>                  Start a stopped service');
     out('  restart <svc>                Restart a service');
     out('  stop <svc>                   Stop a service');
     return 0;
@@ -268,6 +269,14 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
         if (!res.services.length) { out('(no services)'); return 0; }
         fmtStatus(res.services, out);
       }
+      return 0;
+    }
+
+    if (method === 'start') {
+      const svc = argv[1];
+      if (!svc) { out('usage: devup ctl start <service>'); return 1; }
+      await sendRpc(socketPath, 'start', { svc });
+      out(`✓ start sent to ${svc}`);
       return 0;
     }
 
@@ -407,6 +416,7 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('  ping                         Check if devup is running');
     out('  status [--follow]            Service snapshot, or live state-change stream');
     out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
+    out('  start <svc>                  Start the named service if stopped');
     out('  restart <svc>                Restart the named service');
     out('  stop <svc>                   Stop the named service');
     out('');
