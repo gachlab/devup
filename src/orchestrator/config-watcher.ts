@@ -34,9 +34,16 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       manager.remove(name);
     }
     let colorIdx = currentSvcs.length;
-    for (const { next } of diff.changed) {
-      const prev = manager.state.get(next.name);
+    for (const { next: fileSvc } of diff.changed) {
+      const prev = manager.state.get(fileSvc.name);
       const ci = prev?.colorIdx ?? colorIdx++;
+      // A runtime `devup ctl debug` toggle lives on the service, not in the
+      // file, so a reload would silently drop it — disconnecting an attached
+      // debugger. The file wins when it says something; otherwise the toggle
+      // survives, which is what the control plane promises.
+      const next = fileSvc.debug === undefined && prev?.svc.debug !== undefined
+        ? { ...fileSvc, debug: prev.svc.debug }
+        : fileSvc;
       manager.stop(next.name);
       // Brief pause so the previous process releases its port before the new one starts.
       await new Promise(r => setTimeout(r, 800));

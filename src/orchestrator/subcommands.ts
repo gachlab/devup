@@ -201,7 +201,8 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  status [--follow]            Service snapshot, or live updates');
     out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
     out('  start <svc>                  Start a stopped service');
-    out('  debug <svc> [--off] [--port n] Restart a service under the Node inspector');
+    out('  debug <svc> [--off] [--port n]');
+    out('                               Restart a service under the Node inspector');
     out('  restart <svc>                Restart a service');
     out('  stop <svc>                   Stop a service');
     return 0;
@@ -274,7 +275,9 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     }
 
     if (method === 'debug') {
-      const svc = argv[1];
+      // Positionally, `ctl debug --off api` would send svc="--off". The logs
+      // branch already scans past flags for the same reason.
+      const svc = argv.find((a, i) => i > 0 && !a.startsWith('-'));
       if (!svc) { out('usage: devup ctl debug <service> [--off] [--port <n>]'); return 1; }
       const enable = !argv.includes('--off');
       const portIdx = argv.indexOf('--port');
@@ -447,7 +450,8 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('  status [--follow]            Service snapshot, or live state-change stream');
     out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
     out('  start <svc>                  Start the named service if stopped');
-    out('  debug <svc> [--off] [--port n] Restart the named service under the Node inspector');
+    out('  debug <svc> [--off] [--port n]');
+    out('                               Restart the named service under the Node inspector');
     out('  restart <svc>                Restart the named service');
     out('  stop <svc>                   Stop the named service');
     out('');

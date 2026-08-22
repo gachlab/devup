@@ -304,10 +304,17 @@ async function dispatch(
     }
     case 'debug': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-      const enable = params['enable'] === undefined ? true : params['enable'] === true;
+      const rawEnable = params['enable'];
+      if (rawEnable !== undefined && typeof rawEnable !== 'boolean') {
+        throw new Error('param "enable" must be a boolean');
+      }
       const rawPort = params['port'];
-      const port = typeof rawPort === 'number' ? rawPort : undefined;
-      return await ctx.debug(svc, enable, port);
+      // Discarding a bad value silently would hand a programmatic client an
+      // OS-chosen port while it believes it pinned one.
+      if (rawPort !== undefined && rawPort !== null && typeof rawPort !== 'number') {
+        throw new Error('param "port" must be a number');
+      }
+      return await ctx.debug(svc, rawEnable ?? true, typeof rawPort === 'number' ? rawPort : undefined);
     }
     case 'stop': {
       const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
