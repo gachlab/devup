@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hot reload no longer restarts every lazy service on every save** (#93). `applyConfigChange` diffed the *live* config against the file, but a lazy service's live config carries the port rewrite — `13002` in state against `3002` in the file — so it could never compare equal. Every save stopped and restarted every lazy service, each with an 800 ms pause, **and restarted it from the file config**: onto the public port its own proxy was already holding, while `onDemandStart` polled the internal port for 45 s and the next request hung.
+
+  The reload now diffs file against file, with the last loaded config as the baseline. A runtime `devup ctl debug` toggle is carried over, since it lives on the service rather than in the file; the file wins when it says something.
+
 ### Added
 
 - **Debugging** (#84), both declared and on demand.

@@ -51,14 +51,24 @@ export async function debugService(
 
   host.stop(name);
   const ok = await startService(host, lazyProxies, name);
-  if (!ok) {
+  // Only when enabling. Turning the flag *off* is never what makes a service
+  // unstartable, and rolling back there would re-arm the inspector the user
+  // just disabled — the next restart would bring `--inspect` back.
+  if (!ok && enable) {
     // Leaving the flag on a service that would not start makes it unstartable:
-    // every auto-restart and every later `ctl start` reuses the same bad value
-    // — a port already in use, most likely — until someone thinks to run
-    // `ctl debug --off`.
+    // every later `ctl start` reuses the same bad value — a port already in
+    // use, most likely — until someone thinks to run `ctl debug --off`.
+    //
+    // The queued auto-restart has to go with it: Restarter re-spawns the
+    // config captured at crash time, so it would keep retrying with the bad
+    // flag regardless of what state says.
+    host.cancelPendingRestart(name);
     const now = host.state.get(name);
     if (now) now.svc = before;
-    return { debug: before.debug !== undefined && before.debug !== false, port: null, ok: false };
+    return { debug: false, port: null, ok: false };
   }
-  return { debug: enable, port: host.state.get(name)?.debugPort ?? null, ok: true };
+  // `ok` is the real outcome: turning the inspector *off* can fail too, and
+  // that path deliberately does not roll back, so it must not fall through to
+  // a hardcoded success.
+  return { debug: enable, port: host.state.get(name)?.debugPort ?? null, ok };
 }

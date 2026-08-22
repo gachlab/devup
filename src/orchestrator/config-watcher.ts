@@ -3,6 +3,7 @@ import { loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors } from '../config/validator.js';
 import { diffServices, summariseDiff } from '../config/diff.js';
 import type { ProcessManager } from '../process/manager.js';
+import type { ServiceConfig } from '../config/types.js';
 
 export interface ConfigWatchOpts {
   configPath: string;
@@ -10,6 +11,16 @@ export interface ConfigWatchOpts {
   manager: ProcessManager;
   /** Receives status lines: success, validation errors, reload errors. */
   log: (msg: string) => void;
+  /** Services as the *file* last declared them.
+   *
+   *  Diffing against `manager.state` instead compares apples to oranges: a
+   *  lazy service's live config carries the port rewrite (`port + 10000`,
+   *  rewritten args and env), and a `ctl debug` toggle adds a flag the file
+   *  never had — so those services compare as changed on every single save and
+   *  get restarted, the lazy ones onto the port their own proxy holds.
+   *
+   *  Updated in place after each successful reload. */
+  baseline: ServiceConfig[];
 }
 
 /** Re-loads the config, validates it, diffs against the running set, and
@@ -26,14 +37,13 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       log(`⚠ config reload failed:\n${formatValidationErrors(errs)}`);
       return;
     }
-    const currentSvcs = [...manager.state.values()].map(s => s.svc);
-    const diff = diffServices(currentSvcs, nextCfg.services);
+    const diff = diffServices(opts.baseline, nextCfg.services);
     if (!diff.added.length && !diff.removed.length && !diff.changed.length) return;
 
     for (const name of diff.removed) {
       manager.remove(name);
     }
-    let colorIdx = currentSvcs.length;
+    let colorIdx = manager.state.size;
     for (const { next: fileSvc } of diff.changed) {
       const prev = manager.state.get(fileSvc.name);
       const ci = prev?.colorIdx ?? colorIdx++;
@@ -55,6 +65,7 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       await manager.install(next, ci);
       await manager.start(next, ci);
     }
+    opts.baseline = nextCfg.services;
     log(`🔁 config reloaded: ${summariseDiff(diff)}`);
   } catch (e: any) {
     log(`⚠ config reload error: ${e.message}`);

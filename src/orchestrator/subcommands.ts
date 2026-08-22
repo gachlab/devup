@@ -275,9 +275,16 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     }
 
     if (method === 'debug') {
-      // Positionally, `ctl debug --off api` would send svc="--off". The logs
-      // branch already scans past flags for the same reason.
-      const svc = argv.find((a, i) => i > 0 && !a.startsWith('-'));
+      // `ctl debug --off api` must not send svc="--off", and `--port 9230 api`
+      // must not send svc="9230" — so skip flags *and* the value --port takes.
+      let svc: string | undefined;
+      for (let i = 1; i < argv.length; i++) {
+        const a = argv[i]!;
+        if (a === '--port') { i++; continue; }
+        if (a.startsWith('-')) continue;
+        svc = a;
+        break;
+      }
       if (!svc) { out('usage: devup ctl debug <service> [--off] [--port <n>]'); return 1; }
       const enable = !argv.includes('--off');
       const portIdx = argv.indexOf('--port');

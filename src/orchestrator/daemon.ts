@@ -272,6 +272,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         writeDevupLog(`👀 watching ${configPath}`);
         stopConfigWatcher = watchConfig({
           configPath, baseCwd, manager: mgr,
+          baseline: config.services,
           log: msg => writeDevupLog(msg),
         });
       } catch (e: any) {
