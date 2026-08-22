@@ -18,6 +18,7 @@ interface RestarterOpts {
  *     capped at MAX_RESTARTS. Spawner invokes this in its close handler. */
 export class Restarter {
   private readonly state: Map<string, ProcessState>;
+  private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly events: ProcessManagerEvents;
   private readonly spawner: Spawner;
   private readonly lifecycle: Lifecycle;
@@ -49,6 +50,21 @@ export class Restarter {
     state.restarts++;
     const delay = BACKOFF_BASE_MS * Math.pow(2, state.restarts - 1);
     this.events.onLog(svc.name, `🔄 auto-restart ${state.restarts}/${MAX_RESTARTS} in ${delay}ms...`, colorIdx);
-    setTimeout(() => void this.spawner.start(svc, colorIdx, true), delay);
+    // Tracked, not fire-and-forget: spawner.start re-inserts into `state`, so
+    // a timer left running after the service is removed brings it back — and
+    // the daemon would then be running a process no longer in the config.
+    const timer = setTimeout(() => {
+      this.pending.delete(svc.name);
+      void this.spawner.start(svc, colorIdx, true);
+    }, delay);
+    this.pending.set(svc.name, timer);
+  }
+
+  /** Cancel a queued auto-restart. Safe to call for a service with none. */
+  cancel(name: string): void {
+    const timer = this.pending.get(name);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pending.delete(name);
   }
 }

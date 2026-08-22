@@ -60,3 +60,34 @@ describe('HealthPoller', () => {
     assert.equal(events.changes.length, 0);
   });
 });
+
+describe('HealthPoller and concurrent removal', () => {
+  it('does not report on a service removed while its probe was in flight', async () => {
+    // The probe can outlive the service. If the result is written anyway, the
+    // daemon pushes a `status` frame *after* the `removed` one and every client
+    // re-adds the service that was just announced gone.
+    const state = new Map<string, ProcessState>();
+    // Port 1 is privileged and unbound: the probe fails, taking real time.
+    // failureThreshold 1 so a single failed probe actually changes `health` —
+    // with the default of 2 nothing is emitted and the test proves nothing.
+    const st = mkState({
+      pid: 1234, status: 'running',
+      svc: { ...baseSvc, name: 'legacy', port: 1, healthCheck: { type: 'tcp', failureThreshold: 1 } },
+    });
+    state.set('legacy', st);
+    const events = mkEvents();
+    const poller = new HealthPoller({ state, events });
+
+    const inFlight = poller.checkAll();
+    // Remove it the way a config reload would, while the probe is running.
+    state.delete('legacy');
+    poller.forget('legacy');
+    await inFlight;
+
+    assert.deepEqual(
+      events.changes.filter(c => c[0] === 'legacy'),
+      [],
+      'a removed service must not emit a state change from a stale probe',
+    );
+  });
+});

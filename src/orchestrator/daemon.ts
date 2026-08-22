@@ -108,6 +108,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       onStateChange: (name, state) => stateBus.emit({ name, state }),
       onServiceRemoved: (name) => {
         releaseLazyProxy(lazyProxies, name);
+        // The CPU baseline is per name: a service re-added later under the same
+        // name would be diffed against the old process's counter and report a
+        // large negative percentage for one sample.
+        prevCpuMap.delete(name);
         removedBus.emit({ name });
       },
     },

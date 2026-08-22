@@ -86,6 +86,7 @@ export class ProcessManager {
     if (!this.state.has(name)) return;
     this.lifecycle.stop(name);
     this.state.delete(name);
+    this.restarter.cancel(name);
     this.healthPoller.forget(name);
     this.events.onServiceRemoved?.(name);
   }
