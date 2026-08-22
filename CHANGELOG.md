@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`start` in the control plane** (#85), with `devup ctl start <svc>` alongside it. `restart` and `stop` existed with no way to bring one stopped service up; `restart` happened to work, which was a coincidence rather than an interface.
 
+  The policy lives in one place (`startService`) rather than being duplicated between the daemon and the TUI, so `devup` foreground and `devup up -d` cannot drift on what the same command means.
+
   A first attempt was pulled from #88 because it did not work: it guarded with `if (st.pid) return`, and a stopped service keeps a dead `pid`, so it was a permanent no-op for the one case it existed for. Liveness is now read from the child process. It also spawned lazy services directly, leaving the proxy's readiness flags false so the next request started a second process — `LazyProxy` gained `ensureStarted()`, which shares a single start between concurrent callers, and `start` routes through it.
 
 - **A contract fixture for the `status` wire shape** (#87). `contract/status-snapshot.json` is generated from `serializeState` itself and ships with the package, covering an always-on service and a lazy one so the `port` / `originalPort` distinction is pinned rather than described in prose.
