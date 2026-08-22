@@ -234,7 +234,12 @@ async function handleFollow(
   }
 }
 
-function serializeState(name: string, st: ProcessState): Record<string, unknown> {
+/** The wire shape of one service in a `status` snapshot.
+ *
+ *  Exported for the contract fixture: `contract/status-snapshot.json` is
+ *  generated from this function, so a field renamed here fails a golden test
+ *  instead of surfacing in a client weeks later. See docs/control-plane.md. */
+export function serializeState(name: string, st: ProcessState): Record<string, unknown> {
   return {
     name,
     status: st.status,

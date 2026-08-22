@@ -1,0 +1,36 @@
+{
+  "services": [
+    {
+      "name": "configurations-api",
+      "status": "running",
+      "health": "up",
+      "port": 2999,
+      "originalPort": 2999,
+      "type": "api",
+      "phase": 0,
+      "cmd": "node",
+      "cwd": "configurations/api",
+      "errors": 0,
+      "restarts": 1,
+      "pid": 4242,
+      "startedAt": 1755800000000,
+      "crashLog": null
+    },
+    {
+      "name": "authorization-api",
+      "status": "idle",
+      "health": "idle",
+      "port": 13002,
+      "originalPort": 3002,
+      "type": "api",
+      "phase": 1,
+      "cmd": "node",
+      "cwd": "authorization/api",
+      "errors": 0,
+      "restarts": 1,
+      "pid": null,
+      "startedAt": 1755800000000,
+      "crashLog": null
+    }
+  ]
+}
