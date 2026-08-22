@@ -222,9 +222,18 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     if (method === 'status' && follow) {
       return await new Promise<number>(resolve => {
         const abort = openStream(socketPath, 'status.follow', {}, frame => {
-          const rows = frame.data as ServiceRow[];
           const ts = new Date().toISOString().slice(11, 23);
-          for (const r of rows) {
+          // The stream carries more than one shape: `removed` frames are arrays
+          // of names, not service rows. Treating them as rows reads `.name` off
+          // a string and throws inside the frame handler.
+          if (frame.event === 'removed') {
+            for (const name of frame.data as string[]) {
+              out(`[${ts}] ${String(name).padEnd(24)}  removed`);
+            }
+            return;
+          }
+          if (frame.event !== 'status') return;
+          for (const r of frame.data as ServiceRow[]) {
             out(`[${ts}] ${r.name.padEnd(24)}  ${r.status}/${r.health}`);
           }
         }, err => { out(`error: ${err.message}`); resolve(1); });

@@ -30,6 +30,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     tailLogs: async () => [],
     watchLogs: () => () => {},
     watchStatus: () => () => {},
+    watchRemoved: () => () => {},
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -118,6 +119,35 @@ describe('runCtl', { skip: !isUnix }, () => {
       assert.equal(code, 0);
       assert.ok(lines.some(l => l.includes('healthy')));
     });
+  });
+
+  it('status --follow prints removals instead of throwing on them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
+    const path = join(dir, 's.sock');
+    try {
+      let removedCb: ((name: string) => void) | null = null;
+      const handle = await startSocketServer('t', noopCtx({
+        states: () => new Map([['api', mkState()]]),
+        watchRemoved: (cb) => { removedCb = cb; return () => { removedCb = null; }; },
+      }), { path });
+      const lines: string[] = [];
+      try {
+        // `removed` frames carry names, not service rows. Reading `.name` off a
+        // string throws inside the frame handler, which the client used to
+        // swallow — the CLI then printed nothing and kept listing the service.
+        const run = runCtl(['status', '--follow'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+        await new Promise(r => setTimeout(r, 80));
+        removedCb?.('legacy');
+        await new Promise(r => setTimeout(r, 80));
+        process.emit('SIGINT');
+        await run;
+
+        assert.ok(lines.some(l => l.includes('api') && l.includes('running')), `expected the snapshot row, got ${JSON.stringify(lines)}`);
+        assert.ok(lines.some(l => l.includes('legacy') && l.includes('removed')), `expected a removal line, got ${JSON.stringify(lines)}`);
+      } finally {
+        await handle.close();
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('ctl status --json outputs JSON array', async () => {

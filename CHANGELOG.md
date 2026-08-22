@@ -12,12 +12,13 @@ Control-plane gaps found while building the VS Code extension against it. All ad
 ### Added
 
 - **`removed` frames on `status.follow`** (#82) — the stream only ever carried additions and updates, so a service dropped by a `--watch-config` reload stayed in every client until it reconnected. `ProcessManager.remove()` now stops the service, drops it from the state map and announces it; `config-watcher` uses it instead of deleting from `state` behind the manager's back.
-- **`start` in the control plane** (#85) — `restart` and `stop` existed with no way to bring a single stopped service up. `restart` happened to work on a stopped service, which was a coincidence rather than an interface.
 - **Host CPU in `stats`** (#83) — `system` carries `loadAvg1` and `cpuPercent` (load as a share of `cpuCores`, so it compares across machines). Both are **omitted on Windows**, where `os.loadavg()` is hardcoded to `[0, 0, 0]` and a zero would render as an idle machine. Clients previously had no CPU figure at all, and at least one filled the gap with a memory percentage.
 
 ### Fixed
 
 - **`status.follow` now sends its initial snapshot even when empty** — previously suppressed, leaving a client unable to tell "connected, nothing configured" from "still waiting".
+- **`devup ctl status --follow` no longer goes silent on a removal.** The new `removed` frames carry names, not service rows, and the handler read `.name` off a string. The resulting `TypeError` was swallowed by the client's frame loop, so the CLI printed nothing further and kept listing the departed service — the exact failure the new event was added to prevent.
+- **The stream client no longer swallows consumer errors.** Its `try/catch` wrapped both `JSON.parse` and the `onFrame` callback, so a bug in a frame handler was indistinguishable from a malformed frame. Only the parse is guarded now.
 
 ### Documentation
 

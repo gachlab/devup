@@ -79,15 +79,20 @@ export function openStream(
   c.write(JSON.stringify({ id: 1, method, params }) + '\n');
 
   rl.on('line', l => {
+    let msg: { error?: { message?: string }; event?: string };
     try {
-      const msg = JSON.parse(l);
-      if (!ackDone) {
-        ackDone = true;
-        if (msg.error) { onError?.(new Error(msg.error.message ?? String(msg.error))); c.destroy(); }
-        return;
-      }
-      if (msg.event) onFrame(msg as StreamFrame);
-    } catch { /* ignore malformed frames */ }
+      msg = JSON.parse(l);
+    } catch {
+      return; // malformed frame — skip it
+    }
+    if (!ackDone) {
+      ackDone = true;
+      if (msg.error) { onError?.(new Error(msg.error.message ?? String(msg.error))); c.destroy(); }
+      return;
+    }
+    // Deliberately outside the try: a throw from onFrame is a bug in the
+    // consumer, not a malformed frame, and swallowing it hides the failure.
+    if (msg.event) onFrame(msg as StreamFrame);
   });
 
   return () => c.destroy();

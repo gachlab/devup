@@ -62,12 +62,6 @@ export function useControlPlane(
             return stateBus.subscribe(({ name, state }) => onUpdate(name, state));
           },
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
-          async start(name) {
-            const st = manager.state.get(name);
-            if (!st) throw new Error(`unknown service: ${name}`);
-            if (st.pid) return; // already running
-            await manager.start(st.svc, st.colorIdx ?? 0, true);
-          },
           async getStats() {
             const pids: number[] = [];
             const pidToName = new Map<number, string>();
