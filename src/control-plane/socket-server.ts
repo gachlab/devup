@@ -170,7 +170,7 @@ async function handleFollow(
   if (req.method === 'logs.follow') {
     const rawSvc = params['svc'] ?? params['service'];
     const svcName = rawSvc != null ? stringOrThrow(rawSvc, 'svc') : null;
-    const tail = Math.max(0, Math.min(1000, Number(params['tail'] ?? 50)));
+    const tail = clampTail(params['tail']);
     // The replay can be a window too. Someone watching a service that just
     // failed a test wants the window *and* what happens next, and offering
     // `--since` alongside `--follow` and then ignoring it is the quiet wrong
@@ -397,6 +397,22 @@ async function dispatch(
  *  the daemon serialised the whole file — up to 10 MB, and now potentially the
  *  rotated one too — back over the socket. */
 export const MAX_LOG_LINES = 10_000;
+
+/** How many lines to replay before going live. Its own ceiling, lower than
+ *  `logs.tail`'s: this is a backlog, not a query.
+ *
+ *  Hardened for the same reason as `lines`. `tail: "abc"` gave NaN, `NaN > 0`
+ *  is false, and the replay was skipped in silence — the client got its ack
+ *  and an empty backlog with nothing to say why. */
+export const MAX_FOLLOW_TAIL = 1_000;
+
+function clampTail(raw: unknown): number {
+  if (raw === undefined || raw === null) return 50;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0) {
+    throw new Error('param "tail" must be a non-negative integer');
+  }
+  return Math.min(MAX_FOLLOW_TAIL, raw);
+}
 
 function clampLines(raw: unknown): number {
   if (raw === undefined || raw === null) return 100;

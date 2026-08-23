@@ -49,7 +49,7 @@ export function useControlPlane(
           // `devup ctl logs --since` would have worked against `devup up -d`
           // and done nothing against the TUI.
           tailLogs: async (svcName, opts) => {
-            if (!logSink) return { lines: [], oldestRetained: null };
+            if (!logSink) return { lines: [], oldestRetained: null, truncated: false };
             return readLogWindow(logSink.pathFor(svcName), opts);
           },
           watchLogs: (svcName, onLine) => {

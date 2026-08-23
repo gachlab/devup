@@ -11,7 +11,7 @@ import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } 
 import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
 import { flagValue } from '../config/cli.js';
 import { parseSince } from '../process/log-reader.js';
-import { MAX_LOG_LINES } from '../control-plane/socket-server.js';
+import { MAX_FOLLOW_TAIL } from '../control-plane/socket-server.js';
 import { stopDaemon } from './daemon.js';
 import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
@@ -174,6 +174,10 @@ interface CtlOpts {
   out?: (line: string) => void;
   socketPath?: string;
 }
+
+/** What `logs.tail` answers. The two window fields are optional because a
+ *  daemon older than 0.16.0 sends neither — see `LogsTailResult`. */
+type LogsTailShape = { lines: string[]; oldestRetained?: number | null; truncated?: boolean };
 
 type ServiceRow = {
   name: string; status: string; health: string;
@@ -359,34 +363,53 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
         lines = n;
       }
 
-      if (!follow) {
-        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines, since }) as {
-          lines: string[]; oldestRetained: number | null;
-        };
-        for (const l of res.lines) out(l);
+      /** The two things a window can fail to be, said the same way in both
+       *  branches — a notice that only appears without `--follow` is a notice
+       *  someone will not see when they most need it. */
+      const reportWindow = (res: LogsTailShape) => {
         // A fact, not a verdict. `oldestRetained` is when the log *starts*,
         // which on a stack booted a minute ago is simply when the service
         // first wrote — nothing was rotated. devup cannot tell "rotated away"
         // from "was not running yet" from here, so it says the true thing and
         // names both.
-        if (since !== undefined && res.oldestRetained !== null && res.oldestRetained > since) {
+        if (since !== undefined && res.oldestRetained != null && res.oldestRetained > since) {
           out(`(devup's log for ${svc} starts at ${new Date(res.oldestRetained).toISOString()}, after the window you asked for —`);
           out(`  either it was not running yet, or the earlier lines have been rotated away)`);
         }
-        // Against the effective cap: the daemon clamps to 10 000, so
-        // `--lines 50000` came back truncated with nothing said.
-        const effectiveCap = Math.min(lines, MAX_LOG_LINES);
-        if (res.lines.length >= effectiveCap) {
-          out(`(stopped at ${effectiveCap} lines${lines > MAX_LOG_LINES ? ` — the daemon's ceiling, below the ${lines} asked for` : ''}; there may be more)`);
+        // From the daemon, not from counting what came back: the cap keeps the
+        // most recent, so a full-looking answer is exactly what a truncated
+        // window looks like. And what was dropped is the *oldest* of the
+        // window, so "there may be more" would point the wrong way.
+        if (res.truncated) {
+          out(`(more than ${lines} lines matched — the oldest were dropped; raise --lines to see them)`);
         }
+      };
+
+      if (!follow) {
+        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines, since }) as LogsTailShape;
+        for (const l of res.lines) out(l);
+        reportWindow(res);
         return 0;
       }
 
       // Both flags reach the stream: the replay is a window too, so
       // `--since 5m --follow` shows the window and then keeps going. Parsing
       // them and dropping them was the quiet wrong answer.
+      //
+      // The replay stays server-side — doing it here would leave a gap between
+      // reading and subscribing, and a follow that drops lines is worse than
+      // one that says less. So the notices come from a separate one-line probe
+      // whose lines are thrown away: the daemon answers the same questions
+      // about the same window either way.
+      const replayCap = Math.min(lines, MAX_FOLLOW_TAIL);
+      if (since !== undefined) {
+        try {
+          const probe = await sendRpc(socketPath, 'logs.tail', { svc, lines: replayCap, since }) as LogsTailShape;
+          reportWindow(probe);
+        } catch { /* the stream itself is what matters; a failed probe is not worth failing over */ }
+      }
       return await new Promise<number>(resolve => {
-        const abort = openStream(socketPath, 'logs.follow', { svc, tail: lines, since }, frame => {
+        const abort = openStream(socketPath, 'logs.follow', { svc, tail: replayCap, since }, frame => {
           out(frame.data as string);
         }, err => { out(`error: ${err.message}`); resolve(1); },
         () => { out('devup went away'); resolve(1); });

@@ -31,6 +31,16 @@ export interface LogWindow {
    *  "the log starts after your window" covers both "rotated away" and "not
    *  running yet", and devup cannot tell those apart from here. */
   oldestRetained: number | null;
+  /** Whether lines were dropped to fit `lines`.
+   *
+   *  The cap keeps the most **recent**, so what a window loses is its
+   *  *beginning* — and `oldestRetained` cannot show that: it is the oldest
+   *  line in the file, so for a service that started before the window it
+   *  reads as "complete" either way. A harness asking for a 30-second test on
+   *  a service that logged 400 lines would otherwise get the last 100 with no
+   *  signal at all, which is the short-answer-that-looks-complete this whole
+   *  change is against. */
+  truncated: boolean;
 }
 
 /** Parse the timestamp LogSink puts at the head of every line. */
@@ -52,25 +62,57 @@ export async function readLogWindow(file: string, opts: LogWindowOpts): Promise<
   // read picks it up, and `.prev` is older than the current file either way,
   // so prepending it is chronological in both cases.
   const current = await readOneFile(file, opts);
-  const previous = opts.since !== undefined ? await readOneFile(`${file}.prev`, opts) : null;
 
+  // Only when the rotated file can still hold part of the window: if the
+  // current file already starts at or before it, there is nothing back there
+  // to find, and opening a 10 MB file to confirm that costs the caller for
+  // nothing. This is also what keeps the rotation race below rare.
+  const needPrev = opts.since !== undefined
+    && (current.oldest === null || current.oldest > opts.since);
+  const previous = needPrev ? await readOneFile(`${file}.prev`, opts) : null;
+
+  const earlier = previous ? trimOverlap(previous.lines, current.lines) : [];
   // The last N of (last N of prev ++ last N of current) is the last N of the
   // whole thing, so each file stays bounded by `lines` rather than being read
   // into memory whole.
-  const combined = [...(previous?.lines ?? []), ...current.lines];
+  const combined = [...earlier, ...current.lines];
+  const truncated = combined.length > opts.lines
+    || current.truncated || (previous?.truncated ?? false);
   const lines = combined.length > opts.lines ? combined.slice(-opts.lines) : combined;
 
   return {
     lines,
     // Only meaningful when a window was asked for — see the field's own note.
     oldestRetained: opts.since === undefined ? null : (previous?.oldest ?? current.oldest ?? null),
+    truncated,
   };
+}
+
+/** Drop a tail of `earlier` that repeats the head of `later`.
+ *
+ *  Reading the current file first and the rotated one second means a rotation
+ *  landing between the two reads makes us read the same file twice — the one
+ *  that was current a moment ago is `.prev` by then. That is the right trade
+ *  (the other order loses it outright) but it leaves every one of its lines
+ *  duplicated, so the seam is trimmed. */
+function trimOverlap(earlier: string[], later: string[]): string[] {
+  const max = Math.min(earlier.length, later.length);
+  for (let n = max; n > 0; n--) {
+    let same = true;
+    for (let i = 0; i < n; i++) {
+      if (earlier[earlier.length - n + i] !== later[i]) { same = false; break; }
+    }
+    if (same) return earlier.slice(0, earlier.length - n);
+  }
+  return earlier;
 }
 
 interface OneFile {
   lines: string[];
   /** First timestamp seen in this file, or null if it had none. */
   oldest: number | null;
+  /** Whether this file alone already overflowed the cap. */
+  truncated: boolean;
 }
 
 async function readOneFile(file: string, opts: LogWindowOpts): Promise<OneFile> {
@@ -80,6 +122,7 @@ async function readOneFile(file: string, opts: LogWindowOpts): Promise<OneFile> 
   // holds whatever a service printed, and a stack-trace continuation must not
   // be cut away from the header that dates it.
   let lastSeen: number | null = null;
+  let truncated = false;
 
   await eachLine(file, line => {
     const ts = lineTimestamp(line) ?? lastSeen;
@@ -91,10 +134,10 @@ async function readOneFile(file: string, opts: LogWindowOpts): Promise<OneFile> 
     // it would put the head of an old file inside a window it may predate.
     if (opts.since !== undefined && (ts === null || ts < opts.since)) return;
     lines.push(line);
-    if (lines.length > opts.lines) lines.shift();
+    if (lines.length > opts.lines) { lines.shift(); truncated = true; }
   });
 
-  return { lines, oldest };
+  return { lines, oldest, truncated };
 }
 
 function eachLine(file: string, onLine: (line: string) => void): Promise<void> {

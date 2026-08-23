@@ -109,7 +109,15 @@ export interface StatsResult {
  *  tables are exactly what goes stale.
  *
  *  Bump it in the same commit as the shape change, and say so in the
- *  changelog. `npm run contract:update` reminds you. */
+ *  changelog. `npm run contract:update` reminds you, and the golden test pins
+ *  the field list against the number so a snapshot change cannot ship without
+ *  moving it.
+ *
+ *  It stays `1` across everything added in 0.16.0 — the client export, `info`,
+ *  `crashes`, the `logs.tail` window — because **nothing has ever published a
+ *  numbered contract**. A daemon older than 0.16.0 sends no `contract` at all,
+ *  so `1` unambiguously means "the shape 0.16.0 settled on"; splitting it into
+ *  1 and 2 mid-development would only invent a version nobody can be running. */
 export const CONTRACT_VERSION = 1;
 
 export interface ProjectInfo {
@@ -154,14 +162,25 @@ export interface DebugResult {
 
 export interface LogsTailResult {
   lines: string[];
-  /** When the oldest line devup still holds for this service was written, or
-   *  `null` if it holds none.
+  /** When the oldest line **in the files this call read** was written; `null`
+   *  when there were none, and `null` too for a plain tail with no `since`,
+   *  because that only opens the current file and half an answer to "the
+   *  oldest devup holds" is worse than none.
    *
-   *  The log rotates on every launch and at 10 MB, so a `since` from before a
-   *  rotation has lost its beginning. Compare against what you asked for: if
-   *  `oldestRetained > since`, the start of your window is gone. Sent since
-   *  0.16.0. */
-  oldestRetained: number | null;
+   *  A fact, not a verdict: `oldestRetained > since` means the log *starts*
+   *  after your window, which covers both "rotated away" and "the service had
+   *  not written yet". devup cannot tell those apart. Sent since 0.16.0. */
+  oldestRetained?: number | null;
+  /** Whether lines were dropped to fit `lines` — and since the cap keeps the
+   *  most recent, what a window loses is its **beginning**. Sent since 0.16.0. */
+  truncated?: boolean;
+
+  // Optional, unlike `crashes` and `originalPort` on ServiceSnapshot, and the
+  // rule is the failure mode rather than the field's kind: `undefined` here is
+  // *silently indistinguishable from a meaningful value*. A client writing
+  // `res.oldestRetained > since` against an older daemon gets `false` and
+  // concludes its window is whole; `!res.truncated` reads as "nothing was
+  // dropped". Where absence lies quietly, the type has to force the branch.
 }
 
 /** A pushed frame from `status.follow` / `logs.follow`. */

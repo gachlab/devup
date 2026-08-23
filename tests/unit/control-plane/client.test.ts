@@ -29,7 +29,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     states: () => new Map(),
     restart: async () => {},
     stop: () => {},
-    tailLogs: async () => ({ lines: [], oldestRetained: null }),
+    tailLogs: async () => ({ lines: [], oldestRetained: null, truncated: false }),
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
@@ -137,7 +137,7 @@ describe('control-plane client', { skip: !isUnix }, () => {
 
   it('logsTail() passes the service and line count through untouched', async () => {
     const asked: Array<[string, number]> = [];
-    await withServer({ tailLogs: async (name, o) => { asked.push([name, o.lines]); return { lines: ['a'], oldestRetained: null }; } }, async path => {
+    await withServer({ tailLogs: async (name, o) => { asked.push([name, o.lines]); return { lines: ['a'], oldestRetained: null, truncated: false }; } }, async path => {
       const c = createClient(path);
       // Omitting `lines` must leave the daemon's own default (100) in charge —
       // a second copy of it in the client is one more thing to drift.

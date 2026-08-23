@@ -275,6 +275,11 @@ Read a window out of a service's persistent log — by line count, by time, or b
 
 - `lines` defaults to 100, capped at 10 000, and must be a **positive
   integer** — it is not coerced, for the same reason `since` is not.
+- `truncated` says whether lines were dropped to fit `lines`. Check it: the cap
+  keeps the most **recent**, so what a window loses is its *beginning*, and a
+  full-looking answer is exactly what a truncated one looks like. The default
+  of 100 applies to a `since` window too, so a 30-second test on a chatty
+  service will hit it. Sent since 0.16.0.
 - `since` (epoch ms) returns everything written from that moment on. **This is
   the question a failing test has**: with a line count alone you must guess how
   many, and a service that recompiles on every save pushes the interesting part
@@ -519,7 +524,13 @@ Omit `svc` (or pass `null`) to receive every service's output. Replayed tail lin
 
 `since` works here as it does for `logs.tail`: the replay is a window, so you
 can ask for what a service did during a failing test *and* keep watching what
-it does next. `tail` still caps the replay (at 1 000 here).
+it does next. `tail` still caps the replay — at 1 000 here, not 10 000, since
+this is a backlog rather than a query — and must be a non-negative integer,
+`0` meaning "no replay, just the live stream".
+
+The ack carries no `truncated` or `oldestRetained`: this is a stream, not a
+result. `devup ctl logs --since … --follow` asks `logs.tail` separately for
+those and reports them before the stream starts.
 
 **The replay is per service.** `tail` only applies when you name one: the
 all-services stream sends no history at all and starts from the next line

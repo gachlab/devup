@@ -36,6 +36,16 @@ const SHAPE_BY_CONTRACT: Record<number, string[]> = {
  *  Regenerate with `npm run contract:update` — a separate entry point on
  *  purpose, so this test can never write the file it is checking.
  */
+/** Every result shape a client can see, and therefore everything
+ *  `CONTRACT_VERSION` speaks for. Adding one means deciding whether the number
+ *  has to move. */
+const RESULT_SHAPES = {
+  ServiceSnapshot: true,
+  ProjectInfo: true,
+  StatsResult: true,
+  LogsTailResult: true,
+} as const;
+
 describe('control-plane contract', () => {
   const golden = JSON.parse(readFileSync(CONTRACT_FIXTURE_PATH, 'utf8'));
   // Through JSON: `undefined` values vanish in the file but survive in the
@@ -66,6 +76,16 @@ describe('control-plane contract', () => {
         'or clients reading `contract` will trust a number that no longer describes them',
       );
     }
+  });
+
+  it('records what the contract number covers, not just the snapshot', () => {
+    // The number describes the wire, and the wire is more than
+    // `ServiceSnapshot`: `logs.tail`'s result changed in 0.16.0 and this test
+    // said nothing, because it only knew about the snapshot. Listing the
+    // shapes here is what makes "bump it in the same commit" checkable.
+    const covered = Object.keys(RESULT_SHAPES).sort();
+    assert.deepEqual(covered, ['LogsTailResult', 'ProjectInfo', 'ServiceSnapshot', 'StatsResult'],
+      'a wire shape was added or removed without saying which contract covers it');
   });
 
   it('keeps the two ports distinguishable', () => {

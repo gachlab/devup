@@ -164,6 +164,53 @@ describe('readLogWindow', () => {
   });
 });
 
+describe('readLogWindow truncation', () => {
+  it('says when the window lost its beginning to the cap', async () => {
+    // The cap keeps the most recent, so what a window loses is its *head* —
+    // and `oldestRetained` cannot show it: for a service that started before
+    // the window it reads as "complete" either way.
+    await withLog({ 'api.log': [at(1, 'a'), at(2, 'b'), at(3, 'c'), at(4, 'd')] }, async file => {
+      const res = await readLogWindow(file, { lines: 2, since: T0 });
+      assert.equal(res.truncated, true);
+      assert.deepEqual(res.lines, [at(3, 'c'), at(4, 'd')]);
+      // And the field that cannot see it still says the log is complete.
+      assert.ok(res.oldestRetained! <= T0 + 1);
+    });
+  });
+
+  it('says nothing was dropped when nothing was', async () => {
+    await withLog({ 'api.log': [at(1, 'a'), at(2, 'b')] }, async file => {
+      assert.equal((await readLogWindow(file, { lines: 2, since: T0 })).truncated, false);
+      assert.equal((await readLogWindow(file, { lines: 100 })).truncated, false);
+    });
+  });
+
+  it('does not open the rotated file when the current one already covers the window', async () => {
+    // Every `--since 5s` scanning a 10 MB rotated file for nothing is a real
+    // cost, and it is also what keeps the rotation race rare.
+    await withLog({
+      // If this were read, its line would appear.
+      'api.log.prev': [at(-9_000, 'should not be read')],
+      'api.log': [at(0, 'covers the window already')],
+    }, async file => {
+      const res = await readLogWindow(file, { lines: 100, since: T0 + 1_000 });
+      assert.deepEqual(res.lines, []);
+      assert.equal(res.oldestRetained, T0, 'from the current file, without opening .prev');
+    });
+  });
+
+  it('does not double a file that was rotated between the two reads', async () => {
+    // Reading current-then-prev means a rotation in between makes us read the
+    // same file twice. That is the right trade — the other order loses it —
+    // but the seam has to be trimmed.
+    const shared = [at(6_000, 'x'), at(6_500, 'y')];
+    await withLog({ 'api.log.prev': shared, 'api.log': shared }, async file => {
+      const res = await readLogWindow(file, { lines: 100, since: T0 + 5_000 });
+      assert.deepEqual(res.lines, shared, 'each line once, in order');
+    });
+  });
+});
+
 describe('parseSince', () => {
   const now = Date.parse('2026-08-23T12:00:00.000Z');
 

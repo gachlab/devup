@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The result now also carries `oldestRetained`, because the file rotates on every launch and at 10 MB: a window that starts before a rotation has lost its beginning, and a short answer that looks complete is the failure mode worth naming. It reports when the log *starts*, which is a fact — devup cannot tell "rotated away" from "the service had not written yet", and says both rather than picking one. A window read reaches into the rotated `.log.prev` so that one spanning a rotation stays whole; a plain tail does not, since "the last N lines" has always meant the current file.
 
+  The result also carries `truncated`, because `lines` still caps a window and the cap keeps the most *recent* — so what a window loses is its **beginning**, and a full-looking answer is exactly what a truncated one looks like. Counting the lines that came back cannot tell; the daemon can, because it did the dropping.
+
   The reader is now **one** implementation. It was written twice — once in the daemon, once in the TUI's control plane — so a feature added to one silently missed the other, and `--since` would have worked against `devup up -d` and done nothing against the TUI.
 
 - **`logs.tail` no longer serialises the whole file for a malformed `lines`.** It was coerced with `Number()`, so `"abc"` became `NaN`, the clamp stayed `NaN`, the reader's cap was never true, and the daemon sent back up to 10 MB. It must be a positive integer now, like `since` must be a number.
