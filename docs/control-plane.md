@@ -260,20 +260,44 @@ Calls `ProcessManager.stop(name)`. Sends SIGTERM to the process tree. The servic
 
 ### `logs.tail`
 
-Read the last N lines of a service's persistent log file:
+Read a window out of a service's persistent log — by line count, by time, or both:
 
 ```json
 { "method": "logs.tail", "params": { "svc": "app-api", "lines": 50 } }
-→ { "result": { "lines": [
-    "2026-05-21T22:14:32.123Z [api] Listening on port 3000",
-    "2026-05-21T22:14:33.041Z [api] Connected to mongo",
-    ...
-  ] } }
+→ { "result": {
+    "lines": [
+      "2026-05-21T22:14:32.123Z [api] Listening on port 3000",
+      "2026-05-21T22:14:33.041Z [api] Connected to mongo"
+    ],
+    "oldestRetained": 1716329672123
+  } }
 ```
 
-- `lines` defaults to 100, capped at 10 000.
-- Returns `[]` when the LogSink is disabled (`--no-log-file`) or the file doesn't exist yet.
+- `lines` defaults to 100, capped at 10 000. The most recent are kept.
+- `since` (epoch ms) returns everything written from that moment on. **This is
+  the question a failing test has**: with a line count alone you must guess how
+  many, and a service that recompiles on every save pushes the interesting part
+  out of the tail before you ask for it. Combine the two and `lines` still caps.
+- `oldestRetained` is when the oldest line devup still holds was written, or
+  `null` when it holds none. The log rotates on every launch and at 10 MB, so a
+  `since` from before a rotation has lost its beginning — compare, and if
+  `oldestRetained > since` the start of your window is gone. Added in 0.16.0.
+- A window read also reaches into the rotated `.log.prev`, so one that spans a
+  rotation stays whole. A plain tail does not: "the last N lines" has always
+  meant the current file.
+- A line with no timestamp of its own — a stack-trace continuation — is kept
+  with the line that dates it, rather than cut away from it.
+- Returns no lines when the LogSink is disabled (`--no-log-file`) or the
+  service has not written yet.
 - Reads from disk — works the same as `devup logs <svc>` would, just over the socket.
+
+`since` must be a **number**. It is not coerced: `"yesterday"` becoming `NaN`
+and then silently meaning "everything" is how a harness attaches the wrong
+evidence to a failure and never finds out.
+
+```json
+{ "method": "logs.tail", "params": { "svc": "app-api", "since": 1755800000000 } }
+```
 
 ## Auth model
 

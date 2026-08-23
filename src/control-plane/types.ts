@@ -154,6 +154,14 @@ export interface DebugResult {
 
 export interface LogsTailResult {
   lines: string[];
+  /** When the oldest line devup still holds for this service was written, or
+   *  `null` if it holds none.
+   *
+   *  The log rotates on every launch and at 10 MB, so a `since` from before a
+   *  rotation has lost its beginning. Compare against what you asked for: if
+   *  `oldestRetained > since`, the start of your window is gone. Sent since
+   *  0.16.0. */
+  oldestRetained: number | null;
 }
 
 /** A pushed frame from `status.follow` / `logs.follow`. */

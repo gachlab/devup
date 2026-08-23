@@ -10,6 +10,7 @@ import { needsInstall, writeInstallStamp } from '../utils.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
 import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
 import { flagValue } from '../config/cli.js';
+import { parseSince } from '../process/log-reader.js';
 import { stopDaemon } from './daemon.js';
 import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
@@ -214,7 +215,8 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  ping                         Check if devup is running');
     out('  status [--follow]            Service snapshot, or live updates');
     out('  wait [svc...] [--start]      Wait until services are ready; 0 when they are');
-    out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
+    out('  logs <svc> [--since <when>] [--lines <n>] [--follow]');
+    out('                               Tail logs, or follow the live stream');
     out('  start <svc>                  Start a stopped service');
     out('  debug <svc> [--off] [--port n] [--brk]');
     out('                               Restart a service under the Node inspector');
@@ -327,12 +329,47 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     }
 
     if (method === 'logs') {
-      const svc = argv.find((a, i) => i > 0 && !a.startsWith('-'));
-      if (!svc) { out('usage: devup ctl logs <service> [--follow]'); return 1; }
+      // Skip the value `--since` and `--lines` take, or `ctl logs --since 5m`
+      // would read "5m" as the service name.
+      const takesValue = new Set(['--since', '--lines']);
+      let svc: string | undefined;
+      for (let i = 1; i < argv.length; i++) {
+        const a = argv[i]!;
+        if (takesValue.has(a) && !argv[i + 1]?.startsWith('-')) { i++; continue; }
+        if (a.startsWith('-')) continue;
+        svc = a;
+        break;
+      }
+      if (!svc) { out('usage: devup ctl logs <service> [--since <when>] [--lines <n>] [--follow]'); return 1; }
+
+      const rawSince = flagValue(argv, '--since');
+      let since: number | undefined;
+      if (rawSince !== undefined) {
+        try { since = parseSince(rawSince, Date.now()); }
+        catch (e: any) { out(e.message); return 1; }
+      }
+      const rawLines = flagValue(argv, '--lines');
+      let lines = 100;
+      if (rawLines !== undefined) {
+        const n = Number(rawLines);
+        if (!Number.isFinite(n) || n <= 0) { out(`invalid --lines: ${rawLines || '(missing)'}`); return 1; }
+        lines = n;
+      }
 
       if (!follow) {
-        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines: 100 }) as { lines: string[] };
+        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines, since }) as {
+          lines: string[]; oldestRetained: number | null;
+        };
         for (const l of res.lines) out(l);
+        // The log rotates on every launch and at 10 MB, so a window that
+        // starts before a rotation has simply lost its beginning. Saying so
+        // beats handing back a short answer that looks complete.
+        if (since !== undefined && res.oldestRetained !== null && res.oldestRetained > since) {
+          out(`(devup only has ${svc} logs from ${new Date(res.oldestRetained).toISOString()} — the rest has been rotated away)`);
+        }
+        if (since !== undefined && res.lines.length === lines) {
+          out(`(stopped at the --lines limit of ${lines}; there may be more in the window)`);
+        }
         return 0;
       }
 
@@ -556,7 +593,14 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('                               Readiness is `health`, not `type`: a web with a');
     out('                               readyPattern announces itself like an API does.');
     out('');
-    out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
+    out('  logs <svc> [--since <when>] [--lines <n>] [--follow]');
+    out('                               Tail last 100 lines, or follow the live stream.');
+    out('                               --since takes a duration (30s, 5m, 2h, 1d), an ISO');
+    out('                               timestamp, or epoch milliseconds — everything the');
+    out('                               service has written since then. That is the window a');
+    out('                               failing test wants: with --lines alone you have to');
+    out('                               guess how many, and a noisy service pushes the part');
+    out('                               you care about out of the tail before you ask.');
     out('  start <svc>                  Start the named service if stopped');
     out('  debug <svc> [--off] [--port n] [--brk]');
     out('                               Restart the named service under the Node inspector');

@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import type { ProcessState } from '../process/types.js';
 import { defaultSocketPath } from './socket-path.js';
 import { readVersion } from '../utils/version.js';
+import type { LogWindow, LogWindowOpts } from '../process/log-reader.js';
 import { CONTRACT_VERSION } from './types.js';
 import type {
   ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
@@ -33,8 +34,9 @@ export interface RpcContext {
   restart(name: string): Promise<void>;
   /** Stop a service by name. */
   stop(name: string): void;
-  /** Tail N most recent log lines for the given service (from the persistent log file). */
-  tailLogs(svcName: string, lines: number): Promise<string[]>;
+  /** Read a window out of the service's persistent log — the last N lines, or
+   *  everything written since a timestamp. See `readLogWindow`. */
+  tailLogs(svcName: string, opts: LogWindowOpts): Promise<LogWindow>;
   /** Subscribe to live log lines. Pass null to receive logs from all services.
    *  Returns an unsubscribe function. */
   watchLogs(svcName: string | null, onLine: (svc: string, line: string) => void): () => void;
@@ -174,7 +176,7 @@ async function handleFollow(
 
     // Replay recent history before going live.
     if (svcName) {
-      const lines = await ctx.tailLogs(svcName, tail);
+      const { lines } = await ctx.tailLogs(svcName, { lines: tail });
       for (const l of lines) {
         // `svc` on the replay too: a client routing by frame.svc would drop or
         // misattribute the whole tail otherwise.
@@ -325,7 +327,18 @@ const HANDLER_TABLE = {
   'logs.tail': async (params, ctx) => {
     const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
     const lines = Math.max(1, Math.min(10_000, Number(params['lines'] ?? 100)));
-    return { lines: await ctx.tailLogs(svc, lines) };
+    const rawSince = params['since'];
+    // Not coerced with Number(): `since: "yesterday"` becoming NaN and then
+    // silently meaning "everything" is how a harness attaches the wrong
+    // evidence to a failed test and never finds out.
+    if (rawSince !== undefined && rawSince !== null && typeof rawSince !== 'number') {
+      throw new Error('param "since" must be a number (epoch milliseconds)');
+    }
+    const since = typeof rawSince === 'number' ? rawSince : undefined;
+    if (since !== undefined && !Number.isFinite(since)) {
+      throw new Error('param "since" must be a finite number (epoch milliseconds)');
+    }
+    return await ctx.tailLogs(svc, { lines, since });
   },
 
   ping: () => ({ ok: true, ts: Date.now() }),

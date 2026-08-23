@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`logs.tail` can be asked by time, not just by line count** (#108): `{ "since": 1755800000000 }` over the socket, `devup ctl logs <svc> --since 5m` from the shell — a duration, an ISO timestamp, or epoch milliseconds.
+
+  "The last N lines" is right for looking over a service's shoulder and wrong for the question a test harness has: *what did this service do while the test that just failed was running*. With a line count alone you have to guess how many — too few and you miss the beginning, too many and you drag in the previous test — and a service that recompiles on every save pushes the window out of the tail before you ask for it. The lines have carried an ISO timestamp since LogSink was written; there was just no way to ask by it.
+
+  The result now also carries `oldestRetained`, because the file rotates on every launch and at 10 MB: a window that starts before a rotation has lost its beginning, and a short answer that looks complete is the failure mode worth naming. A window read reaches into the rotated `.log.prev` so that one spanning a rotation stays whole; a plain tail does not, since "the last N lines" has always meant the current file.
+
+  The reader is now **one** implementation. It was written twice — once in the daemon, once in the TUI's control plane — so a feature added to one silently missed the other, and `--since` would have worked against `devup up -d` and done nothing against the TUI.
+
 - **`info` says what the daemon is** (#107): its `version`, a `contract` number, and the `methods` it answers.
 
   Every recent release changed what the control plane can do — `originalPort` in 0.12.0, `removed`/`debugPort`/`cpuPercent` in 0.14.0, `brk` in 0.15.0, `crashes` here — and no client could ask. So they sniffed: the VS Code extension decided whether to offer the debugger by looking for `debugPort` in the snapshot, and found out `--inspect-brk` was unavailable when the RPC answered `unknown method`. That turns every "requires ≥ X" into an inference and every error message into a guess.

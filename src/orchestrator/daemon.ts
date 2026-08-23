@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process';
-import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync, createReadStream } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, totalmem, freemem, cpus } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { createInterface } from 'node:readline';
 
 import { ProcessManager } from '../process/manager.js';
 import { LogSink } from '../process/log-sink.js';
@@ -16,6 +15,7 @@ import { startExternals, stopExternals, type ExternalProc } from '../process/ext
 import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import { startsSuspended } from '../utils/process-args.js';
+import { readLogWindow } from '../process/log-reader.js';
 
 /** How long an on-demand start waits for a service that begins suspended under
  *  `--inspect-brk`: as long as it takes someone to attach and hit resume. */
@@ -179,17 +179,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       states: () => mgr.state,
       restart: (n) => mgr.restart(n),
       stop: (n) => mgr.stop(n),
-      tailLogs: async (svcName, lines) => {
-        const file = logSink.pathFor(svcName);
-        if (!existsSync(file)) return [];
-        return new Promise<string[]>((resolve, reject) => {
-          const buf: string[] = [];
-          const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }) });
-          rl.on('line', l => { buf.push(l); if (buf.length > lines) buf.shift(); });
-          rl.on('close', () => resolve(buf));
-          rl.on('error', reject);
-        });
-      },
+      tailLogs: (svcName, opts) => readLogWindow(logSink.pathFor(svcName), opts),
       watchLogs: (svcName, onLine) => logBus.subscribe(({ svc, text }) => {
         if (svcName === null || svc === svcName) onLine(svc, text);
       }),

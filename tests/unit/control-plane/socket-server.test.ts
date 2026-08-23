@@ -26,7 +26,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     states: () => new Map(),
     restart: async () => {},
     stop: () => {},
-    tailLogs: async () => [],
+    tailLogs: async () => ({ lines: [], oldestRetained: null }),
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
@@ -212,9 +212,9 @@ describe('socket-server', { skip: !isUnix }, () => {
     try {
       const lines = ['a', 'b', 'c', 'd', 'e'];
       const handle = await startSocketServer('t', noopCtx({
-        tailLogs: async (svcName, n) => {
+        tailLogs: async (svcName, o) => {
           assert.equal(svcName, 'api');
-          return lines.slice(-n);
+          return { lines: lines.slice(-o.lines), oldestRetained: null };
         },
       }), { path });
       try {
@@ -270,7 +270,7 @@ describe('socket-server', { skip: !isUnix }, () => {
     try {
       let liveCallback: ((svc: string, line: string) => void) | null = null;
       const handle = await startSocketServer('lf', noopCtx({
-        tailLogs: async () => ['history-1', 'history-2'],
+        tailLogs: async () => ({ lines: ['history-1', 'history-2'], oldestRetained: null }),
         watchLogs: (_svc, cb) => {
           liveCallback = cb;
           return () => { liveCallback = null; };
@@ -613,7 +613,7 @@ describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
     try {
       const handle = await startSocketServer('m', noopCtx({
         states: () => new Map([['api', mkState({})]]),
-        tailLogs: async () => [],
+        tailLogs: async () => ({ lines: [], oldestRetained: null }),
       }), { path });
       try {
         const advertised = (await rpcCall(path, { id: 1, method: 'info' })).result.methods as string[];
