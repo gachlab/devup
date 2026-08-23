@@ -5,7 +5,9 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.0] — 2026-08-22
+
+Depurar de verdad: romper en la primera línea, y que nada del daemon se lleve por delante un proceso vivo mientras estás parado en un breakpoint.
 
 ### Added
 - **`debug: { brk: true }`** — start a service with `--inspect-brk`, stopped before its first line, so its startup path can be debugged instead of everything that happens after it. Available in config and through the `debug` RPC (`"brk": true`). `debug` now also accepts an object form, `{ port?, brk? }`; `true` and `<port>` keep working unchanged.
