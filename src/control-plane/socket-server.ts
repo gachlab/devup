@@ -140,7 +140,7 @@ function handleClient(socket: Socket, ctx: RpcContext): void {
       return;
     }
     const params = (req.params ?? {}) as Record<string, unknown>;
-    if (req.method === 'logs.follow' || req.method === 'status.follow') {
+    if (STREAM_METHODS.includes(req.method)) {
       try {
         await handleFollow(socket, req as { id?: unknown; method: string }, params, ctx, unsubs);
       } catch (e: any) {
@@ -255,7 +255,7 @@ function respond(socket: Socket, payload: object): void {
  *  stale the first time someone added a method and forgot it. */
 type RpcHandler = (params: Record<string, unknown>, ctx: RpcContext) => Promise<unknown> | unknown;
 
-const HANDLERS: Record<string, RpcHandler> = {
+const HANDLER_TABLE = {
   status: (_params, ctx) => {
     const out: ServiceSnapshot[] = [];
     for (const [name, st] of ctx.states()) {
@@ -322,23 +322,38 @@ const HANDLERS: Record<string, RpcHandler> = {
   },
 
   ping: () => ({ ok: true, ts: Date.now() }),
-};
+} satisfies Record<string, RpcHandler>;
+
+/** A Map, not the literal above, because a plain object answers for its
+ *  prototype: `HANDLERS['toString']` on an object literal is a function, so
+ *  `{"method":"toString"}` returned `"[object Undefined]"` instead of `unknown
+ *  method`, and `"constructor"` echoed the params back. The method name comes
+ *  off the wire, so this is the shape to reach for rather than a `hasOwn`
+ *  guard someone has to remember. */
+const HANDLERS = new Map<string, RpcHandler>(Object.entries(HANDLER_TABLE));
 
 /** Handled in `handleClient` before `dispatch` ever sees them, so they are not
  *  in HANDLERS — and a client asking what this daemon can do still has to be
- *  told about them. */
-const STREAM_METHODS = ['logs.follow', 'status.follow'];
+ *  told about them.
+ *
+ *  `handleClient` routes on **this list**, not on its own copy of the two
+ *  names. The whole reason `METHODS` is derived from a table is that a
+ *  hand-kept list goes stale the first time someone adds a method and forgets
+ *  it; a second hand-kept list here would have exactly that problem, and its
+ *  failure is quiet — a daemon that answers a method it does not advertise,
+ *  so a client checking `info.methods` refuses a feature that works. */
+export const STREAM_METHODS = ['logs.follow', 'status.follow'];
 
 /** Every method this daemon answers, streaming ones included. Advertised by
  *  `info` so a client can ask instead of probing for `unknown method`. */
-export const METHODS: string[] = [...Object.keys(HANDLERS), ...STREAM_METHODS].sort();
+export const METHODS: string[] = [...HANDLERS.keys(), ...STREAM_METHODS].sort();
 
 async function dispatch(
   method: string,
   params: Record<string, unknown>,
   ctx: RpcContext,
 ): Promise<unknown> {
-  const handler = HANDLERS[method];
+  const handler = HANDLERS.get(method);
   if (!handler) throw new Error(`unknown method: ${method}`);
   return await handler(params, ctx);
 }

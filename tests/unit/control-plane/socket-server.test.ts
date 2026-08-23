@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startSocketServer, defaultSocketPath, METHODS, type RpcContext } from '../../../src/control-plane/socket-server.js';
+import { startSocketServer, defaultSocketPath, METHODS, STREAM_METHODS, type RpcContext } from '../../../src/control-plane/socket-server.js';
 import { CONTRACT_VERSION } from '../../../src/control-plane/types.js';
 import { readVersion } from '../../../src/utils/version.js';
 import type { ProcessState } from '../../../src/process/types.js';
@@ -638,6 +638,58 @@ describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
         const res = await rpcCall(path, { id: 1, method: 'teleport' });
         assert.match(res.error.message, /unknown method: teleport/);
         assert.ok(!METHODS.includes('teleport'));
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses Object.prototype members too, which a plain object would answer', async () => {
+    // The method name comes off the wire. With the handler table as a plain
+    // object, `{"method":"toString"}` found Object.prototype.toString, called
+    // it, and answered `"[object Undefined]"`; `"constructor"` echoed the
+    // params back. Both looked like real results to a client, and neither is
+    // in `info.methods` — so the daemon contradicted its own advertisement.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-proto-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('p', noopCtx(), { path });
+      try {
+        for (const method of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', 'isPrototypeOf', '__proto__']) {
+          const res = await rpcCall(path, { id: 1, method });
+          assert.equal(res.result, undefined, `${method} answered with a result: ${JSON.stringify(res)}`);
+          assert.equal(
+            res.error?.message, `unknown method: ${method}`,
+            `${method} was not reported as unknown: ${JSON.stringify(res)}`,
+          );
+          assert.ok(!METHODS.includes(method));
+        }
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes the streaming methods off the same list it advertises', async () => {
+    // Two hand-kept copies of these names is the drift the handler table was
+    // introduced to remove: a daemon answering a method it does not advertise
+    // makes a client checking `info.methods` refuse a feature that works.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-str-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('s', noopCtx({ states: () => new Map() }), { path });
+      try {
+        for (const method of STREAM_METHODS) {
+          // A streaming method acks and then holds the socket open; a
+          // dispatched one would answer `unknown method` instead.
+          const frames = await rpcStream(path, { id: 1, method, params: { svc: 'api' } }, 1, 1500);
+          assert.equal(frames[0]?.error, undefined, `${method} was not routed as a stream`);
+          assert.deepEqual(frames[0]?.result, { ok: true });
+        }
       } finally {
         await handle.close();
       }
