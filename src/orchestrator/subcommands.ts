@@ -239,7 +239,11 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
           for (const r of frame.data as ServiceRow[]) {
             out(`[${ts}] ${r.name.padEnd(24)}  ${r.status}/${r.health}`);
           }
-        }, err => { out(`error: ${err.message}`); resolve(1); });
+        }, err => { out(`error: ${err.message}`); resolve(1); },
+        // Without this the daemon going down under us reads as a clean end of
+        // stream and `devup ctl status --follow` exits 0 having said nothing —
+        // in a script, indistinguishable from "you pressed Ctrl-C".
+        () => { out('devup went away'); resolve(1); });
         process.once('SIGINT', () => { abort(); resolve(0); });
       });
     }
@@ -257,7 +261,8 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       return await new Promise<number>(resolve => {
         const abort = openStream(socketPath, 'logs.follow', { svc, tail: 100 }, frame => {
           out(frame.data as string);
-        }, err => { out(`error: ${err.message}`); resolve(1); });
+        }, err => { out(`error: ${err.message}`); resolve(1); },
+        () => { out('devup went away'); resolve(1); });
         process.once('SIGINT', () => { abort(); resolve(0); });
       });
     }

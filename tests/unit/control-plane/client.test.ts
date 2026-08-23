@@ -199,6 +199,38 @@ describe('control-plane client', { skip: !isUnix }, () => {
     assert.equal(closed, true);
   });
 
+  it('reports a rejected stream request once, not as an error and a close', { timeout: 5000 }, async () => {
+    // The daemon refuses the request (svc must be a non-empty string) and the
+    // client destroys the socket — which is a close it caused itself. Reported
+    // as both, a consumer following the documented shape (report on error,
+    // reconnect on close) opens a reconnection for a request that was simply
+    // refused.
+    await withServer({}, async path => {
+      let errors = 0, closes = 0;
+      openStream(path, 'logs.follow', { svc: 123 }, () => {}, () => { errors++; }, () => { closes++; });
+      await new Promise(r => setTimeout(r, 400));
+      assert.equal(errors, 1);
+      assert.equal(closes, 0);
+    });
+  });
+
+  it('surfaces an error frame that arrives after the ack', { timeout: 5000 }, async () => {
+    // The daemon acks `logs.follow` *before* it reads the log file, so a
+    // failure in that read answers with an error frame and never registers the
+    // watcher: the stream is dead. A client that only looks for `event` drops
+    // the frame and waits for ever on a socket that will never speak again —
+    // the exact silence onError and onClose exist to end.
+    const failing = { tailLogs: async () => { throw new Error('disk on fire'); } };
+    await withServer(failing, async path => {
+      const seen = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('nothing was reported at all')), 3000);
+        openStream(path, 'logs.follow', { svc: 'api', tail: 5 }, () => {},
+          err => { clearTimeout(timer); resolve(err.message); });
+      });
+      assert.match(seen, /disk on fire/);
+    });
+  });
+
   it('does not report a close for a stream the caller aborted', { timeout: 5000 }, async () => {
     // Otherwise a caller replacing its subscription tears down the
     // replacement: it reads its own abort as the daemon vanishing.

@@ -158,11 +158,23 @@ export function openStream(
     // `null` parses fine but is not a frame; reading .error off it would throw
     // out of this listener and take the process down.
     if (!msg || typeof msg !== 'object') return;
+    // Every error path goes through `onErr`, never `onError` directly: it is
+    // what sets the latch, and without the latch the `c.destroy()` below is
+    // read as the daemon vanishing and fires `onClose` too. A consumer
+    // following the documented shape — report on error, reconnect on close —
+    // would then open a reconnection for a request the daemon simply refused.
     if (!ackDone) {
       ackDone = true;
-      if (msg.error) { onError?.(new Error(msg.error.message ?? String(msg.error))); c.destroy(); }
+      if (msg.error) { onErr(new Error(msg.error.message ?? String(msg.error))); c.destroy(); }
       return;
     }
+    // An error can also arrive *after* the ack. `handleFollow` acks
+    // `logs.follow` before it reads the log file, so a failure in that read
+    // answers with an error frame and never registers the watcher: the stream
+    // is dead. Dropping the frame for want of an `event` key leaves the
+    // consumer waiting on a socket that will never speak again — the exact
+    // silence `onError` and `onClose` exist to end.
+    if (msg.error) { onErr(new Error(msg.error.message ?? String(msg.error))); c.destroy(); return; }
     // Deliberately outside the try: a throw from onFrame is a bug in the
     // consumer, not a malformed frame, and swallowing it hides the failure —
     // that is how `ctl status --follow` came to print nothing at all when the

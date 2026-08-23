@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **An RPC no longer hangs for ever when the daemon dies mid-request.** `sendRpc` waited on a response line that a killed daemon never sends, with nothing watching the socket close. It rejects now — the failure mode a test harness can least afford.
 - **A stream no longer reports the same failure twice.** `openStream` listened for `'error'` on both the socket and the readline interface, and readline re-forwards its input's errors — so one `ECONNREFUSED` called `onError` twice, and a consumer that reconnects from it doubled its connections on every retry.
+- **A stream now reports an error the daemon sends *after* the ack.** `logs.follow` is acknowledged before the log file is read, so a failure in that read answers with an error frame and never registers the watcher — the stream was dead, and a client looking only for `event` frames dropped the message and waited for ever on a socket that would never speak again.
 - **A stream now says when the daemon goes away.** `devup down` destroys its clients, and over a Unix socket that is a clean EOF: no error fired, nothing was called, and a long-lived consumer went quietly stale across a daemon restart. `openStream` takes an `onClose` — not called for a stream you aborted yourself, or the caller replacing its subscription would tear down the replacement.
 
 ## [0.15.0] — 2026-08-22
