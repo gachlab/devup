@@ -22,10 +22,11 @@
  *     needs the window photographed at both ends, and only the daemon has the
  *     counters. Without it a suite goes green while an API throws on every
  *     request. */
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
 import { createClient, resolveSocket } from '../control-plane/client.js';
-import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
+import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS } from '../control-plane/wait.js';
+import { fmtSettled } from './subcommands.js';
 import { isDaemonRunning, runDetached, stopDaemon, type DaemonOpts } from './daemon.js';
 import type { ServiceSnapshot } from '../control-plane/types.js';
 
@@ -64,6 +65,20 @@ export function execOwnArgs(raw: string[]): string[] {
   return dashdash === -1 ? raw : raw.slice(0, dashdash);
 }
 
+/** The argv devup should read as its own, for any subcommand.
+ *
+ *  Only `exec` takes a command, so only `exec` has to stop at `--`. Kept as
+ *  one function because it has two callers in `main()` — the `-h`/`-v`
+ *  short-circuit and `parseCliArgs` — and they must not disagree: scanning the
+ *  whole argv for `--help` made `devup exec -- npx playwright test --help`
+ *  print devup's usage and exit 0 without running anything.
+ *
+ *  `subcmd` is `detectSubcommand`'s answer, so an argument that merely looks
+ *  like `exec` after the command does not trigger it. */
+export function ownArgsFor(raw: string[], subcmd: string | null): string[] {
+  return subcmd === 'exec' ? execOwnArgs(raw) : raw;
+}
+
 /** Argv for the daemon child when `exec` is the one booting it.
  *
  *  The subcommand has to go: `runDetached`'s default derivation would hand the
@@ -96,6 +111,13 @@ export function parseExecArgs(argv: string[]): ExecFlags {
     waitTimeoutMs = secs * 1000;
   }
 
+  // `--once` reaches the daemon child through `daemonChildArgs`, and the child
+  // would then boot, tear everything down and exit — leaving `runDetached` to
+  // wait out its full 90 s for a pid file that is never written.
+  if (mine.includes('--once')) {
+    throw new Error('--once cannot be combined with exec: exec already boots, waits and tears down');
+  }
+
   return {
     start: mine.includes('--start'),
     failOnCrash: mine.includes('--fail-on-crash'),
@@ -108,19 +130,24 @@ export function parseExecArgs(argv: string[]): ExecFlags {
  *  while the command ran?". */
 interface CrashWindow {
   status: string;
-  restarts: number;
+  crashes: number;
 }
 
 function snapshotWindow(services: ServiceSnapshot[]): Map<string, CrashWindow> {
-  return new Map(services.map(s => [s.name, { status: s.status, restarts: s.restarts }]));
+  return new Map(services.map(s => [s.name, { status: s.status, crashes: s.crashes }]));
 }
 
 /** Services that crashed between the two photographs.
  *
- *  `restarts` going up is the reliable signal: the daemon bumps it for every
- *  auto-restart, so a service that died and came back is caught even though it
- *  reads healthy at both ends. A service that exhausted its restart budget
- *  never bumps it again, hence the second clause.
+ *  `crashes` going up is the signal, and it has to be a **monotonic** counter:
+ *  a service that died and came back reads healthy at both ends, so the count
+ *  is the only trace left. `restarts` looks like it would do the job and does
+ *  not — it is a budget, and `Restarter.restart` and `startService` both reset
+ *  it to 0, so a suite whose own setup calls `devup ctl restart` would hide
+ *  every crash that followed.
+ *
+ *  The second clause catches a service that ended the window crashed without
+ *  having started it that way, for whatever the counter missed.
  *
  *  Deliberately not `errors`: it counts stderr lines, and plenty of healthy
  *  tools write to stderr — the Angular CLI does it constantly. Using it would
@@ -130,7 +157,7 @@ export function crashedDuring(before: Map<string, CrashWindow>, after: ServiceSn
   for (const svc of after) {
     const prev = before.get(svc.name);
     if (!prev) continue; // appeared mid-run (config reload) — not our window
-    if (svc.restarts > prev.restarts) { out.push(svc.name); continue; }
+    if (svc.crashes > prev.crashes) { out.push(svc.name); continue; }
     if (svc.status === 'crashed' && prev.status !== 'crashed') out.push(svc.name);
   }
   return out;
@@ -174,6 +201,27 @@ export async function runExec(opts: ExecOpts): Promise<number> {
   const socketPath = opts.socketPath ?? resolveSocket(projectName);
   const client = createClient(socketPath);
 
+  // Ctrl-C, or a CI job-level SIGTERM, can arrive during the readiness wait —
+  // up to two minutes of it. Node's default handler would kill us there, the
+  // `finally` below would never run, and a daemon *we* started would be left
+  // holding every port, so the next `devup up -d` refuses. Hence a handler
+  // from the moment the daemon becomes ours, not from the moment the command
+  // starts.
+  let child: ChildProcess | null = null;
+  let interrupted: NodeJS.Signals | null = null;
+  const onSignal = (sig: NodeJS.Signals) => {
+    if (interrupted) return;   // a second Ctrl-C while we tear down
+    interrupted = sig;
+    try { child?.kill(sig); } catch { /* already gone */ }
+    // No exit here: the `finally` needs to run. If the command is still going,
+    // its own close handler resolves and unwinds; if we are still waiting, the
+    // check after the wait picks this up.
+  };
+  const onInt = () => onSignal('SIGINT');
+  const onTerm = () => onSignal('SIGTERM');
+  process.on('SIGINT', onInt);
+  process.on('SIGTERM', onTerm);
+
   // Everything from here on has to reach the teardown, including a throw.
   let exitCode = 1;
   try {
@@ -193,7 +241,7 @@ export async function runExec(opts: ExecOpts): Promise<number> {
         services: selection,
         start: flags.start,
         timeoutMs: flags.waitTimeoutMs,
-        onSettled: svc => out(formatSettled(svc)),
+        onSettled: svc => out(fmtSettled(svc)),
       });
     } catch (e: any) {
       out(`✗ ${e.message ?? String(e)}`);
@@ -208,6 +256,10 @@ export async function runExec(opts: ExecOpts): Promise<number> {
       for (const s of wait.notReady) out(`    ${s.name}  ${s.reason ?? `${s.status}/${s.health}`}`);
       return 1;
     }
+    if (interrupted) {
+      out(`⏹ interrupted (${interrupted}) before the command started`);
+      return SIGNAL_BASE + (signalNumber(interrupted) ?? 0);
+    }
     out(`✓ ready in ${(wait.elapsedMs / 1000).toFixed(1)}s`);
 
     // ── 3. Run the command ──
@@ -215,7 +267,7 @@ export async function runExec(opts: ExecOpts): Promise<number> {
     out(`▶ ${flags.command.join(' ')}`);
     const result = opts.spawnCommand
       ? await opts.spawnCommand(flags.command[0]!, flags.command.slice(1))
-      : await runCommand(flags.command[0]!, flags.command.slice(1), opts.baseCwd, opts.env);
+      : await runCommand(flags.command[0]!, flags.command.slice(1), opts.baseCwd, opts.env, c => { child = c; });
 
     exitCode = result.signal
       ? SIGNAL_BASE + (signalNumber(result.signal) ?? 0)
@@ -235,6 +287,8 @@ export async function runExec(opts: ExecOpts): Promise<number> {
     }
     return exitCode;
   } finally {
+    process.off('SIGINT', onInt);
+    process.off('SIGTERM', onTerm);
     if (ownsDaemon) {
       out(`⏹ stopping the daemon we started`);
       await stopDaemon(projectName, { out }).catch(() => {});
@@ -242,12 +296,6 @@ export async function runExec(opts: ExecOpts): Promise<number> {
   }
 }
 
-function formatSettled(svc: WaitServiceResult): string {
-  if (svc.readiness !== 'ready') return `  ✗ ${svc.name}  ${svc.reason ?? `${svc.status}/${svc.health}`}`;
-  const when = svc.readyAfterMs === null ? '' : `  ${(svc.readyAfterMs / 1000).toFixed(1)}s`;
-  const note = svc.status === 'idle' ? '  idle (lazy — starts on demand)' : '';
-  return `  ✓ ${svc.name}${when}${note}`;
-}
 
 /** Run the command with our stdio, and report how it ended.
  *
@@ -258,31 +306,20 @@ function runCommand(
   args: string[],
   cwd: string,
   env: Record<string, string>,
+  /** Hands the child back so the caller's signal handler can forward to it.
+   *  The child usually gets the signal anyway — same process group in a
+   *  terminal — but not when devup runs from a script that does not make one,
+   *  and a duplicate SIGINT is harmless. */
+  onSpawn: (child: ChildProcess) => void,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   return new Promise(resolve => {
     const child = spawn(cmd, args, { cwd, env, stdio: 'inherit' });
-
-    // Forward the signal rather than dying on it: the teardown in the caller's
-    // `finally` has to run, and it cannot if this process is already gone.
-    // The child usually gets the signal anyway (same process group in a
-    // terminal), but not when devup is run from a script that does not make
-    // one, and a duplicate SIGINT is harmless.
-    const forward = (sig: NodeJS.Signals) => { try { child.kill(sig); } catch { /* already gone */ } };
-    const onInt = () => forward('SIGINT');
-    const onTerm = () => forward('SIGTERM');
-    process.on('SIGINT', onInt);
-    process.on('SIGTERM', onTerm);
-
-    const done = (r: { code: number | null; signal: NodeJS.Signals | null }) => {
-      process.off('SIGINT', onInt);
-      process.off('SIGTERM', onTerm);
-      resolve(r);
-    };
+    onSpawn(child);
     child.on('error', (e: NodeJS.ErrnoException) => {
       process.stderr.write(`❌ cannot run "${cmd}": ${e.message}\n`);
-      done({ code: e.code === 'ENOENT' ? ENOENT_CODE : 1, signal: null });
+      resolve({ code: e.code === 'ENOENT' ? ENOENT_CODE : 1, signal: null });
     });
-    child.on('close', (code, signal) => done({ code, signal }));
+    child.on('close', (code, signal) => resolve({ code, signal }));
   });
 }
 

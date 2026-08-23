@@ -127,6 +127,10 @@ export class Spawner {
       status: 'starting', health: 'wait',
       errors: prev?.errors ?? 0,
       restarts: prev?.restarts ?? 0,
+      // Carried over: a respawn is not a reason to forget the service ever
+      // crashed, and forgetting is exactly what makes `restarts` unusable as a
+      // window signal.
+      crashes: prev?.crashes ?? 0,
       startedAt: Date.now(),
       intentionalStop: false,
       colorIdx,
@@ -244,6 +248,9 @@ export class Spawner {
         return;
       }
       state.status = 'crashed'; state.health = 'down';
+      // Monotonic, unlike `restarts`, which a manual restart resets — see
+      // ProcessState.crashes.
+      state.crashes = (state.crashes ?? 0) + 1;
       const buf = (state as ProcessState & { _stderrBuf?: string[] })._stderrBuf;
       state.crashLog = buf && buf.length ? [...buf] : null;
       this.log(svc.name, `❌ exited with code ${code}`, colorIdx);
@@ -294,6 +301,7 @@ export class Spawner {
       status: 'crashed', health: 'down',
       errors: prev?.errors ?? 0,
       restarts: prev?.restarts ?? 0,
+      crashes: (prev?.crashes ?? 0) + 1,
       startedAt: null,
       intentionalStop: false,
       colorIdx,

@@ -12,7 +12,7 @@ import type { ServiceSnapshot, StatusResult } from '../../../src/control-plane/t
 function svc(over: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
   return {
     name: 'app-api', status: 'running', health: 'up', port: 3000, originalPort: 3000,
-    type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0,
+    type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0, crashes: 0,
     pid: 100, startedAt: 1755800000000, crashLog: null, debugPort: null,
     ...over,
   };
@@ -61,16 +61,25 @@ describe('classify', () => {
     assert.match(r.reason!, /lazy/);
   });
 
-  it('gives up on a service in timeout — nothing will probe it again', () => {
-    // The health poller skips `timeout` outright, so it is a state the service
-    // cannot leave on its own. Waiting out the clock only wastes the clock.
+  it('keeps waiting on a service in timeout — its startup timer gave up, not devup', () => {
+    // Treating `timeout` as terminal caps every wait at the startup timeout,
+    // 45 s by default — well under the two minutes a cold front end can need,
+    // and under this function's own default. The health poller keeps probing
+    // it, and a readyPattern can still land.
     const r = classify(svc({ status: 'timeout', health: 'down', port: 4201 }), false);
-    assert.equal(r.readiness, 'failed');
+    assert.equal(r.readiness, 'waiting');
     assert.match(r.reason!, /4201/);
   });
 
-  it('keeps waiting on a crash — the auto-restarter may still get it back', () => {
-    const r = classify(svc({ status: 'crashed', health: 'down', pid: null, startedAt: null }), false);
+  it('gives up on a service that has spent its restart budget', () => {
+    // The restarter will not touch it again, so nothing can change.
+    const r = classify(svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 4, pid: null, startedAt: null }), false);
+    assert.equal(r.readiness, 'failed');
+    assert.match(r.reason!, /will not be restarted again/);
+  });
+
+  it('keeps waiting on a crash that still has budget left', () => {
+    const r = classify(svc({ status: 'crashed', health: 'down', restarts: 1, crashes: 1, pid: null, startedAt: null }), false);
     assert.equal(r.readiness, 'waiting');
   });
 
@@ -117,13 +126,26 @@ describe('waitForServices', () => {
     assert.equal(typeof res.services[0]!.readyAfterMs, 'number');
   });
 
-  it('gives up immediately on a service in timeout, without burning the clock', async () => {
-    const client = fakeClient([[svc({ status: 'timeout', health: 'down' })]]);
+  it('gives up immediately on a service that will not be restarted again', async () => {
+    const dead = svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 3, pid: null, startedAt: null });
+    const client = fakeClient([[dead]]);
     const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 30_000 });
     assert.equal(res.ok, false);
     assert.equal(res.failedFast, true);
     assert.ok(res.elapsedMs < 1000, `should not have waited 30s, waited ${res.elapsedMs}ms`);
     assert.deepEqual(res.notReady.map(s => s.name), ['app-api']);
+  });
+
+  it('still waits on a service in timeout that comes good late', async () => {
+    // 45 s is the startup timer, not devup's patience, and a readyPattern that
+    // lands at 60 s is a front end that is genuinely serving.
+    const client = fakeClient([
+      [svc({ status: 'timeout', health: 'down' })],
+      [svc({ status: 'timeout', health: 'down' })],
+      [svc({ status: 'running', health: 'up' })],
+    ]);
+    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 2000 });
+    assert.equal(res.ok, true, JSON.stringify(res.notReady));
   });
 
   it('runs out of time and names what never arrived', async () => {

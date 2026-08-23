@@ -1,6 +1,7 @@
 import { ProcessManager } from '../process/manager.js';
 import { checkHealth } from '../process/health.js';
 import { groupByPhase } from '../utils.js';
+import { MAX_RESTARTS } from '../process/internals.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
 import type { Platform } from '../platform/types.js';
@@ -76,7 +77,10 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     for (const svc of phases[num]!) {
       const ok = await waitReady(mgr, svc, deadline);
       if (!ok) {
-        out(`✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
+        const st = mgr.state.get(svc.name);
+        out(st?.status === 'crashed' && st.restarts >= MAX_RESTARTS
+          ? `✗ ${svc.name} crashed ${st.restarts} times and will not be restarted again`
+          : `✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
         if (svc.type === 'web' && !svc.readyPattern) {
           // Its port is all we had to go on, and for a dev server that opens
           // late this is the difference between a real failure and a config
@@ -119,8 +123,13 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
 async function waitReady(mgr: ProcessManager, svc: ServiceConfig, deadline: number): Promise<boolean> {
   const patternOnly = svc.type === 'web' && !!svc.readyPattern;
   while (Date.now() < deadline) {
+    const st = mgr.state.get(svc.name);
     // The spawner sets health to 'up' the moment a line matches readyPattern.
-    if (mgr.state.get(svc.name)?.health === 'up') return true;
+    if (st?.health === 'up') return true;
+    // Nothing is going to bring it back: the restarter has spent its budget.
+    // Waiting out the remaining two minutes only delays a failure that is
+    // already decided, and CI pays for the delay.
+    if (st?.status === 'crashed' && st.restarts >= MAX_RESTARTS) return false;
     if (!patternOnly) {
       const { ok } = await checkHealth(svc.port, svc.healthCheck);
       if (ok) return true;

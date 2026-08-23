@@ -1,13 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseExecArgs, crashedDuring, execOwnArgs, daemonChildArgs } from '../../../src/orchestrator/exec.js';
+import { parseExecArgs, crashedDuring, execOwnArgs, ownArgsFor, daemonChildArgs } from '../../../src/orchestrator/exec.js';
 import { parseCliArgs } from '../../../src/config/cli.js';
 import type { ServiceSnapshot } from '../../../src/control-plane/types.js';
 
 function svc(over: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
   return {
     name: 'app-api', status: 'running', health: 'up', port: 3000, originalPort: 3000,
-    type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0,
+    type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0, crashes: 0,
     pid: 1, startedAt: 1, crashLog: null, debugPort: null, ...over,
   };
 }
@@ -41,6 +41,13 @@ describe('parseExecArgs', () => {
     assert.throws(() => parseExecArgs(['--wait-timeout', 'soon', '--', 'true']), /invalid --wait-timeout: soon/);
     assert.throws(() => parseExecArgs(['--wait-timeout', '0', '--', 'true']), /invalid --wait-timeout: 0/);
     assert.throws(() => parseExecArgs(['--wait-timeout', '--', 'true']), /invalid --wait-timeout/);
+  });
+
+  it('refuses --once, which would leave the daemon child booting and exiting', () => {
+    // The child gets it through daemonChildArgs, runs runOnce, tears
+    // everything down and exits — and runDetached waits out its full 90 s for
+    // a pid file nobody is going to write.
+    assert.throws(() => parseExecArgs(['--once', '--', 'true']), /--once cannot be combined with exec/);
   });
 
   it('defaults to 120s', () => {
@@ -77,6 +84,30 @@ describe('exec argv', () => {
     assert.ok(!daemonChildArgs(raw).includes('playwright'));
   });
 
+  it('keeps the command\'s --help and -v out of devup\'s short-circuit', () => {
+    // devup scans for -h/-v before anything else and exits 0. Scanning the
+    // whole argv made `devup exec -- npx playwright test --help` print devup's
+    // usage and exit 0 without booting or running anything — which in CI reads
+    // as a pass. `ownArgsFor` is what both that scan and parseCliArgs use, so
+    // they cannot disagree.
+    for (const flag of ['--help', '-h', '--version', '-v']) {
+      const own = ownArgsFor(['exec', '--profile', 'e2e', '--', 'mytool', 'run', flag], 'exec');
+      assert.ok(!own.includes(flag), `${flag} after -- belongs to the command`);
+    }
+    // devup's own still work.
+    assert.ok(ownArgsFor(['exec', '--help'], 'exec').includes('--help'));
+  });
+
+  it('only stops at -- for exec; every other subcommand keeps its argv', () => {
+    // `devup logs api -- whatever` has no command to protect, and truncating
+    // there would silently drop flags from subcommands that legitimately use
+    // `--`.
+    const raw = ['ctl', 'restart', 'api', '--', '--timeout', '9'];
+    assert.deepEqual(ownArgsFor(raw, 'ctl'), raw);
+    assert.deepEqual(ownArgsFor(raw, null), raw);
+    assert.deepEqual(ownArgsFor(raw, 'exec'), ['ctl', 'restart', 'api']);
+  });
+
   it('passes the boot flags on to the child, and only those', () => {
     const args = daemonChildArgs(['exec', '--no-lazy', '--proxy', '--start', '--wait-timeout', '30', '--', 'true']);
     assert.deepEqual(args, ['--no-lazy', '--proxy', '--start', '--wait-timeout', '30']);
@@ -88,39 +119,48 @@ describe('exec argv', () => {
 
 describe('crashedDuring', () => {
   it('catches a service that died and came back inside the window', () => {
-    // The reason `restarts` is the signal: it reads healthy at both ends.
-    const before = new Map([['app-api', { status: 'running', restarts: 0 }]]);
-    assert.deepEqual(crashedDuring(before, [svc({ restarts: 1 })]), ['app-api']);
+    // It reads healthy at both ends; the counter is the only trace left.
+    const before = new Map([['app-api', { status: 'running', crashes: 0 }]]);
+    assert.deepEqual(crashedDuring(before, [svc({ crashes: 1, restarts: 1 })]), ['app-api']);
+  });
+
+  it('still catches it when a manual restart reset the restart budget', () => {
+    // The reason the signal cannot be `restarts`: Restarter.restart and
+    // startService both zero it, so a suite whose own setup calls
+    // `devup ctl restart` would hide every crash that followed.
+    const before = new Map([['app-api', { status: 'running', crashes: 2 }]]);
+    const after = [svc({ crashes: 3, restarts: 0 })];
+    assert.deepEqual(crashedDuring(before, after), ['app-api']);
   });
 
   it('catches one that crashed and stayed down', () => {
-    const before = new Map([['app-api', { status: 'running', restarts: 3 }]]);
-    const after = [svc({ status: 'crashed', health: 'down', restarts: 3, pid: null, startedAt: null })];
+    const before = new Map([['app-api', { status: 'running', crashes: 3 }]]);
+    const after = [svc({ status: 'crashed', health: 'down', crashes: 3, pid: null, startedAt: null })];
     assert.deepEqual(crashedDuring(before, after), ['app-api']);
   });
 
   it('does not re-blame one that was already crashed before the command ran', () => {
-    const before = new Map([['app-api', { status: 'crashed', restarts: 3 }]]);
-    const after = [svc({ status: 'crashed', health: 'down', restarts: 3, pid: null, startedAt: null })];
+    const before = new Map([['app-api', { status: 'crashed', crashes: 3 }]]);
+    const after = [svc({ status: 'crashed', health: 'down', crashes: 3, pid: null, startedAt: null })];
     assert.deepEqual(crashedDuring(before, after), []);
   });
 
   it('says nothing about a healthy run', () => {
-    const before = new Map([['app-api', { status: 'running', restarts: 2 }]]);
-    assert.deepEqual(crashedDuring(before, [svc({ restarts: 2 })]), []);
+    const before = new Map([['app-api', { status: 'running', crashes: 2 }]]);
+    assert.deepEqual(crashedDuring(before, [svc({ crashes: 2 })]), []);
   });
 
   it('ignores stderr chatter — errors is not a crash signal', () => {
     // Plenty of healthy tools write to stderr; the Angular CLI does it
     // constantly. Counting it would make --fail-on-crash fire on nothing.
-    const before = new Map([['app-api', { status: 'running', restarts: 0 }]]);
+    const before = new Map([['app-api', { status: 'running', crashes: 0 }]]);
     assert.deepEqual(crashedDuring(before, [svc({ errors: 412 })]), []);
   });
 
   it('ignores a service that only appeared mid-run', () => {
     // A config reload added it; it was never in our window.
-    const before = new Map([['app-api', { status: 'running', restarts: 0 }]]);
-    const after = [svc(), svc({ name: 'newcomer', status: 'crashed', health: 'down', restarts: 1 })];
+    const before = new Map([['app-api', { status: 'running', crashes: 0 }]]);
+    const after = [svc(), svc({ name: 'newcomer', status: 'crashed', health: 'down', crashes: 1 })];
     assert.deepEqual(crashedDuring(before, after), []);
   });
 });

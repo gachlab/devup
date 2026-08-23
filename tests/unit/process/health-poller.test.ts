@@ -91,3 +91,76 @@ describe('HealthPoller and concurrent removal', () => {
     );
   });
 });
+
+describe('HealthPoller and readyPattern', () => {
+  /** A real listening port, so the probe genuinely succeeds. */
+  async function withOpenPort(fn: (port: number) => Promise<void>): Promise<void> {
+    const net = await import('node:net');
+    const server = net.createServer(s => s.destroy());
+    const port: number = await new Promise(r => server.listen(0, () => r((server.address() as import('node:net').AddressInfo).port)));
+    try { await fn(port); } finally { await new Promise<void>(r => server.close(() => r())); }
+  }
+
+  it('does not let a bare port probe speak for a service that declares a readyPattern', async () => {
+    // `ng serve` opens :4200 seconds before the bundle exists. Promoting on
+    // the probe marks a front end ready while a browser still gets nothing —
+    // and `ctl wait`, `devup exec` and the TUI all read this field.
+    await withOpenPort(async port => {
+      const svc: ServiceConfig = {
+        ...baseSvc, name: 'web', type: 'web', port,
+        readyPattern: 'Application bundle generation complete',
+      };
+      const state = new Map<string, ProcessState>([
+        ['web', mkState({ svc, status: 'starting', health: 'wait', pid: 1234 })],
+      ]);
+      const poller = new HealthPoller({ state, events: mkEvents() });
+      await poller.checkAll();
+      assert.equal(state.get('web')!.health, 'wait', 'the port answering is not the announcement');
+      assert.equal(state.get('web')!.status, 'starting');
+    });
+  });
+
+  it('accepts the port once the startup timer has given up on the pattern', async () => {
+    // A pattern that never matches — a typo, a tool that changed its wording —
+    // must not keep a working service marked down for the rest of the session.
+    await withOpenPort(async port => {
+      const svc: ServiceConfig = { ...baseSvc, name: 'web', type: 'web', port, readyPattern: 'never appears' };
+      const state = new Map<string, ProcessState>([
+        ['web', mkState({ svc, status: 'timeout', health: 'down', pid: 1234 })],
+      ]);
+      const poller = new HealthPoller({ state, events: mkEvents() });
+      await poller.checkAll();
+      assert.equal(state.get('web')!.health, 'up');
+      assert.equal(state.get('web')!.status, 'running');
+    });
+  });
+
+  it('promotes a service without a readyPattern on the probe, as before', async () => {
+    await withOpenPort(async port => {
+      const state = new Map<string, ProcessState>([
+        ['api', mkState({ svc: { ...baseSvc, port }, status: 'starting', health: 'wait', pid: 1234 })],
+      ]);
+      const poller = new HealthPoller({ state, events: mkEvents() });
+      await poller.checkAll();
+      assert.equal(state.get('api')!.health, 'up');
+      assert.equal(state.get('api')!.status, 'running');
+    });
+  });
+
+  it('keeps probing a service in timeout instead of writing it off for good', async () => {
+    // `timeout` used to be skipped outright, so a service that started slowly
+    // and then served perfectly well stayed marked down for the rest of the
+    // session — and every client, the TUI included, believed it.
+    await withOpenPort(async port => {
+      const state = new Map<string, ProcessState>([
+        ['api', mkState({ svc: { ...baseSvc, port }, status: 'timeout', health: 'down', pid: 1234 })],
+      ]);
+      const events = mkEvents();
+      const poller = new HealthPoller({ state, events });
+      await poller.checkAll();
+      assert.equal(state.get('api')!.health, 'up');
+      assert.equal(state.get('api')!.status, 'running', 'it is serving; it is not still timing out');
+      assert.ok(events.changes.some(([n, , h]) => n === 'api' && h === 'up'), 'clients have to be told');
+    });
+  });
+});

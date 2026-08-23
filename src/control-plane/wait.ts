@@ -7,13 +7,21 @@
  *    it is ready in the sense that matters — its proxy is listening and the
  *    first connection starts it. Polling its port for readiness is a false
  *    positive: the proxy answers whether or not the service is up.
- *  - A service in `timeout` never recovers on its own. The health poller skips
- *    that status outright, so waiting out the clock on one only wastes the
- *    clock.
- *  - Readiness is `health`, not `type`. A web with a `readyPattern` announces
- *    itself exactly like an API does. */
+ *  - `status: 'timeout'` is **not** terminal, and treating it as such caps
+ *    every wait at the startup timeout — 45 s by default, well under the two
+ *    minutes a cold front end can need. It only means the startup timer gave
+ *    up first.
+ *  - A service that has exhausted its restart budget is terminal, and that is
+ *    worth not waiting out.
+ *  - Readiness is `health`, and the daemon computes that from the service's
+ *    own `readyPattern` when it declares one — see `HealthPoller.checkAll`,
+ *    which deliberately does not let a bare port probe speak for a service
+ *    that said how it announces itself. */
 import type { DevupClient } from './client.js';
 import type { ServiceSnapshot, ProcessStatus, HealthStatus } from './types.js';
+// One number, from the daemon's own definition of it. Copying it here would
+// be a second source of truth for how many times a service gets to crash.
+import { MAX_RESTARTS } from '../process/internals.js';
 
 /** How long `waitForServices` waits when the caller says nothing. Generous on
  *  purpose: a cold `ng serve` is the slowest thing in a typical stack. */
@@ -72,10 +80,22 @@ export interface WaitOptions {
  *  Pure, and the only place the policy lives. */
 export function classify(svc: ServiceSnapshot, requireUp: boolean): { readiness: Readiness; reason?: string } {
   if (svc.health === 'up') return { readiness: 'ready' };
-  if (svc.status === 'timeout') {
+  if (svc.status === 'crashed' && svc.restarts >= MAX_RESTARTS) {
+    // The restarter has given up on it, so nothing will bring it back and
+    // waiting out the clock only wastes the clock. Note the *budget*, not the
+    // crash: a service inside its budget is on its way back up.
     return {
       readiness: 'failed',
-      reason: `never became healthy on :${svc.port} and will not be probed again`,
+      reason: `crashed ${svc.restarts} times and will not be restarted again — see \`devup ctl logs ${svc.name}\``,
+    };
+  }
+  if (svc.status === 'timeout') {
+    // Its startup timer gave up, not devup. The health poller keeps probing,
+    // and a `readyPattern` can still land, so this is somewhere to wait — just
+    // somewhere worth naming, since 45 s have already gone by.
+    return {
+      readiness: 'waiting',
+      reason: `startup timeout elapsed on :${svc.port}, still watching`,
     };
   }
   if (svc.status === 'idle') {

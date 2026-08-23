@@ -74,6 +74,7 @@ Snapshot of every service.
           "cwd": "app/api",
           "errors": 0,
           "restarts": 0,
+          "crashes": 0,
           "pid": 12345,
           "startedAt": 1716279183421,
           "crashLog": null
@@ -100,7 +101,12 @@ Fields per service mirror `ProcessState`:
 - `phase`: boot phase from config
 - `cmd`, `cwd`: as resolved for the spawn — `cwd` is relative to the project root
 - `errors`: cumulative since spawn
-- `restarts`: cumulative since spawn
+- `restarts`: the **auto-restart budget spent**, not a history — every manual
+  `restart` and every explicit `start` resets it to 0. Do not use it to ask
+  whether something died between two moments
+- `crashes`: how many times the service has crashed since the daemon started.
+  Only ever goes up, which is what makes it usable as a window signal — this is
+  what `devup exec --fail-on-crash` compares. Added in 0.16.0
 - `pid`: OS pid, `null` if not currently running
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
@@ -277,13 +283,18 @@ The hard half is what the snapshot means:
   start. Polling that port to find out is a false positive: the proxy answers
   either way. Pass `start: true` to have the start paid up front instead, in
   ascending `phase` order.
-- **A service in `timeout` fails the wait immediately.** The health poller
-  skips that status outright, so it is a state the service cannot leave on its
-  own and waiting out the clock only wastes the clock.
-- **Readiness is `health`, not `type`.** A web with a `readyPattern` announces
-  itself exactly like an API does.
+- **`status: 'timeout'` is not terminal.** It means the service's startup
+  timer gave up — 45 s by default — not that devup did. The health poller keeps
+  probing it, so a cold front end that lands at 60 s still counts. Treating it
+  as terminal would cap every wait at 45 s, well under the two minutes this
+  function defaults to.
+- **A service that has spent its restart budget does fail the wait**, right
+  away: the restarter will not touch it again, so nothing can change.
+- **Readiness is `health`**, and the daemon computes that from the service's
+  own `readyPattern` when it declares one — a bare port probe is not allowed to
+  speak for a service that said how it announces itself.
 
-One thing it cannot know: **the daemon's own health lags.** A service stopped
+Two things it cannot know. **The daemon's own health lags.** A service stopped
 or killed a moment ago still reads `running`/`up` until the health poller
 (every 3 s) has failed `failureThreshold` probes in a row — two by default. A
 wait issued immediately after a stop will correctly report ready about a

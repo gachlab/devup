@@ -42,7 +42,14 @@ export interface ServiceSnapshot {
   cmd: string;
   cwd: string;
   errors: number;
+  /** Auto-restarts left behind — a **budget**, not a history: every manual
+   *  restart and every explicit start resets it to 0. Do not use it to ask
+   *  whether something died between two moments; use `crashes`. */
   restarts: number;
+  /** How many times this service has crashed since the daemon started. Only
+   *  ever goes up, which is what makes it usable as a window signal — see
+   *  `devup exec --fail-on-crash`. Sent since 0.16.0. */
+  crashes: number;
   /** OS pid, `null` when not currently running. Note that a **stopped or
    *  crashed service keeps a dead pid** in the daemon's own state; this field
    *  is nulled on the idle transitions only. Use `status`/`health` for

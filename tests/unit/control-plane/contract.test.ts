@@ -70,6 +70,20 @@ describe('control-plane contract', () => {
     }
   });
 
+  it('pins crashes as a number that has actually moved', () => {
+    // A fixture where every entry reads 0 teaches a client the field is
+    // decorative, which is the opposite of what `--fail-on-crash` needs.
+    const moved = golden.services.filter((s: { crashes: number }) => s.crashes > 0);
+    assert.ok(moved.length > 0, 'no entry has ever crashed');
+  });
+
+  it('keeps crashes and restarts distinguishable', () => {
+    // `restarts` is a budget that a manual restart resets; `crashes` only goes
+    // up. A fixture where they always agree would let a client use either.
+    const differing = golden.services.filter((s: { crashes: number; restarts: number }) => s.crashes !== s.restarts);
+    assert.ok(differing.length > 0, 'nothing distinguishes the budget from the history');
+  });
+
   it('pins debugPort as a number, not only as null', () => {
     const withPort = golden.services.filter((s: { debugPort: unknown }) => typeof s.debugPort === 'number');
     assert.ok(withPort.length > 0, 'no entry runs under the inspector');

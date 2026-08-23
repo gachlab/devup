@@ -18,7 +18,7 @@ import { App } from './tui/App.js';
 import { LogSink } from './process/log-sink.js';
 import { runDryRun } from './orchestrator/dry-run.js';
 import { runOnce } from './orchestrator/once.js';
-import { runExec, execOwnArgs, daemonChildArgs } from './orchestrator/exec.js';
+import { runExec, ownArgsFor, daemonChildArgs } from './orchestrator/exec.js';
 import type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
 
 // Re-export for config files
@@ -39,27 +39,33 @@ function readVersion(): string {
 
 async function main() {
   const raw = process.argv.slice(2);
-  // --version / --help short-circuit before any config loading
-  if (raw.includes('-v') || raw.includes('--version')) {
-    console.log(readVersion());
-    return;
-  }
-  if (raw.includes('-h') || raw.includes('--help')) {
-    console.log(USAGE);
-    return;
-  }
 
   // Subcommand dispatch (devup logs / install / status / help). All require the config
   // file to be present so we can know which services exist and where logs live.
   const subcmd = detectSubcommand(raw);
+
+  // --version / --help short-circuit before any config loading — but only over
+  // devup's *own* arguments. `devup exec -- npx playwright test --help` asks
+  // Playwright for help, not devup: scanning the whole argv printed devup's
+  // usage and exited 0 without running anything, which in CI reads as a pass.
+  const ownArgs = ownArgsFor(raw, subcmd);
+  if (ownArgs.includes('-v') || ownArgs.includes('--version')) {
+    console.log(readVersion());
+    return;
+  }
+  if (ownArgs.includes('-h') || ownArgs.includes('--help')) {
+    console.log(USAGE);
+    return;
+  }
+
   if (subcmd === 'help') {
     process.exit(runHelp(raw.slice(1)));
   }
 
   const cwd = process.cwd();
-  // For `exec`, devup's own flags stop at `--`: everything after it belongs to
-  // the command. See `execOwnArgs`.
-  const cliArgs = parseCliArgs(subcmd === 'exec' ? execOwnArgs(raw) : raw);
+  // `ownArgs` above already stopped at `--` for exec: everything after it
+  // belongs to the command. See `execOwnArgs`.
+  const cliArgs = parseCliArgs(ownArgs);
 
   if (subcmd) {
     const subArgs = raw.slice(1);

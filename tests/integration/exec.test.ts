@@ -194,6 +194,35 @@ describe('devup exec against a real daemon', { skip: !isUnix }, () => {
     });
   });
 
+  it('is interruptible while it waits, so a daemon it booted cannot be orphaned', async () => {
+    // The window: Ctrl-C or a CI job-level SIGTERM arriving during the
+    // readiness wait — up to two minutes of it. With no handler installed yet,
+    // Node's default kills devup, the teardown never runs, and a daemon *we*
+    // started keeps every port, so the next `devup up -d` refuses.
+    await withDaemon('ExecSignals', async ({ config, projectDir }) => {
+      const before = { int: process.listenerCount('SIGINT'), term: process.listenerCount('SIGTERM') };
+      let during = { int: 0, term: 0 };
+      const out: string[] = [];
+      const code = await runExec(execOpts(config, projectDir, ['--wait-timeout', '20', '--', 'true'], out, {
+        out: (l: string) => {
+          out.push(l);
+          // Emitted immediately before the wait begins — the moment the window
+          // used to be open.
+          if (l.includes('waiting for')) {
+            during = { int: process.listenerCount('SIGINT'), term: process.listenerCount('SIGTERM') };
+          }
+        },
+        spawnCommand: async () => ({ code: 0, signal: null }),
+      }));
+      assert.equal(code, 0, out.join('|'));
+      assert.ok(during.int > before.int, 'SIGINT must already be handled while waiting');
+      assert.ok(during.term > before.term, 'SIGTERM must already be handled while waiting');
+      // And released again, or a long-lived host would accumulate them.
+      assert.equal(process.listenerCount('SIGINT'), before.int);
+      assert.equal(process.listenerCount('SIGTERM'), before.term);
+    });
+  });
+
   it('refuses when the running daemon has a different set of services', async () => {
     // Testing against a stack that is missing services is exactly the failure
     // `up -d`'s refusal exists to prevent. Narrowing to the intersection

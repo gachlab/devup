@@ -55,9 +55,12 @@ export function buildContractSnapshot(): Record<string, unknown> {
       serializeState('authorization-api', mkState(lazy, {
         status: 'idle', health: 'idle',
       })),
-      // Crashed, so `crashLog` is pinned as string[] rather than only ever null.
+      // Crashed, so `crashLog` is pinned as string[] rather than only ever null,
+      // and `crashes` as a number that has actually moved. Note it is higher
+      // than `restarts`: the budget was reset by a manual restart somewhere
+      // along the way, which is precisely why the two are separate fields.
       serializeState('app-web', mkState(web, {
-        status: 'crashed', health: 'down', errors: 2, restarts: 3,
+        status: 'crashed', health: 'down', errors: 2, restarts: 3, crashes: 5,
         crashLog: ['Error: listen EADDRINUSE: address already in use :::4201', '    at Server.setupListenHandle'],
       })),
     ],

@@ -201,10 +201,13 @@ die while the command was running? — has to be photographed at both ends, and
 only the daemon has the counters. Without this, a suite goes green while an API
 throws a stack trace on every request.
 
-The signal is `restarts` going up, plus a service that ended `crashed` without
-having started that way. Deliberately **not** `errors`: it counts stderr lines,
-and plenty of healthy tools write to stderr constantly — the Angular CLI does —
-so using it would make the flag fire on nothing at all.
+The signal is the snapshot's `crashes`, a counter that only goes up. It cannot
+be `restarts`, which looks like it would do the job: that is a *budget*, and
+both a manual `restart` and an explicit `start` reset it to 0 — so a suite
+whose own setup calls `devup ctl restart` would hide every crash after it.
+Deliberately **not** `errors` either: it counts stderr lines, and plenty of
+healthy tools write to stderr constantly — the Angular CLI does — so using it
+would make the flag fire on nothing at all.
 
 ### `devup ctl wait [svc...] [--profile <p>] [--start] [--timeout <s>] [--json]`
 
@@ -227,12 +230,15 @@ Three things it knows that a hand-written polling loop usually does not:
 - **`--start` is how you ask for that start to have been paid already**, in
   config phase order. That is the difference between a suite whose first test
   fails on a 10-second action timeout and one that passes on the first run.
-- **Readiness is `health`, not `type`.** A web with a `readyPattern` announces
-  itself exactly like an API does.
+- **Readiness is `health`**, and the daemon computes that from the service's
+  own `readyPattern` when it declares one — a bare port probe is not allowed to
+  speak for a service that said how it announces itself. A web with a pattern
+  therefore announces itself exactly like an API does.
 
-A service in `timeout` fails the wait immediately rather than burning the
-clock: the health poller skips that status outright, so it is a state the
-service cannot leave on its own.
+A service that has spent its restart budget fails the wait immediately rather
+than burning the clock — the restarter will not touch it again. A service in
+`timeout` does **not**: that only means its 45-second startup timer gave up,
+and the health poller keeps probing it.
 
 The same logic is importable — `waitForServices` from
 [`@gachlab/devup/client`](./control-plane.md#from-node) — so a harness in Node

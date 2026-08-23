@@ -191,8 +191,9 @@ function fmtStatus(rows: ServiceRow[], out: (l: string) => void): void {
 }
 
 /** One line per service as it settles, so a slow boot shows progress rather
- *  than a silent two minutes. */
-function fmtSettled(svc: WaitServiceResult): string {
+ *  than a silent two minutes. Shared with `devup exec`, which reports the same
+ *  wait. */
+export function fmtSettled(svc: WaitServiceResult): string {
   if (svc.readiness !== 'ready') return `  ✗ ${svc.name}  ${svc.reason ?? `${svc.status}/${svc.health}`}`;
   const when = svc.readyAfterMs === null ? '' : `  ${(svc.readyAfterMs / 1000).toFixed(1)}s`;
   // A lazy service counts as ready without being up: its proxy is listening.
