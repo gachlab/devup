@@ -165,12 +165,20 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
-      // `next ?? ''` and not `next`: a bare `--env` has to be
-      // distinguishable from no flag at all, or it falls back to `.env` in
-      // silence — which for a per-run override pointing at a test database
-      // means running the suite against the development one. index.ts rejects
-      // the empty string.
-      case '--env':              args.envFile = next ?? ''; i++; break;
+      // Empty string, not `undefined`, when there is no value: a bare `--env`
+      // has to be distinguishable from no flag at all, or it falls back to
+      // `.env` in silence — which for a per-run override pointing at a test
+      // database means running the suite against the development one.
+      // index.ts rejects the empty string.
+      //
+      // And a following *flag* is not a value: `--env --json` used to set the
+      // path to "--json" and swallow the flag with it.
+      case '--env': {
+        const hasValue = next !== undefined && !next.startsWith('-');
+        args.envFile = hasValue ? next : '';
+        if (hasValue) i++;
+        break;
+      }
       case '--json':             args.onceJson = true; break;
       case '--watch-config':     args.watchConfig = true; break;
       case '--kill-port-conflicts': args.killPortConflicts = true; break;

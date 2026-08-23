@@ -147,6 +147,15 @@ describe('--env and --json', () => {
     assert.equal(parseCliArgs(['--once', '--env=.env.e2e']).envFile, '.env.e2e');
   });
 
+  it('does not swallow a following flag as the path', () => {
+    // `--env --json` used to set the path to "--json" and consume the flag
+    // with it, so the run both lost its JSON output and died on a file called
+    // "--json".
+    const r = parseCliArgs(['--once', '--env', '--json']);
+    assert.equal(r.envFile, '');
+    assert.equal(r.onceJson, true, 'the flag it ate must survive');
+  });
+
   it('distinguishes a bare --env from no flag at all', () => {
     // Both used to come out `undefined`, so a bare `--env` fell back to `.env`
     // without a word. index.ts rejects the empty string.

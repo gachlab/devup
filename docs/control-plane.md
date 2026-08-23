@@ -263,7 +263,9 @@ way, and giving up early only loses you the answer.
 Errors:
 
 - Missing `svc` param → `{ error: { code: -32603, message: "param \"svc\" must be a non-empty string" } }`
-- Unknown service → silently no-op (devup ignores restarts of unknown services); the `result: { ok: true }` does NOT prove the service exists. Best practice: call `status` first to verify.
+- Unknown service → **errors** with `unknown service: <name>`. Until 0.16.0 it
+  was a silent no-op that still answered `ok: true`, so a typo looked like a
+  success; `start` has always errored, and now the two agree.
 
 ### `stop`
 

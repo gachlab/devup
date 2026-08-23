@@ -1,57 +1,61 @@
 import type { ProcessState } from './types.js';
+import { startService, type StartServiceHost } from './start-service.js';
 
-export interface RestartServiceHost {
-  state: Map<string, ProcessState>;
-  restart(name: string): Promise<void>;
+export interface RestartServiceHost extends StartServiceHost {
   stop(name: string): void;
 }
 
 export interface RestartOutcome {
-  /** Whether the service is running again. A lazy service left asleep counts
-   *  as fine: nothing was wrong with it. */
+  /** Whether the service is running again — the outcome, not an
+   *  acknowledgement. */
   ok: boolean;
   /** True when the service was lazy and idle, so there was nothing to restart.
-   *  Worth saying — "restarted" would be a lie, and waking it is not what
+   *  Worth saying: "restarted" would be a lie, and waking it is not what
    *  someone resetting state between suites asked for. */
   skippedIdle: boolean;
 }
 
-/** Restart one service, through its lazy proxy when it has one.
+/** Restart one service: stop it, then start it the way `start` starts it.
  *
- *  `ProcessManager.restart` goes straight to the spawner, which is right for
- *  an always-on service and wrong for a lazy one: the proxy owns the public
- *  port and tracks whether the service behind it is up. Spawning around it
- *  leaves `serviceReady` false, so the next request through the proxy starts a
- *  **second** process — for an API the `isPortBindable` pre-flight catches it,
- *  but a lazy web has no such guard and the two fight over the port until the
- *  daemon loses its handle on the one that is actually serving. The idle timer
- *  is re-armed inside `ensureStarted` too, so a service restarted around the
- *  proxy never idles again either.
+ *  Deliberately **not** `ProcessManager.restart`, and deliberately the same
+ *  shape as `debugService`, which has always restarted this way. Going
+ *  straight to the spawner skips four things that each bite:
  *
- *  Same invariant `startService` and `debugService` already follow, and the
- *  one `lazy/proxy.ts` states on `ensureStarted`. It became load-bearing when
- *  `devup ctl restart --all` turned "restart one service" into "restart every
- *  lazy service in the stack". */
+ *  1. **The lazy proxy.** It owns the public port and tracks whether the
+ *     service behind it is up; spawning around it leaves that flag false, so
+ *     the next request starts a *second* process. An API survives on
+ *     `isPortBindable`; a lazy web has no such guard, and the two then fight
+ *     over the port until the daemon loses its handle on the one serving.
+ *  2. **Waiting for the old process to actually exit.** `stop()` only sends
+ *     SIGTERM, and a service that drains on shutdown is still listening
+ *     afterwards. `startService` waits for the exit; calling
+ *     `proxy.ensureStarted()` straight after the stop does something worse
+ *     than race it — `ensureStarted` short-circuits on
+ *     `serviceReady && isAlive() && checkPort()`, all three of which still
+ *     hold in that window, so it returns `true` **without respawning** and the
+ *     service is left down once it finishes draining.
+ *  3. **A queued auto-restart.** One already scheduled fires seconds later and
+ *     spawns a second process for the same name.
+ *  4. **The restart budget.** A manual restart earns a fresh one, or a service
+ *     that exhausted `MAX_RESTARTS` never auto-restarts again.
+ *
+ *  It also means `ok` is real: `Restarter.restart` returns `void` and swallows
+ *  a failed `preBuild`, a missing watch path and a port already taken, so the
+ *  old path answered `ok: true` over a service that never came back. */
 export async function restartService(
   host: RestartServiceHost,
   lazyProxies: Map<string, { ensureStarted(): Promise<boolean> }> | undefined,
   name: string,
 ): Promise<RestartOutcome> {
-  const st = host.state.get(name);
+  const st: ProcessState | undefined = host.state.get(name);
   if (!st) throw new Error(`unknown service: ${name}`);
 
-  const proxy = lazyProxies?.get(name);
-  if (!proxy) {
-    await host.restart(name);
-    return { ok: true, skippedIdle: false };
+  // Asleep: there is no process to restart, and its state is already fresh.
+  // Waking it is the opposite of what `restart --all` between suites is for.
+  if (lazyProxies?.has(name) && st.status === 'idle') {
+    return { ok: true, skippedIdle: true };
   }
 
-  // Asleep: there is no process to restart, and its state is already fresh.
-  // Waking it here would be the opposite of what `restart --all` between test
-  // suites is for.
-  if (st.status === 'idle') return { ok: true, skippedIdle: true };
-
   host.stop(name);
-  // Through the proxy, never around it — see above.
-  return { ok: await proxy.ensureStarted(), skippedIdle: false };
+  return { ok: await startService(host, lazyProxies, name), skippedIdle: false };
 }
