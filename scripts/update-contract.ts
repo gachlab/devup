@@ -7,4 +7,7 @@ import { buildContractSnapshot } from '../src/control-plane/contract-fixture.js'
 
 writeFileSync(CONTRACT_FIXTURE_PATH, JSON.stringify(buildContractSnapshot(), null, 2) + '\n');
 console.log(`wrote ${CONTRACT_FIXTURE_PATH}`);
-console.log('This is an API change: update docs/control-plane.md and gachlab/devup-vscode to match.');
+console.log('This is an API change. Update, in the same commit:');
+console.log('  - docs/control-plane.md');
+console.log('  - gachlab/devup-vscode (src/types.ts, src/socket-client.ts)');
+console.log('  - CONTRACT_VERSION in src/control-plane/types.ts, if the shape a client sees changed');

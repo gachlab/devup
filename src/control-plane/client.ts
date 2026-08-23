@@ -25,6 +25,7 @@ export {
 export type {
   WaitOptions, WaitResult, WaitServiceResult, Readiness,
 } from './wait.js';
+export { CONTRACT_VERSION } from './types.js';
 export type {
   ServiceSnapshot, ProxyInfo, StatusResult, StatsResult, ServiceStatEntry,
   ProjectInfo, PingResult, OkResult, DebugResult, LogsTailResult, StreamFrame,
@@ -219,7 +220,19 @@ export interface DevupClient {
   ping(opts?: SendRpcOpts): Promise<PingResult>;
   /** Every service, plus the active proxy config (`null` when none). */
   status(opts?: SendRpcOpts): Promise<StatusResult>;
-  /** Project name, profiles from config. */
+  /** Project name and profiles, plus what this daemon *is*: its `version`,
+   *  the `contract` revision of the wire shapes it speaks, and the `methods`
+   *  it answers.
+   *
+   *  Those three are absent from daemons before 0.16.0 — which is itself the
+   *  answer when you are asking how old one is. Prefer `methods.includes(…)`
+   *  over probing for an `unknown method` error, and `contract` over keeping
+   *  your own table of what arrived in which release.
+   *
+   *  Give the absent case its own branch: `!info.methods?.includes('debug')`
+   *  is `true` for a 0.15 daemon that debugs perfectly well, so a check
+   *  written that way turns away the very daemons it was added to help. See
+   *  docs/control-plane.md#info. */
   info(opts?: SendRpcOpts): Promise<ProjectInfo>;
   /** Per-service CPU/memory plus host totals. */
   stats(opts?: SendRpcOpts): Promise<StatsResult>;

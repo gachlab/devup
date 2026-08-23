@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
-import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
@@ -18,6 +18,7 @@ import { App } from './tui/App.js';
 import { LogSink } from './process/log-sink.js';
 import { runDryRun } from './orchestrator/dry-run.js';
 import { runOnce } from './orchestrator/once.js';
+import { readVersion } from './utils/version.js';
 import { runExec, ownArgsFor, daemonChildArgs } from './orchestrator/exec.js';
 import type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
 
@@ -26,16 +27,6 @@ export { defineConfig } from './config/types.js';
 export type { DevStackConfig, ServiceConfig, LazyConfig, ProxyConfig } from './config/types.js';
 export type { Platform, ProcessStats } from './platform/types.js';
 export type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
-
-function readVersion(): string {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const pkgPath = join(here, '..', 'package.json');
-    return JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
 
 async function main() {
   const raw = process.argv.slice(2);

@@ -5,7 +5,9 @@ import { createInterface } from 'node:readline';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startSocketServer, defaultSocketPath, type RpcContext } from '../../../src/control-plane/socket-server.js';
+import { startSocketServer, defaultSocketPath, METHODS, STREAM_METHODS, type RpcContext } from '../../../src/control-plane/socket-server.js';
+import { CONTRACT_VERSION } from '../../../src/control-plane/types.js';
+import { readVersion } from '../../../src/utils/version.js';
 import type { ProcessState } from '../../../src/process/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 
@@ -29,6 +31,11 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
     start: async () => true,
+    // Was missing, and `tests/` is not typechecked so nothing said so — the
+    // daemon answered `ctx.debug is not a function`, which the "advertises
+    // every method" check below happily accepted because it only rejected
+    // messages saying `unknown method`.
+    debug: async () => ({ debug: false, port: null, ok: true }),
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -546,5 +553,163 @@ describe('socket-server', { skip: !isUnix }, () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
+  it('carries the version, the contract and the method list', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-info-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('i', noopCtx({
+        getInfo: () => ({ project: 'Guesthub', profiles: { e2e: ['app-api'] } }),
+      }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'info' });
+        // Still everything it used to say.
+        assert.equal(res.result.project, 'Guesthub');
+        assert.deepEqual(res.result.profiles, { e2e: ['app-api'] });
+        // And what it is.
+        assert.equal(res.result.version, readVersion());
+        assert.match(res.result.version, /^\d+\.\d+\.\d+/, 'a real version, not "unknown"');
+        assert.equal(res.result.contract, CONTRACT_VERSION);
+        assert.ok(Array.isArray(res.result.methods));
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('composes those three itself, so the two getInfo implementations cannot drift', async () => {
+    // `getInfo` is written twice — once in the daemon, once in the TUI's
+    // control plane — and they have drifted before. Anything identical for
+    // every daemon of a given build is added here, not asked of either.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-info2-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('i', noopCtx({
+        getInfo: () => ({ project: 'p', profiles: {} }),   // says nothing about version
+      }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'info' });
+        assert.ok(res.result.version, 'the server fills it in');
+        assert.ok(res.result.methods.length > 0);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('advertises every method it can actually answer, and no others', async () => {
+    // The point of building METHODS from the handler map: a method added
+    // without being advertised is what makes clients probe for `unknown
+    // method` in the first place. Every name here is called for real.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-methods-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('m', noopCtx({
+        states: () => new Map([['api', mkState({})]]),
+        tailLogs: async () => [],
+      }), { path });
+      try {
+        const advertised = (await rpcCall(path, { id: 1, method: 'info' })).result.methods as string[];
+        assert.deepEqual(advertised, METHODS);
+        for (const method of advertised) {
+          // `svc` for the ones that need it; the rest ignore it.
+          const res = await rpcCall(path, { id: 2, method, params: { svc: 'api' } });
+          // Any error at all, not just `unknown method`: a fake missing a
+          // member answers `ctx.X is not a function`, which is just as much a
+          // method the daemon cannot serve.
+          assert.equal(
+            res.error, undefined,
+            `advertised "${method}" but calling it failed: ${JSON.stringify(res.error)}`,
+          );
+        }
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still refuses a method it does not have', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-nom-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('n', noopCtx(), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'teleport' });
+        assert.match(res.error.message, /unknown method: teleport/);
+        assert.ok(!METHODS.includes('teleport'));
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses Object.prototype members too, which a plain object would answer', async () => {
+    // The method name comes off the wire. With the handler table as a plain
+    // object, `{"method":"toString"}` found Object.prototype.toString, called
+    // it, and answered `"[object Undefined]"`; `"constructor"` echoed the
+    // params back. Both looked like real results to a client, and neither is
+    // in `info.methods` — so the daemon contradicted its own advertisement.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-proto-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('p', noopCtx(), { path });
+      try {
+        for (const method of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', 'isPrototypeOf', '__proto__']) {
+          const res = await rpcCall(path, { id: 1, method });
+          assert.equal(res.result, undefined, `${method} answered with a result: ${JSON.stringify(res)}`);
+          assert.equal(
+            res.error?.message, `unknown method: ${method}`,
+            `${method} was not reported as unknown: ${JSON.stringify(res)}`,
+          );
+          assert.ok(!METHODS.includes(method));
+        }
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes the streaming methods off the same list it advertises', async () => {
+    // Two hand-kept copies of these names is the drift the handler table was
+    // introduced to remove: a daemon answering a method it does not advertise
+    // makes a client checking `info.methods` refuse a feature that works.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-str-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('s', noopCtx({ states: () => new Map() }), { path });
+      try {
+        for (const method of STREAM_METHODS) {
+          // A streaming method acks and then holds the socket open; a
+          // dispatched one would answer `unknown method` instead.
+          const frames = await rpcStream(path, { id: 1, method, params: { svc: 'api' } }, 1, 1500);
+          assert.equal(frames[0]?.error, undefined, `${method} was not routed as a stream`);
+          assert.deepEqual(frames[0]?.result, { ok: true });
+        }
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes the streaming methods, which are handled before dispatch', async () => {
+    // They never reach the handler map, so they are the ones most likely to be
+    // left out of a hand-maintained list.
+    assert.ok(METHODS.includes('logs.follow'));
+    assert.ok(METHODS.includes('status.follow'));
   });
 });
