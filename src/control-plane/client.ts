@@ -38,9 +38,13 @@ export function assertSocketExists(socketPath: string, projectName: string): voi
 
 export interface SendRpcOpts {
   /** Give up after this many ms. Unset means wait indefinitely, which is the
-   *  historical behaviour and the right one for `debug` and `restart` — both
-   *  restart a service and can legitimately take a minute. Set it for calls a
-   *  script must not hang on. */
+   *  historical behaviour and the right one for `start`, `restart` and `debug`
+   *  — all three restart a service and can legitimately take a minute, and the
+   *  daemon carries on regardless of whether anyone is still listening. Set it
+   *  for calls a script must not hang on.
+   *
+   *  A value passed per call overrides the client-wide one, `undefined`
+   *  included — that is how you opt a single call back out. */
   timeoutMs?: number;
 }
 
@@ -109,17 +113,39 @@ export function openStream(
   params: Record<string, unknown>,
   onFrame: (frame: StreamFrame) => void,
   onError?: (err: Error) => void,
+  /** The stream ended without an error — the daemon went away.
+   *
+   *  `devup down` destroys every client socket, and over a Unix socket that is
+   *  a clean EOF, not an error: nothing else fires. Without this a long-lived
+   *  consumer goes quietly stale across a daemon restart with nothing to react
+   *  to. Not called for a stream you aborted yourself. */
+  onClose?: () => void,
 ): () => void {
   const c = createConnection(socketPath);
   const rl = createInterface({ input: c });
   let ackDone = false;
+  let aborted = false;
+  let errored = false;
 
-  // Both the socket and the readline interface can emit 'error'. Listen on
-  // both — without an rl handler an ECONNREFUSED can escape as an unhandled
-  // 'error' event and crash the host process.
-  const onErr = (err: Error) => onError?.(err);
+  // Both the socket and the readline interface can emit 'error' — readline
+  // re-forwards errors from its input stream, so one failure reaches us twice.
+  // Listening on only one would let an ECONNREFUSED escape as an unhandled
+  // 'error' event and crash the host; listening on both without this latch
+  // reports every failure twice, and a consumer that reconnects from onError
+  // then doubles its connections on every retry.
+  const onErr = (err: Error) => {
+    if (errored) return;
+    errored = true;
+    onError?.(err);
+  };
   c.on('error', onErr);
   rl.on('error', onErr);
+  c.on('close', () => {
+    // An abort we asked for is not a loss of connection, and neither is a
+    // close that follows an error already reported.
+    if (aborted || errored) return;
+    onClose?.();
+  });
   c.write(JSON.stringify({ id: 1, method, params }) + '\n');
 
   rl.on('line', l => {
@@ -146,7 +172,7 @@ export function openStream(
     if (msg.event) onFrame(msg as StreamFrame);
   });
 
-  return () => c.destroy();
+  return () => { aborted = true; c.destroy(); };
 }
 
 // ── Named methods ──────────────────────────────────────────────────────────
@@ -157,44 +183,65 @@ export function openStream(
  *  type. It exists so a consumer does not have to cast `unknown` at each call
  *  site — casting is exactly how a client ends up re-describing the protocol
  *  by hand, which is what this module is here to stop. */
+export interface StreamOpts {
+  onError?: (err: Error) => void;
+  /** The daemon went away — see `openStream`. Not called for a stream you
+   *  aborted yourself. */
+  onClose?: () => void;
+}
+
 export interface DevupClient {
   /** The socket this client talks to. */
   readonly socketPath: string;
   /** Is the daemon there? Prefer this over stat-ing the socket file: a stale
    *  socket from a crashed run exists but answers nothing. */
-  ping(): Promise<PingResult>;
+  ping(opts?: SendRpcOpts): Promise<PingResult>;
   /** Every service, plus the active proxy config (`null` when none). */
-  status(): Promise<StatusResult>;
+  status(opts?: SendRpcOpts): Promise<StatusResult>;
   /** Project name, profiles from config. */
-  info(): Promise<ProjectInfo>;
+  info(opts?: SendRpcOpts): Promise<ProjectInfo>;
   /** Per-service CPU/memory plus host totals. */
-  stats(): Promise<StatsResult>;
+  stats(opts?: SendRpcOpts): Promise<StatsResult>;
   /** Start a stopped service. `ok` is the **outcome**: `false` means it did
-   *  not come up, not that the request was refused. */
-  start(svc: string): Promise<OkResult>;
-  /** Restart a service. Resolves once the request is accepted; the respawn is
-   *  async, so poll `status` to see the result. An unknown name is a silent
-   *  no-op that still answers `ok: true`. */
-  restart(svc: string): Promise<OkResult>;
+   *  not come up, not that the request was refused.
+   *
+   *  Slow by nature: for an API the daemon waits for the port to answer, up to
+   *  45 s, before replying. */
+  start(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
+  /** Restart a service.
+   *
+   *  **Not a fire-and-forget.** The daemon stops the process, waits ~1.5 s for
+   *  it to settle, and spawns it again before answering — so this call blocks
+   *  for at least that, plus whatever the spawn costs (a `preBuild` can make it
+   *  much more). It does *not* wait for the service to become healthy: poll
+   *  `status` for that. An unknown name is a silent no-op that still answers
+   *  `ok: true`. */
+  restart(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
   /** SIGTERM the service's process tree and suppress the auto-restart. */
-  stop(svc: string): Promise<OkResult>;
+  stop(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
   /** Restart a service under (or out of) the Node inspector. Omitted options
-   *  take the daemon's defaults: `enable` true, an OS-chosen port, no `brk`. */
-  debug(svc: string, opts?: { enable?: boolean; port?: number; brk?: boolean }): Promise<DebugResult>;
+   *  take the daemon's defaults: `enable` true, an OS-chosen port, no `brk`.
+   *
+   *  Restarts the service, so it is as slow as `restart` and then some. */
+  debug(svc: string, opts?: { enable?: boolean; port?: number; brk?: boolean } & SendRpcOpts): Promise<DebugResult>;
   /** Last N lines of a service's persisted log file — the daemon's default is
    *  100, capped at 10 000. Empty when the log sink is off (`--no-log-file`)
    *  or the service has not written yet. */
-  logsTail(svc: string, opts?: { lines?: number }): Promise<LogsTailResult>;
+  logsTail(svc: string, opts?: { lines?: number } & SendRpcOpts): Promise<LogsTailResult>;
   /** Live service state. The first frame is the **whole** snapshot; every
    *  later one carries a single service — merge by `name`. `removed` frames
    *  carry an array of names, not services. Returns an abort function. */
-  followStatus(onFrame: (frame: StreamFrame) => void, onError?: (err: Error) => void): () => void;
-  /** Live log lines, replaying `tail` recent ones first (the daemon's default
-   *  is 50). Pass `svc: null` for every service. Returns an abort function. */
+  followStatus(onFrame: (frame: StreamFrame) => void, opts?: StreamOpts): () => void;
+  /** Live log lines. Returns an abort function.
+   *
+   *  Pass `svc: null` for every service — but note that the replay is
+   *  per-service in the daemon: **the all-services stream carries no history
+   *  at all**, `tail` included, and starts from the next line written. Name a
+   *  service to get its last `tail` lines first (the daemon's default is 50). */
   followLogs(
     svc: string | null,
     onFrame: (frame: StreamFrame) => void,
-    opts?: { tail?: number; onError?: (err: Error) => void },
+    opts?: { tail?: number } & StreamOpts,
   ): () => void;
   /** Any method, including ones newer than this client. The escape hatch for
    *  everything the named methods do not cover. */
@@ -205,9 +252,11 @@ export type CreateClientOpts = SendRpcOpts;
 
 /** Build a client for a socket path.
  *
- *  A `timeoutMs` here applies to every one-shot call. Leave it unset for
- *  `restart` and `debug`, which restart a service and can legitimately take a
- *  minute — a slow pre-build is not a dead daemon.
+ *  A `timeoutMs` here applies to **every** one-shot call, `restart`, `debug`
+ *  and `start` included — and those restart a service, so a short client-wide
+ *  timeout will reject them while the restart proceeds anyway. Either set the
+ *  timeout per call, or pass `{ timeoutMs: undefined }` on those three to opt
+ *  back out: a per-call value always wins over the client-wide one.
  *
  *  Does not connect: there is no persistent connection to hold, and a client
  *  built before the daemon starts is valid the moment it does. Use `ping()` to
@@ -219,23 +268,25 @@ export function createClient(socketPath: string, opts: CreateClientOpts = {}): D
   return {
     socketPath,
     call,
-    ping: () => call('ping') as Promise<PingResult>,
-    status: () => call('status') as Promise<StatusResult>,
-    info: () => call('info') as Promise<ProjectInfo>,
-    stats: () => call('stats') as Promise<StatsResult>,
-    start: svc => call('start', { svc }) as Promise<OkResult>,
-    restart: svc => call('restart', { svc }) as Promise<OkResult>,
-    stop: svc => call('stop', { svc }) as Promise<OkResult>,
-    // Omitted options are left out of the request rather than filled in here:
-    // the daemon already has the defaults, and a second copy of them in the
-    // client is one more thing to drift.
-    debug: (svc, o = {}) => call('debug', { svc, enable: o.enable, port: o.port, brk: o.brk }) as Promise<DebugResult>,
-    logsTail: (svc, o = {}) => call('logs.tail', { svc, lines: o.lines }) as Promise<LogsTailResult>,
-    followStatus: (onFrame, onError) => openStream(socketPath, 'status.follow', {}, onFrame, onError),
+    ping: o => call('ping', {}, o) as Promise<PingResult>,
+    status: o => call('status', {}, o) as Promise<StatusResult>,
+    info: o => call('info', {}, o) as Promise<ProjectInfo>,
+    stats: o => call('stats', {}, o) as Promise<StatsResult>,
+    start: (svc, o) => call('start', { svc }, o) as Promise<OkResult>,
+    restart: (svc, o) => call('restart', { svc }, o) as Promise<OkResult>,
+    stop: (svc, o) => call('stop', { svc }, o) as Promise<OkResult>,
+    // Omitted request options are left out of the request rather than filled
+    // in here: the daemon already has the defaults, and a second copy of them
+    // in the client is one more thing to drift.
+    debug: (svc, o = {}) =>
+      call('debug', { svc, enable: o.enable, port: o.port, brk: o.brk }, o) as Promise<DebugResult>,
+    logsTail: (svc, o = {}) => call('logs.tail', { svc, lines: o.lines }, o) as Promise<LogsTailResult>,
+    followStatus: (onFrame, o = {}) =>
+      openStream(socketPath, 'status.follow', {}, onFrame, o.onError, o.onClose),
     // `svc: null` is sent, not dropped: it is how a caller asks for every
     // service, and the daemon reads a missing key the same way.
     followLogs: (svc, onFrame, o = {}) =>
-      openStream(socketPath, 'logs.follow', { svc, tail: o.tail }, onFrame, o.onError),
+      openStream(socketPath, 'logs.follow', { svc, tail: o.tail }, onFrame, o.onError, o.onClose),
   };
 }
 

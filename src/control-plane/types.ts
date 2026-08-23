@@ -6,7 +6,15 @@
  *  live handles (`proc`, `watchProc`) that never cross the socket.
  *
  *  Changing anything here is an API change — see the three-places note in
- *  CLAUDE.md and `docs/control-plane.md`. */
+ *  CLAUDE.md and `docs/control-plane.md`.
+ *
+ *  **These types describe the daemon that ships with this version of the
+ *  package.** A devup installed globally can be older than the copy a project
+ *  depends on, and an older daemon omits fields added since — `originalPort`
+ *  (0.12.0), `debugPort` (0.14.0). They are typed as present anyway: making
+ *  them optional would push a `?? fallback` onto every call site, which is the
+ *  hand-written guessing this module exists to end. Ask the daemon what it is
+ *  instead of guarding each field. */
 import type { ProcessStatus, HealthStatus } from '../process/types.js';
 
 export type { ProcessStatus, HealthStatus };
@@ -27,7 +35,7 @@ export interface ServiceSnapshot {
   /** The **configured** port, and the one to connect to — the lazy proxy
    *  listens there, so reaching it starts the service on demand. Equal to
    *  `port` for always-on services and whenever lazy mode is off.
-   *  Added in 0.12.0; absent from earlier daemons. */
+   *  Sent since 0.12.0 — see the note on daemon age at the top of this file. */
   originalPort: number;
   type: 'api' | 'web';
   phase: number;
@@ -45,7 +53,8 @@ export interface ServiceSnapshot {
   /** Last stderr lines captured when the service crashed, else `null`. */
   crashLog: string[] | null;
   /** Port Node's inspector bound to, once announced. `null` unless the service
-   *  runs under `--inspect`. Added in 0.14.0. */
+   *  runs under `--inspect`. Sent since 0.14.0 — see the note on daemon age at
+   *  the top of this file. */
   debugPort: number | null;
 }
 

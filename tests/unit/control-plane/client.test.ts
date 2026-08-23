@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   createClient, createClientForProject, resolveSocket, assertSocketExists,
-  sendRpc, defaultSocketPath,
+  sendRpc, openStream, defaultSocketPath,
 } from '../../../src/control-plane/client.js';
 import { startSocketServer, type RpcContext } from '../../../src/control-plane/socket-server.js';
 import type { ProcessState } from '../../../src/process/types.js';
@@ -166,6 +166,66 @@ describe('control-plane client', { skip: !isUnix }, () => {
     });
   });
 
+  it('reports a connection failure once, not once per listener', { timeout: 5000 }, async () => {
+    // Readline re-forwards its input's 'error', so one ENOENT reaches both
+    // handlers. A consumer that reconnects from onError would open two
+    // connections per failure and double them on every retry.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-gone-'));
+    try {
+      let calls = 0;
+      openStream(join(dir, 'nothing.sock'), 'status.follow', {}, () => {}, () => { calls++; });
+      await new Promise(r => setTimeout(r, 300));
+      assert.equal(calls, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('tells a stream consumer when the daemon goes away', { timeout: 5000 }, async () => {
+    // `devup down` destroys every client socket, and over a Unix socket that
+    // is a clean EOF — no 'error' fires. Without onClose a long-lived consumer
+    // goes stale across a daemon restart with nothing at all to react to.
+    const closed = await new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('onClose never fired')), 3000);
+      void withServer({}, async path => {
+        createClient(path).followStatus(() => {}, {
+          onClose: () => { clearTimeout(timer); resolve(true); },
+          onError: err => { clearTimeout(timer); reject(err); },
+        });
+        // Let the stream establish, then take the daemon down under it.
+        await new Promise(r => setTimeout(r, 200));
+      });
+    });
+    assert.equal(closed, true);
+  });
+
+  it('does not report a close for a stream the caller aborted', { timeout: 5000 }, async () => {
+    // Otherwise a caller replacing its subscription tears down the
+    // replacement: it reads its own abort as the daemon vanishing.
+    await withServer({}, async path => {
+      let closes = 0;
+      const abort = createClient(path).followStatus(() => {}, { onClose: () => { closes++; } });
+      await new Promise(r => setTimeout(r, 150));
+      abort();
+      await new Promise(r => setTimeout(r, 200));
+      assert.equal(closes, 0);
+    });
+  });
+
+  it('a per-call timeout overrides the client-wide one, undefined included', { timeout: 8000 }, async () => {
+    // The escape hatch for `restart` and `debug` under a client-wide timeout:
+    // they restart a service and the daemon carries on regardless of whether
+    // anyone is still listening.
+    await withRawServer(sock => {
+      sock.once('data', () => setTimeout(() => sock.write(JSON.stringify({ id: 1, result: { ok: true } }) + '\n'), 400));
+    }, async path => {
+      const c = createClient(path, { timeoutMs: 120 });
+      await assert.rejects(withDeadline(c.status(), 2000, 'status()'), /within 120ms/);
+      const res = await withDeadline(c.restart('api', { timeoutMs: undefined }), 3000, 'restart()');
+      assert.equal(res.ok, true);
+    });
+  });
+
   it('followStatus() delivers the full snapshot before any change', async () => {
     // The daemon sends every service right after the ack — a client does not
     // have to wait for a state change to have something to render.
@@ -178,7 +238,7 @@ describe('control-plane client', { skip: !isUnix }, () => {
           clearTimeout(timer);
           abort();
           resolve((frame.data as Array<{ name: string }>).map(s => s.name));
-        }, err => { clearTimeout(timer); reject(err); });
+        }, { onError: err => { clearTimeout(timer); reject(err); } });
       });
       assert.deepEqual(names.sort(), ['api', 'web']);
     });
