@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import type { ProcessState } from '../process/types.js';
 import { defaultSocketPath } from './socket-path.js';
 import { readVersion } from '../utils/version.js';
+import type { LogWindow, LogWindowOpts } from '../process/log-reader.js';
 import { CONTRACT_VERSION } from './types.js';
 import type {
   ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
@@ -33,8 +34,9 @@ export interface RpcContext {
   restart(name: string): Promise<void>;
   /** Stop a service by name. */
   stop(name: string): void;
-  /** Tail N most recent log lines for the given service (from the persistent log file). */
-  tailLogs(svcName: string, lines: number): Promise<string[]>;
+  /** Read a window out of the service's persistent log — the last N lines, or
+   *  everything written since a timestamp. See `readLogWindow`. */
+  tailLogs(svcName: string, opts: LogWindowOpts): Promise<LogWindow>;
   /** Subscribe to live log lines. Pass null to receive logs from all services.
    *  Returns an unsubscribe function. */
   watchLogs(svcName: string | null, onLine: (svc: string, line: string) => void): () => void;
@@ -168,13 +170,22 @@ async function handleFollow(
   if (req.method === 'logs.follow') {
     const rawSvc = params['svc'] ?? params['service'];
     const svcName = rawSvc != null ? stringOrThrow(rawSvc, 'svc') : null;
-    const tail = Math.max(0, Math.min(1000, Number(params['tail'] ?? 50)));
+    const tail = clampTail(params['tail']);
+    // The replay can be a window too. Someone watching a service that just
+    // failed a test wants the window *and* what happens next, and offering
+    // `--since` alongside `--follow` and then ignoring it is the quiet wrong
+    // answer this whole change is against.
+    const rawSince = params['since'];
+    if (rawSince !== undefined && rawSince !== null && typeof rawSince !== 'number') {
+      throw new Error('param "since" must be a number (epoch milliseconds)');
+    }
+    const since = typeof rawSince === 'number' ? rawSince : undefined;
 
     respond(socket, { id: req.id, result: { ok: true } });
 
     // Replay recent history before going live.
-    if (svcName) {
-      const lines = await ctx.tailLogs(svcName, tail);
+    if (svcName && tail > 0) {
+      const { lines } = await ctx.tailLogs(svcName, { lines: tail, since });
       for (const l of lines) {
         // `svc` on the replay too: a client routing by frame.svc would drop or
         // misattribute the whole tail otherwise.
@@ -324,8 +335,19 @@ const HANDLER_TABLE = {
 
   'logs.tail': async (params, ctx) => {
     const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-    const lines = Math.max(1, Math.min(10_000, Number(params['lines'] ?? 100)));
-    return { lines: await ctx.tailLogs(svc, lines) };
+    const lines = clampLines(params['lines']);
+    const rawSince = params['since'];
+    // Not coerced with Number(): `since: "yesterday"` becoming NaN and then
+    // silently meaning "everything" is how a harness attaches the wrong
+    // evidence to a failed test and never finds out.
+    if (rawSince !== undefined && rawSince !== null && typeof rawSince !== 'number') {
+      throw new Error('param "since" must be a number (epoch milliseconds)');
+    }
+    const since = typeof rawSince === 'number' ? rawSince : undefined;
+    if (since !== undefined && !Number.isFinite(since)) {
+      throw new Error('param "since" must be a finite number (epoch milliseconds)');
+    }
+    return await ctx.tailLogs(svc, { lines, since });
   },
 
   ping: () => ({ ok: true, ts: Date.now() }),
@@ -366,6 +388,38 @@ async function dispatch(
   const handler = HANDLERS.get(method);
   if (!handler) throw new Error(`unknown method: ${method}`);
   return await handler(params, ctx);
+}
+
+/** How many lines to return, or a refusal.
+ *
+ *  Not `Number(...)`: `lines: "abc"` gave NaN, and `Math.max(1, Math.min(10_000,
+ *  NaN))` is NaN, so the reader's `length > opts.lines` cap was never true and
+ *  the daemon serialised the whole file — up to 10 MB, and now potentially the
+ *  rotated one too — back over the socket. */
+export const MAX_LOG_LINES = 10_000;
+
+/** How many lines to replay before going live. Its own ceiling, lower than
+ *  `logs.tail`'s: this is a backlog, not a query.
+ *
+ *  Hardened for the same reason as `lines`. `tail: "abc"` gave NaN, `NaN > 0`
+ *  is false, and the replay was skipped in silence — the client got its ack
+ *  and an empty backlog with nothing to say why. */
+export const MAX_FOLLOW_TAIL = 1_000;
+
+function clampTail(raw: unknown): number {
+  if (raw === undefined || raw === null) return 50;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0) {
+    throw new Error('param "tail" must be a non-negative integer');
+  }
+  return Math.min(MAX_FOLLOW_TAIL, raw);
+}
+
+function clampLines(raw: unknown): number {
+  if (raw === undefined || raw === null) return 100;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) {
+    throw new Error('param "lines" must be a positive integer');
+  }
+  return Math.min(MAX_LOG_LINES, raw);
 }
 
 function stringOrThrow(v: unknown, paramName: string): string {

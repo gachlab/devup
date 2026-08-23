@@ -150,6 +150,36 @@ files-api      3013  api   ✗ down
 
 Probes happen in parallel (it's a snapshot, not a watcher). Useful in scripts: `devup status && deploy-tests-against-local`.
 
+### `devup ctl logs <svc> [--since <when>] [--lines <n>] [--follow]`
+
+```bash
+devup ctl logs app-api --since 5m           # the last five minutes
+devup ctl logs app-api --since 2026-08-23T10:00:00Z
+devup ctl logs app-api --since 1755800000000 --lines 500
+```
+
+`--since` takes a duration (`30s`, `5m`, `2h`, `1d`), an ISO-8601 timestamp, or
+epoch milliseconds. A bare integer is read as **epoch milliseconds, not a
+duration** — `--since 500` cannot mean both "500 ms ago" and "epoch 500", and a
+unit is cheap to type. Anything it cannot read is an error rather than a quiet
+"from the beginning": a harness that mistypes its window and silently gets the
+whole log attaches the wrong evidence to a failing test, which is worse than
+attaching none.
+
+This is the shape an `afterEach` wants — the log of the API *between the start
+and the end of the test that just failed*, which is what makes a CI failure
+diagnosable without reproducing it. With `--lines` alone you have to guess how
+many, and a service that recompiles on every save pushes the window you care
+about out of the tail before you ask for it.
+
+`--since` works with `--follow` too: the replay is a window, so you get what
+the service did during the failing test and then keep watching.
+
+The log rotates on every launch and at 10 MB. A window that spans a rotation is
+read out of both files. If the log starts after the window you asked for, devup
+says so — and says both of the things that can mean, because it cannot tell
+"rotated away" from "the service was not running yet".
+
 ### `devup exec [options] -- <cmd> [args...]`
 
 Boot the stack if it is not already up, wait until it is ready, run the command

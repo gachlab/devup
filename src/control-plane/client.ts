@@ -258,10 +258,19 @@ export interface DevupClient {
    *
    *  Restarts the service, so it is as slow as `restart` and then some. */
   debug(svc: string, opts?: { enable?: boolean; port?: number; brk?: boolean } & SendRpcOpts): Promise<DebugResult>;
-  /** Last N lines of a service's persisted log file — the daemon's default is
-   *  100, capped at 10 000. Empty when the log sink is off (`--no-log-file`)
-   *  or the service has not written yet. */
-  logsTail(svc: string, opts?: { lines?: number } & SendRpcOpts): Promise<LogsTailResult>;
+  /** A window out of a service's persisted log.
+   *
+   *  `lines` caps how many come back, most recent kept — the daemon's default
+   *  is 100 and its ceiling 10 000. `since` (epoch ms) asks for everything
+   *  written from that moment on, which is the question a failing test
+   *  actually has: with a line count alone you have to guess how many, and a
+   *  service that recompiles on every save pushes the interesting part out of
+   *  the tail before you ask for it. The two combine, `lines` still capping.
+   *
+   *  Check `oldestRetained` against your `since`: the log rotates, and a
+   *  window that starts before a rotation has lost its beginning. Empty when
+   *  the log sink is off (`--no-log-file`) or the service has not written. */
+  logsTail(svc: string, opts?: { lines?: number; since?: number } & SendRpcOpts): Promise<LogsTailResult>;
   /** Live service state. The first frame is the **whole** snapshot; every
    *  later one carries a single service — merge by `name`. `removed` frames
    *  carry an array of names, not services. Returns an abort function. */
@@ -314,7 +323,7 @@ export function createClient(socketPath: string, opts: CreateClientOpts = {}): D
     // in the client is one more thing to drift.
     debug: (svc, o = {}) =>
       call('debug', { svc, enable: o.enable, port: o.port, brk: o.brk }, o) as Promise<DebugResult>,
-    logsTail: (svc, o = {}) => call('logs.tail', { svc, lines: o.lines }, o) as Promise<LogsTailResult>,
+    logsTail: (svc, o = {}) => call('logs.tail', { svc, lines: o.lines, since: o.since }, o) as Promise<LogsTailResult>,
     followStatus: (onFrame, o = {}) =>
       openStream(socketPath, 'status.follow', {}, onFrame, o.onError, o.onClose),
     // `svc: null` is sent, not dropped: it is how a caller asks for every

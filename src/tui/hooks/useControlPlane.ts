@@ -1,6 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { createInterface } from 'node:readline';
-import { createReadStream, existsSync } from 'node:fs';
 import { totalmem, freemem, cpus } from 'node:os';
 import type { ProcessManager } from '../../process/manager.js';
 import type { LogSink } from '../../process/log-sink.js';
@@ -14,6 +12,7 @@ import { systemLoad } from '../../utils/system-load.js';
 import type { LazyProxy } from '../../lazy/proxy.js';
 import { startService } from '../../process/start-service.js';
 import { debugService } from '../../process/debug-service.js';
+import { readLogWindow } from '../../process/log-reader.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -45,17 +44,13 @@ export function useControlPlane(
           states: () => manager.state,
           restart: (name) => manager.restart(name),
           stop: (name) => manager.stop(name),
-          tailLogs: async (svcName, lines) => {
-            if (!logSink) return [];
-            const file = logSink.pathFor(svcName);
-            if (!existsSync(file)) return [];
-            return new Promise<string[]>((resolve, reject) => {
-              const buf: string[] = [];
-              const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }) });
-              rl.on('line', l => { buf.push(l); if (buf.length > lines) buf.shift(); });
-              rl.on('close', () => resolve(buf));
-              rl.on('error', reject);
-            });
+          // The same reader the daemon uses. These two were copies, so a
+          // feature added to one — `since`, here — silently missed the other:
+          // `devup ctl logs --since` would have worked against `devup up -d`
+          // and done nothing against the TUI.
+          tailLogs: async (svcName, opts) => {
+            if (!logSink) return { lines: [], oldestRetained: null, truncated: false };
+            return readLogWindow(logSink.pathFor(svcName), opts);
           },
           watchLogs: (svcName, onLine) => {
             return logBus.subscribe(({ svc, text }) => {

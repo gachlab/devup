@@ -27,7 +27,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     states: () => new Map(),
     restart: async () => {},
     stop: () => {},
-    tailLogs: async () => [],
+    tailLogs: async () => ({ lines: [], oldestRetained: null, truncated: false }),
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
@@ -83,7 +83,7 @@ describe('runCtl', { skip: !isUnix }, () => {
   it('logs prints tail lines', async () => {
     const lines: string[] = [];
     await withServer(noopCtx({
-      tailLogs: async () => ['line one', 'line two', 'line three'],
+      tailLogs: async () => ({ lines: ['line one', 'line two', 'line three'], oldestRetained: null, truncated: false }),
     }), async path => {
       const code = await runCtl(['logs', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0);
@@ -396,6 +396,127 @@ describe('runCtl wait', { skip: !isUnix }, () => {
       assert.equal(code, 1);
       assert.ok(Date.now() - started < 5000, 'should not have waited the full timeout');
       assert.ok(lines.some(l => l.includes('ghost')), lines.join('|'));
+    });
+  });
+});
+
+describe('runCtl logs --since', { skip: !isUnix }, () => {
+  it('passes a duration through as an epoch timestamp', async () => {
+    const asked: Array<{ svc: string; lines: number; since?: number }> = [];
+    const before = Date.now();
+    await withServer(noopCtx({
+      tailLogs: async (svc, o) => { asked.push({ svc, ...o }); return { lines: ['x'], oldestRetained: null, truncated: false }; },
+    }), async path => {
+      const code = await runCtl(['logs', 'api', '--since', '5m'], { config: mkConfig(), socketPath: path, out: () => {} });
+      assert.equal(code, 0);
+      assert.equal(asked.length, 1);
+      const since = asked[0]!.since!;
+      // Five minutes ago, give or take how long the call took.
+      assert.ok(Math.abs((before - 300_000) - since) < 5_000, `since was ${since}`);
+    });
+  });
+
+  it('does not read the value of --since as the service name', async () => {
+    const asked: string[] = [];
+    await withServer(noopCtx({
+      tailLogs: async (svc, _o) => { asked.push(svc); return { lines: [], oldestRetained: null, truncated: false }; },
+    }), async path => {
+      const code = await runCtl(['logs', '--since', '5m', 'api'], { config: mkConfig(), socketPath: path, out: () => {} });
+      assert.equal(code, 0);
+      assert.deepEqual(asked, ['api'], 'the service is "api", not "5m"');
+    });
+  });
+
+  it('rejects a --since it cannot read rather than fetching everything', async () => {
+    // Quietly meaning "from the beginning" attaches the wrong evidence to a
+    // failing test, which is worse than attaching none.
+    const lines: string[] = [];
+    let called = false;
+    await withServer(noopCtx({ tailLogs: async () => { called = true; return { lines: [], oldestRetained: null, truncated: false }; } }), async path => {
+      const code = await runCtl(['logs', 'api', '--since', 'yesterday'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.equal(called, false, 'it must not have asked for anything');
+      assert.ok(lines.some(l => l.includes('invalid --since')), lines.join('|'));
+    });
+  });
+
+  it('says the log starts after the window — without claiming anything was rotated', async () => {
+    // devup cannot tell "rotated away" from "the service was not running yet",
+    // and on a stack booted a minute ago the second is the ordinary case. The
+    // first version asserted a rotation that had not happened.
+    const lines: string[] = [];
+    const since = Date.parse('2026-08-23T10:00:00.000Z');
+    await withServer(noopCtx({
+      tailLogs: async () => ({ lines: ['a'], oldestRetained: Date.parse('2026-08-23T11:00:00.000Z'), truncated: false }),
+    }), async path => {
+      const code = await runCtl(['logs', 'api', '--since', String(since)], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      const said = lines.join(' ');
+      assert.match(said, /starts at 2026-08-23T11:00:00\.000Z/);
+      assert.match(said, /after the window you asked for/);
+      assert.match(said, /not running yet/, 'both explanations, since devup cannot choose between them');
+    });
+  });
+
+  it('says nothing when the log starts at or before the window', async () => {
+    const lines: string[] = [];
+    const since = Date.parse('2026-08-23T12:00:00.000Z');
+    await withServer(noopCtx({
+      tailLogs: async () => ({ lines: ['a'], oldestRetained: Date.parse('2026-08-23T11:00:00.000Z'), truncated: false }),
+    }), async path => {
+      await runCtl(['logs', 'api', '--since', String(since)], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.ok(!lines.some(l => l.includes('after the window')), lines.join('|'));
+    });
+  });
+
+  it('says the oldest of the window was dropped, when the daemon says so', async () => {
+    // Counted from what came back it could not be right: the cap keeps the
+    // most recent, so a full-looking answer is exactly what a truncated window
+    // looks like. The daemon knows because it did the dropping.
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      tailLogs: async (_svc, o) => ({ lines: Array.from({ length: o.lines }, (_, i) => `l${i}`), oldestRetained: 0, truncated: true }),
+    }), async path => {
+      await runCtl(['logs', 'api', '--since', '5m', '--lines', '3'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      const said = lines.join(' ');
+      assert.match(said, /more than 3 lines matched/);
+      assert.match(said, /oldest were dropped/, 'the head is what a window loses, not the tail');
+    });
+  });
+
+  it('stays quiet when a full-looking answer was not actually truncated', async () => {
+    // Exactly `lines` lines and nothing dropped: the old count-based check
+    // cried wolf here on every plain `devup ctl logs` of a 100-line log.
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      tailLogs: async (_svc, o) => ({ lines: Array.from({ length: o.lines }, (_, i) => `l${i}`), oldestRetained: 0, truncated: false }),
+    }), async path => {
+      await runCtl(['logs', 'api', '--lines', '3'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.ok(!lines.some(l => l.includes('dropped')), lines.join('|'));
+    });
+  });
+
+  it('rejects a fractional --lines instead of letting the daemon clamp it to 1', async () => {
+    const lines: string[] = [];
+    let called = false;
+    await withServer(noopCtx({ tailLogs: async () => { called = true; return { lines: [], oldestRetained: null, truncated: false }; } }), async path => {
+      const code = await runCtl(['logs', 'api', '--lines', '2.5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.equal(called, false);
+      assert.ok(lines.some(l => l.includes('invalid --lines')), lines.join('|'));
+    });
+  });
+
+  it('still tails without a window, as it always did', async () => {
+    const asked: Array<{ lines: number; since?: number }> = [];
+    await withServer(noopCtx({
+      tailLogs: async (_svc, o) => { asked.push(o); return { lines: ['one'], oldestRetained: null, truncated: false }; },
+    }), async path => {
+      const out: string[] = [];
+      const code = await runCtl(['logs', 'api'], { config: mkConfig(), socketPath: path, out: l => out.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(asked, [{ lines: 100, since: undefined }]);
+      assert.deepEqual(out, ['one']);
     });
   });
 });

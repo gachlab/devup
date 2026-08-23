@@ -10,6 +10,8 @@ import { needsInstall, writeInstallStamp } from '../utils.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
 import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
 import { flagValue } from '../config/cli.js';
+import { parseSince } from '../process/log-reader.js';
+import { MAX_FOLLOW_TAIL } from '../control-plane/socket-server.js';
 import { stopDaemon } from './daemon.js';
 import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
@@ -173,6 +175,10 @@ interface CtlOpts {
   socketPath?: string;
 }
 
+/** What `logs.tail` answers. The two window fields are optional because a
+ *  daemon older than 0.16.0 sends neither — see `LogsTailResult`. */
+type LogsTailShape = { lines: string[]; oldestRetained?: number | null; truncated?: boolean };
+
 type ServiceRow = {
   name: string; status: string; health: string;
   port: number; type: string; pid: number | null;
@@ -214,7 +220,8 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  ping                         Check if devup is running');
     out('  status [--follow]            Service snapshot, or live updates');
     out('  wait [svc...] [--start]      Wait until services are ready; 0 when they are');
-    out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
+    out('  logs <svc> [--since <when>] [--lines <n>] [--follow]');
+    out('                               Tail logs, or follow the live stream');
     out('  start <svc>                  Start a stopped service');
     out('  debug <svc> [--off] [--port n] [--brk]');
     out('                               Restart a service under the Node inspector');
@@ -327,17 +334,82 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     }
 
     if (method === 'logs') {
-      const svc = argv.find((a, i) => i > 0 && !a.startsWith('-'));
-      if (!svc) { out('usage: devup ctl logs <service> [--follow]'); return 1; }
+      // Skip the value `--since` and `--lines` take, or `ctl logs --since 5m`
+      // would read "5m" as the service name.
+      const takesValue = new Set(['--since', '--lines']);
+      let svc: string | undefined;
+      for (let i = 1; i < argv.length; i++) {
+        const a = argv[i]!;
+        if (takesValue.has(a) && !argv[i + 1]?.startsWith('-')) { i++; continue; }
+        if (a.startsWith('-')) continue;
+        svc = a;
+        break;
+      }
+      if (!svc) { out('usage: devup ctl logs <service> [--since <when>] [--lines <n>] [--follow]'); return 1; }
+
+      const rawSince = flagValue(argv, '--since');
+      let since: number | undefined;
+      if (rawSince !== undefined) {
+        try { since = parseSince(rawSince, Date.now()); }
+        catch (e: any) { out(e.message); return 1; }
+      }
+      const rawLines = flagValue(argv, '--lines');
+      let lines = 100;
+      if (rawLines !== undefined) {
+        const n = Number(rawLines);
+        // Integer, not merely finite: `--lines 2.5` passed and the daemon then
+        // clamped it to 1, which is not what anyone typed.
+        if (!Number.isInteger(n) || n <= 0) { out(`invalid --lines: ${rawLines || '(missing)'}`); return 1; }
+        lines = n;
+      }
+
+      /** The two things a window can fail to be, said the same way in both
+       *  branches — a notice that only appears without `--follow` is a notice
+       *  someone will not see when they most need it. */
+      const reportWindow = (res: LogsTailShape) => {
+        // A fact, not a verdict. `oldestRetained` is when the log *starts*,
+        // which on a stack booted a minute ago is simply when the service
+        // first wrote — nothing was rotated. devup cannot tell "rotated away"
+        // from "was not running yet" from here, so it says the true thing and
+        // names both.
+        if (since !== undefined && res.oldestRetained != null && res.oldestRetained > since) {
+          out(`(devup's log for ${svc} starts at ${new Date(res.oldestRetained).toISOString()}, after the window you asked for —`);
+          out(`  either it was not running yet, or the earlier lines have been rotated away)`);
+        }
+        // From the daemon, not from counting what came back: the cap keeps the
+        // most recent, so a full-looking answer is exactly what a truncated
+        // window looks like. And what was dropped is the *oldest* of the
+        // window, so "there may be more" would point the wrong way.
+        if (res.truncated) {
+          out(`(more than ${lines} lines matched — the oldest were dropped; raise --lines to see them)`);
+        }
+      };
 
       if (!follow) {
-        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines: 100 }) as { lines: string[] };
+        const res = await sendRpc(socketPath, 'logs.tail', { svc, lines, since }) as LogsTailShape;
         for (const l of res.lines) out(l);
+        reportWindow(res);
         return 0;
       }
 
+      // Both flags reach the stream: the replay is a window too, so
+      // `--since 5m --follow` shows the window and then keeps going. Parsing
+      // them and dropping them was the quiet wrong answer.
+      //
+      // The replay stays server-side — doing it here would leave a gap between
+      // reading and subscribing, and a follow that drops lines is worse than
+      // one that says less. So the notices come from a separate one-line probe
+      // whose lines are thrown away: the daemon answers the same questions
+      // about the same window either way.
+      const replayCap = Math.min(lines, MAX_FOLLOW_TAIL);
+      if (since !== undefined) {
+        try {
+          const probe = await sendRpc(socketPath, 'logs.tail', { svc, lines: replayCap, since }) as LogsTailShape;
+          reportWindow(probe);
+        } catch { /* the stream itself is what matters; a failed probe is not worth failing over */ }
+      }
       return await new Promise<number>(resolve => {
-        const abort = openStream(socketPath, 'logs.follow', { svc, tail: 100 }, frame => {
+        const abort = openStream(socketPath, 'logs.follow', { svc, tail: replayCap, since }, frame => {
           out(frame.data as string);
         }, err => { out(`error: ${err.message}`); resolve(1); },
         () => { out('devup went away'); resolve(1); });
@@ -556,7 +628,14 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('                               Readiness is `health`, not `type`: a web with a');
     out('                               readyPattern announces itself like an API does.');
     out('');
-    out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
+    out('  logs <svc> [--since <when>] [--lines <n>] [--follow]');
+    out('                               Tail last 100 lines, or follow the live stream.');
+    out('                               --since takes a duration (30s, 5m, 2h, 1d), an ISO');
+    out('                               timestamp, or epoch milliseconds — everything the');
+    out('                               service has written since then. That is the window a');
+    out('                               failing test wants: with --lines alone you have to');
+    out('                               guess how many, and a noisy service pushes the part');
+    out('                               you care about out of the tail before you ask.');
     out('  start <svc>                  Start the named service if stopped');
     out('  debug <svc> [--off] [--port n] [--brk]');
     out('                               Restart the named service under the Node inspector');
