@@ -49,6 +49,30 @@ function makeManager(platform?: Platform) {
   return { mgr, logs, removed, states, platform: p };
 }
 
+describe('ProcessManager y el puerto del inspector', () => {
+  it('se queda con el último banner, no con el primero', { timeout: 8000 }, async () => {
+    // Con `node --watch` el reinicio ocurre dentro de node: el hijo que devup
+    // vigila no se cierra, así que nada limpia `debugPort`, y el proceso
+    // reiniciado anuncia un puerto nuevo. Quedarse con el primero deja a todo
+    // cliente acoplando un depurador a un inspector muerto.
+    const { mgr } = makeManager();
+    const script = [
+      "process.stderr.write('Debugger listening on ws://127.0.0.1:39481/aaa\\n');",
+      "setTimeout(() => process.stderr.write('Debugger listening on ws://127.0.0.1:40122/bbb\\n'), 150);",
+      'setTimeout(() => process.exit(0), 3000);',
+    ].join('');
+    const svc = makeSvc({ port: 19883, cmd: 'node', args: ['-e', script], debug: true });
+    try {
+      await mgr.start(svc, 0);
+      await new Promise(r => setTimeout(r, 600));
+      assert.equal(mgr.state.get('test-svc')?.debugPort, 40122);
+    } finally {
+      mgr.stop('test-svc');
+      await new Promise(r => setTimeout(r, 200));
+    }
+  });
+});
+
 describe('ProcessManager.start on a port its own process holds', () => {
   it('leaves the live process alone instead of reporting a crash', { timeout: 6000 }, async () => {
     // Un `start` sin isRestart sobre un servicio que ya corre — lo que hace el
