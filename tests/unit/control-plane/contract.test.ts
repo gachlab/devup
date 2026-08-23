@@ -3,6 +3,27 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CONTRACT_FIXTURE_PATH } from '../../contract-path.js';
 import { buildContractSnapshot } from '../../../src/control-plane/contract-fixture.js';
+import { CONTRACT_VERSION } from '../../../src/control-plane/types.js';
+
+/** What each contract number means, field by field.
+ *
+ *  The reminder printed by `npm run contract:update` is not enforcement: a
+ *  shape change regenerates the fixture, the golden test passes against the
+ *  file it just wrote, and the release ships with a stale `contract`. That is
+ *  the one failure mode that makes the number **worse than not having it** —
+ *  a client trusts it and reads a field that is not there.
+ *
+ *  So the shape is recorded here against the number that describes it. Adding
+ *  or renaming a field fails this test until `CONTRACT_VERSION` moves and the
+ *  new shape is written down, which is also how anyone later finds out what
+ *  contract 1 actually was. */
+const SHAPE_BY_CONTRACT: Record<number, string[]> = {
+  1: [
+    'name', 'status', 'health', 'port', 'originalPort', 'type', 'phase',
+    'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'pid', 'startedAt',
+    'crashLog', 'debugPort',
+  ],
+};
 
 /** Golden test for the `status` wire shape.
  *
@@ -29,6 +50,22 @@ describe('control-plane contract', () => {
       'the status wire shape changed — run `npm run contract:update`, then update ' +
       'docs/control-plane.md and gachlab/devup-vscode to match',
     );
+  });
+
+  it('carries the field list the contract number promises', () => {
+    const expected = SHAPE_BY_CONTRACT[CONTRACT_VERSION];
+    assert.ok(
+      expected,
+      `CONTRACT_VERSION is ${CONTRACT_VERSION} and nothing here says what that means. ` +
+      'Add its field list to SHAPE_BY_CONTRACT.',
+    );
+    for (const svc of golden.services) {
+      assert.deepEqual(
+        Object.keys(svc).sort(), [...expected!].sort(),
+        `the snapshot shape changed — bump CONTRACT_VERSION and record the new field list, ` +
+        'or clients reading `contract` will trust a number that no longer describes them',
+      );
+    }
   });
 
   it('keeps the two ports distinguishable', () => {

@@ -140,14 +140,25 @@ What this daemon is, and what it can do.
   rather than sending a request and looking for `unknown method` in the error.
 
 **The last three are absent from daemons before 0.16.0** — which is itself the
-answer when what you are asking is how old one is:
+answer when what you are asking is how old one is.
+
+That absence needs its own branch, and getting it wrong is worse than not
+checking at all:
 
 ```javascript
 const info = await devup.info();
-if (!info.methods?.includes('debug')) {
-  throw new Error(`this daemon cannot debug (devup ${info.version ?? 'older than 0.16.0'})`);
+if (info.methods === undefined) {
+  // Older than 0.16.0. It still answers everything that existed before then —
+  // `debug` since 0.14.0, `start` since 0.14.0 — so assume the old surface
+  // rather than refusing. `!info.methods?.includes('debug')` would be `true`
+  // here and would turn away a daemon that debugs perfectly well.
+} else if (!info.methods.includes('debug')) {
+  throw new Error(`this daemon cannot debug (devup ${info.version})`);
 }
 ```
+
+The same shape applies to `contract`: `undefined` means "older than the first
+numbered contract", not "contract 0".
 
 `version`, `contract` and `methods` are added by the server itself rather than
 by the `RpcContext` behind it, so the daemon and the TUI — which implement

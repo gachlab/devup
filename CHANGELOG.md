@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `contract` is the field to check, not `version`: it answers "can I trust this field" directly, where the release number makes every client keep its own table of what arrived when — and those tables are what go stale. `methods` is derived from the dispatch table, so a method added without being advertised is not possible; the streaming pair, handled before dispatch, is named explicitly. All three are composed by the server rather than by the `RpcContext` behind it, so the daemon and the TUI — which implement `getInfo` separately and have drifted before — cannot disagree.
 
-  Additive: older clients ignore them, and their **absence** is the answer when what you are asking is how old a daemon is.
+  Additive: older clients ignore them, and their **absence** is the answer when what you are asking is how old a daemon is — give it its own branch, because `!info.methods?.includes('debug')` reads as `true` for a 0.15 daemon that debugs perfectly well.
 
 - **`devup exec -- <cmd>`** (#106) — the mode between `--once` and `up -d`. Boots the stack if it is not already up, waits until it is ready, runs the command against it, and stops **only what it started**, whatever the command did.
 

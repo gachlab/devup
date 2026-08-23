@@ -227,7 +227,12 @@ export interface DevupClient {
    *  Those three are absent from daemons before 0.16.0 — which is itself the
    *  answer when you are asking how old one is. Prefer `methods.includes(…)`
    *  over probing for an `unknown method` error, and `contract` over keeping
-   *  your own table of what arrived in which release. */
+   *  your own table of what arrived in which release.
+   *
+   *  Give the absent case its own branch: `!info.methods?.includes('debug')`
+   *  is `true` for a 0.15 daemon that debugs perfectly well, so a check
+   *  written that way turns away the very daemons it was added to help. See
+   *  docs/control-plane.md#info. */
   info(opts?: SendRpcOpts): Promise<ProjectInfo>;
   /** Per-service CPU/memory plus host totals. */
   stats(opts?: SendRpcOpts): Promise<StatsResult>;

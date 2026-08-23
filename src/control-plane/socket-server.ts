@@ -187,8 +187,7 @@ async function handleFollow(
     });
     unsubs.add(unsub);
 
-  } else {
-    // status.follow
+  } else if (req.method === 'status.follow') {
     respond(socket, { id: req.id, result: { ok: true } });
 
     // Send current snapshot immediately so the client has something to render.
@@ -209,6 +208,14 @@ async function handleFollow(
       respond(socket, { id: req.id, event: 'removed', data: [name] });
     });
     unsubs.add(unsubRemoved);
+
+  } else {
+    // `handleClient` routes here off STREAM_METHODS, so a name added there and
+    // not here used to fall into the `status.follow` arm: the daemon would ack
+    // it, push a status snapshot and register watchers, all under a method it
+    // was never asked for. Removing one hand-kept list only to leave the
+    // routing branch as the next one is not a fix.
+    throw new Error(`unknown method: ${req.method}`);
   }
 }
 
@@ -342,11 +349,14 @@ const HANDLERS = new Map<string, RpcHandler>(Object.entries(HANDLER_TABLE));
  *  it; a second hand-kept list here would have exactly that problem, and its
  *  failure is quiet — a daemon that answers a method it does not advertise,
  *  so a client checking `info.methods` refuses a feature that works. */
-export const STREAM_METHODS = ['logs.follow', 'status.follow'];
+export const STREAM_METHODS: readonly string[] = Object.freeze(['logs.follow', 'status.follow']);
 
 /** Every method this daemon answers, streaming ones included. Advertised by
  *  `info` so a client can ask instead of probing for `unknown method`. */
-export const METHODS: string[] = [...HANDLERS.keys(), ...STREAM_METHODS].sort();
+// Frozen because it is handed back verbatim as the `info` result: a consumer
+// that sorted or pushed into it would be changing what the daemon advertises,
+// and for STREAM_METHODS also how it routes.
+export const METHODS: readonly string[] = Object.freeze([...HANDLERS.keys(), ...STREAM_METHODS].sort());
 
 async function dispatch(
   method: string,

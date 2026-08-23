@@ -31,6 +31,11 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
     start: async () => true,
+    // Was missing, and `tests/` is not typechecked so nothing said so — the
+    // daemon answered `ctx.debug is not a function`, which the "advertises
+    // every method" check below happily accepted because it only rejected
+    // messages saying `unknown method`.
+    debug: async () => ({ debug: false, port: null, ok: true }),
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -616,9 +621,12 @@ describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
         for (const method of advertised) {
           // `svc` for the ones that need it; the rest ignore it.
           const res = await rpcCall(path, { id: 2, method, params: { svc: 'api' } });
-          assert.ok(
-            !(res.error?.message ?? '').includes('unknown method'),
-            `advertised "${method}" but the daemon does not answer it`,
+          // Any error at all, not just `unknown method`: a fake missing a
+          // member answers `ctx.X is not a function`, which is just as much a
+          // method the daemon cannot serve.
+          assert.equal(
+            res.error, undefined,
+            `advertised "${method}" but calling it failed: ${JSON.stringify(res.error)}`,
           );
         }
       } finally {
