@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`--instance <name>`** (#103) — a second stack for the same project, alongside the first. Its own socket, pid file, boot-error file and log directory, so running the e2e suite stops being a disruptive act: it no longer restarts the services you are working on, seeds their databases or takes their debug flags. Two CI jobs for one repo stop colliding on the socket too.
+
+  **Ports are deliberately not shifted.** Displacing them would have to reach the services themselves — a front end calling `localhost:3000` knows nothing about instances — so it is a change in every consuming app, not in devup. Two instances cannot serve the same ports at once, and devup says so plainly: on a collision it asks each running instance's control plane which of its services holds the port, and names it. Give the second instance a config with its own ports and they run together.
+
+  `info` now reports `instance` and the daemon's own `pid`, so two daemons for one project are telling apart over the control plane — and so a port conflict can be attributed exactly. The lookup opens every other devup socket and asks; it checks the daemon's pid as well as its services', because under lazy mode (the default) the on-demand proxy holds the configured port *inside the daemon process*, and no service pid would ever match. Nothing answers for a port and nothing is claimed: a stray `node server.js` is not another instance, and saying it is would send someone to stop a daemon that is innocent.
+
+  `--kill-port-conflicts` is refused when the holder is a **sibling instance** of the same project: killing its services hands them straight to its restarter, so the ports are taken again and this boot fails to bind anyway. A different project's daemon is named but not refused — its ports colliding with ours is an ordinary conflict that flag has always been allowed to resolve.
+
 - **`ctl start` and `ctl restart` take more than one service** (#109): several names, `--profile <name>`, or `--all`. Ascending config phase, concurrent within a phase — warming eight lazy services one at a time is most of the reason people write their own loop instead. `restart --all` is what you want between test suites: it resets in-memory state without taking the stack down.
 
   Neither takes an implicit "everything": say `--all` if you mean it. And a name the daemon does not have now fails the batch before anything starts, rather than being sent as an RPC the daemon silently ignores.

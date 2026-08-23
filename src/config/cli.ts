@@ -30,6 +30,8 @@ export interface CliArgs {
   logDir?: string;
   envFile?: string;
   onceJson: boolean;
+  /** Name of a parallel instance — see `qualifyInstance`. */
+  instance?: string;
   watchConfig: boolean;
   killPortConflicts: boolean;
 }
@@ -96,6 +98,18 @@ Port conflicts:
                            port before boot. Interactive prompt without it;
                            required for non-TTY (daemon, --once, CI)
 
+Instances:
+  --instance <name>        Run a second stack for this project alongside the
+                           first: its own socket, pid file and logs, so an
+                           e2e run does not disturb the one you work in.
+                           Ports are NOT shifted, so two instances cannot
+                           serve at once — devup says which one has them.
+                           Pass it to every command that talks to it, after
+                           the subcommand — which always comes first:
+                           devup up -d --instance e2e
+                           devup ctl status --instance e2e
+                           devup down --instance e2e
+
 Other:
   -h, --help               Show this help and exit
   -v, --version            Show version and exit
@@ -143,7 +157,13 @@ export function parseCliArgs(argv: string[]): CliArgs {
     // in their fingers and the near-miss must not be swallowed. Only for the
     // flag where silence is dangerous; the rest keep the spaced form they have
     // always had.
-    if (arg.startsWith('--env=')) { next = arg.slice('--env='.length); arg = '--env'; i--; }
+    // `--flag=value` for the two flags where being silently ignored means
+    // acting on the wrong thing: `--env=` runs the suite against the
+    // development database, `--instance=` stops the daemon you are working in.
+    // The rest keep the spaced form they have always had.
+    for (const f of ['--env', '--instance']) {
+      if (arg.startsWith(`${f}=`)) { next = arg.slice(f.length + 1); arg = f; i--; break; }
+    }
 
     switch (arg) {
       case '--config':     args.configPath = next; i++; break;
@@ -165,6 +185,17 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
+      // Same shape as `--env`, and for a sharper reason: a bare
+      // `--instance` — value forgotten, or eaten by an empty shell variable —
+      // used to fall through to the default stack, so `devup down --instance`
+      // stopped the daemon you were working in. index.ts rejects the empty
+      // string.
+      case '--instance': {
+        const named = next !== undefined && !next.startsWith('-');
+        args.instance = named ? next : '';
+        if (named) i++;
+        break;
+      }
       // Empty string, not `undefined`, when there is no value: a bare `--env`
       // has to be distinguishable from no flag at all, or it falls back to
       // `.env` in silence — which for a per-run override pointing at a test

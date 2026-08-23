@@ -8,9 +8,12 @@ import { homedir } from 'node:os';
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
-import { detectSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
+import { qualifyInstance, validateInstance, instanceFlag, describeStack } from './config/instance.js';
+import { detectSubcommand, misplacedSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
-import { scanPortConflicts, resolvePortConflicts } from './process/port-conflicts.js';
+import { scanPortConflicts, resolvePortConflicts, type BlamedInstance } from './process/port-conflicts.js';
+import { attributePort, type DaemonIdentity } from './orchestrator/instances.js';
+import { defaultSocketPath, sendRpc } from './control-plane/client.js';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
 import { parseEnvFile } from './utils.js';
@@ -34,6 +37,17 @@ async function main() {
   // Subcommand dispatch (devup logs / install / status / help). All require the config
   // file to be present so we can know which services exist and where logs live.
   const subcmd = detectSubcommand(raw);
+
+  // The subcommand goes first. Written after the flags it used to be ignored
+  // in silence and the TUI rendered instead, so `devup --instance e2e up -d`
+  // sat there while its user waited for a daemon that was never coming.
+  const misplaced = misplacedSubcommand(raw);
+  if (misplaced) {
+    const rest = raw.filter(a => a !== misplaced);
+    console.error(`❌ "${misplaced}" is a subcommand and has to come first.`);
+    console.error(`   Try:  devup ${misplaced}${rest.length ? ' ' + rest.join(' ') : ''}`);
+    process.exit(1);
+  }
 
   // --version / --help short-circuit before any config loading — but only over
   // devup's *own* arguments. `devup exec -- npx playwright test --help` asks
@@ -65,7 +79,15 @@ async function main() {
     try { cfgPath = findConfigFile(cwd, cliArgs.configPath); }
     catch (e: any) { console.error(`❌ ${e.message}`); process.exit(1); }
     const cfg = await loadConfig(cfgPath);
-    const subOpts = { config: cfg, baseCwd: cwd, env: process.env as Record<string, string>, logDir: cliArgs.logDir };
+    if (cliArgs.instance !== undefined) {
+      const bad = validateInstance(cliArgs.instance);
+      if (bad) { console.error(`❌ ${bad}`); process.exit(1); }
+    }
+    const subOpts = {
+      config: cfg, baseCwd: cwd, env: process.env as Record<string, string>, logDir: cliArgs.logDir,
+      instanceName: qualifyInstance(cfg.name, cliArgs.instance),
+      instance: cliArgs.instance,
+    };
     if (subcmd === 'logs')    process.exit(await runLogs(subArgs, subOpts));
     if (subcmd === 'install') process.exit(await runInstall(subOpts));
     if (subcmd === 'status')  process.exit(await runStatus(subOpts));
@@ -87,6 +109,16 @@ async function main() {
   }
 
   const config = await loadConfig(configPath);
+
+  // The name every path is keyed by: socket, pid file, boot-error file, logs.
+  // Qualified once here rather than threaded as a separate argument, because
+  // every one of those helpers already takes a project name and derives a path
+  // from it — and each applies its own sanitiser, which must stay its own.
+  if (cliArgs.instance !== undefined) {
+    const bad = validateInstance(cliArgs.instance);
+    if (bad) { console.error(`❌ ${bad}`); process.exit(1); }
+  }
+  const instanceName = qualifyInstance(config.name, cliArgs.instance);
 
   // Validate
   const errors = validateConfig(config, cwd);
@@ -163,7 +195,7 @@ async function main() {
   // Log sink (a disco). Desactivable con --no-log-file.
   let logSink: LogSink | null = null;
   if (cliArgs.logFile) {
-    logSink = new LogSink({ projectName: config.name, rootDir: cliArgs.logDir });
+    logSink = new LogSink({ projectName: instanceName, rootDir: cliArgs.logDir });
   }
 
   // Daemon-already-running guard. Applies to all "boot the stack" flows
@@ -176,14 +208,15 @@ async function main() {
   // none. Refusing here would leave every harness parsing this message to
   // decide, which is what the flag exists to avoid.
   if (process.env.DEVUP_DAEMON_CHILD !== '1' && subcmd !== 'exec') {
-    const daemonStatus = isDaemonRunning(config.name);
+    const daemonStatus = isDaemonRunning(instanceName);
     if (daemonStatus.pid && !daemonStatus.stale) {
-      console.error(`❌ A devup daemon is already running for "${config.name}" (pid=${daemonStatus.pid}).`);
+      const flag = instanceFlag(cliArgs.instance);
+      console.error(`❌ A devup daemon is already running for ${describeStack(config.name, cliArgs.instance)} (pid=${daemonStatus.pid}).`);
       console.error('');
-      console.error('Stop it first with `devup down`, or interact via the control plane:');
-      console.error('  devup ctl status');
-      console.error('  devup ctl logs <svc> --follow');
-      console.error('  devup ctl restart <svc>');
+      console.error(`Stop it first with \`devup down${flag}\`, or interact via the control plane:`);
+      console.error(`  devup ctl status${flag}`);
+      console.error(`  devup ctl logs <svc> --follow${flag}`);
+      console.error(`  devup ctl restart <svc>${flag}`);
       await logSink?.close();
       process.exit(1);
     }
@@ -195,8 +228,29 @@ async function main() {
   const ensurePortsFree = async (): Promise<boolean> => {
     const conflicts = await scanPortConflicts(services);
     if (!conflicts.length) return true;
+    // Instances share ports on purpose, so another devup is the *expected*
+    // holder here — naming it is the difference between an answer and a hunt.
+    // Asked rather than guessed: the holder is a service, and its daemon can
+    // say so. Resolved before the prompt, since the answer belongs in the list.
+    const blame = new Map<number, BlamedInstance | null>();
+    const selfSocket = defaultSocketPath(instanceName);
+    const probe = {
+      info: async (path: string) => await sendRpc(path, 'info', {}, { timeoutMs: 1500 }) as DaemonIdentity,
+      status: async (path: string) => await sendRpc(path, 'status', {}, { timeoutMs: 1500 }) as { services: Array<{ pid: number | null }> },
+    };
+    for (const c of conflicts) {
+      const pid = c.holder?.pid ?? null;
+      if (pid === null || blame.has(pid)) continue;
+      const found = await attributePort(pid, selfSocket, config.name, probe);
+      blame.set(pid, found ? {
+        name: describeStack(found.identity.project, found.identity.instance),
+        sameProject: found.sameProject,
+        stopCommand: found.stopCommand,
+      } : null);
+    }
     return await resolvePortConflicts(conflicts, {
       autoKill: cliArgs.killPortConflicts,
+      attribute: c => (c.holder ? blame.get(c.holder.pid) ?? null : null),
       out: msg => process.stderr.write(msg + '\n'),
       prompt: () => askYesNo('Kill these processes and continue? [y/N]: '),
     });
@@ -210,7 +264,7 @@ async function main() {
       argv: raw.slice(1),
       childArgs: daemonChildArgs(raw),
       config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts,
-      ensurePortsFree,
+      instanceName, ensurePortsFree,
     });
     await logSink?.close();
     process.exit(code);
@@ -235,7 +289,7 @@ async function main() {
   // Daemon child: spawned by `devup up -d`. Skip Ink/TUI; run the daemon body
   // which stays alive until SIGTERM. The parent process polls for the PID file.
   if (process.env.DEVUP_DAEMON_CHILD === '1') {
-    await daemonBody({ config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts });
+    await daemonBody({ config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts, instanceName });
     return; // daemonBody installs its own signal handlers and only exits via process.exit
   }
 
@@ -246,7 +300,7 @@ async function main() {
       process.exit(1);
     }
     process.exit(await runDetached({
-      config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts,
+      config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts, instanceName,
     }));
   }
 

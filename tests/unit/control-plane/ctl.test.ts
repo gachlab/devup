@@ -629,6 +629,20 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     });
   });
 
+  it('does not read --instance\'s value as a service name', async () => {
+    // Every `ctl start/restart/wait` against a named instance was broken by
+    // this: `--instance e2e api` resolved to ['api','e2e'], and the batch
+    // failed on the unknown name before starting anything.
+    const started: string[] = [];
+    const states = new Map([['api', svcAt('api', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return true; } }), async path => {
+      const code = await runCtl(['start', '--instance', 'e2e', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.deepEqual(started, ['api']);
+    });
+  });
+
   it('does not read a global flag\'s value as a service name', async () => {
     // `runCtl` gets the whole argv, and index.ts really does honour --config
     // and --log-dir for ctl — so the path was being read as a service and the

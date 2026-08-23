@@ -30,6 +30,23 @@ export interface PortConflict {
   holder: PortHolder | null;
 }
 
+/** Names another devup instance that may be holding a port, and how to stop
+ *  it. Injected rather than imported so this module stays about ports; see
+ *  `orchestrator/instances`. */
+export interface BlamedInstance {
+  name: string;
+  /** Whether it is another instance of *this* project — the case `--instance`
+   *  creates. A different project's daemon that happens to configure the same
+   *  port is a different situation entirely. */
+  sameProject: boolean;
+  /** The command that stops it, when one typed here can reach it. Built by the
+   *  caller, which knows the project name — deriving it here by cutting a
+   *  qualified name at a dash would misname the default instance of any
+   *  project whose own name has one. */
+  stopCommand: string | null;
+}
+export type AttributeHolder = (conflict: PortConflict) => BlamedInstance | null;
+
 const isUnix = process.platform === 'linux' || process.platform === 'darwin';
 
 /** Run `lsof` to find what's listening on a port. Returns the first matching
@@ -106,6 +123,8 @@ function pidAlive(pid: number): boolean {
 
 export interface ResolveOpts {
   autoKill: boolean;
+  /** Optional: names another devup instance behind a conflict. */
+  attribute?: AttributeHolder;
   out: (line: string) => void;
   /** Returns true if user confirms, false otherwise. Skipped when autoKill or
    *  when stdin is not a TTY. */
@@ -129,13 +148,51 @@ export async function resolvePortConflicts(
   out('⚠ Port conflicts detected on the following services:');
   out('');
   const maxName = Math.max(...conflicts.map(c => c.service.length), 8);
+  let blamed: BlamedInstance | null = null;
   for (const c of conflicts) {
     const holder = c.holder
       ? `pid=${c.holder.pid}  process=${c.holder.command}`
       : `(unable to identify holder${isUnix ? '' : ' — Windows not supported'})`;
     out(`  :${String(c.port).padEnd(6)} ${c.service.padEnd(maxName)}  ${holder}`);
+    blamed ??= opts.attribute?.(c) ?? null;
   }
   out('');
+
+  // Instances share their project's ports on purpose, so this is the expected
+  // way two of them collide — and "some process has your port" would send
+  // someone hunting for a process that is their own devup.
+  if (blamed?.sameProject) {
+    out(`That is another instance of this project: ${blamed.name}.`);
+    out('Instances have separate sockets and logs but the *same* ports, so only one can serve at a time.');
+    out(`Stop it with \`${blamed.stopCommand}\`, or give this one different ports in its config.`);
+    out('');
+  } else if (blamed) {
+    // A different project's devup. Its ports are not ours by design, so this
+    // is an ordinary conflict — worth naming, not worth refusing, and `devup
+    // down` typed here would stop *our* daemon rather than reaching theirs.
+    out(`Those belong to devup running a different project: ${blamed.name}.`);
+    out('Stop it from its own directory, or give one of the two different ports.');
+    out('');
+  }
+
+  // Refused, not warned — but only for a sibling instance. Killing its
+  // services hands them straight to *its* auto-restarter, which respawns them
+  // seconds later: the ports are taken again, this boot fails to bind anyway,
+  // and the churn is exactly what the "a daemon is already running" guard
+  // exists to prevent.
+  //
+  // A different project's daemon is not refused. Its ports colliding with ours
+  // is an ordinary conflict that `--kill-port-conflicts` has always been
+  // allowed to resolve, and taking that away would break CI that relies on it.
+  if (blamed?.sameProject) {
+    out(autoKill
+      ? 'Not killing them despite --kill-port-conflicts: they belong to a running devup,'
+      : 'Not offering to kill them: they belong to a running devup,');
+    out('whose auto-restarter would bring them straight back — the ports would be taken again,');
+    out('this boot would fail to bind anyway, and the churn is what the already-running guard exists to prevent.');
+    out(`Stop it first: \`${blamed.stopCommand}\`.`);
+    return false;
+  }
 
   if (autoKill) {
     return await killAll(conflicts, out);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { detectSubcommand, runHelp, runLogs, runStatus } from '../../../src/orchestrator/subcommands.js';
+import { detectSubcommand, runHelp, runLogs, runStatus, misplacedSubcommand, positionalArgs } from '../../../src/orchestrator/subcommands.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
 
 function mkConfig(over: Partial<DevStackConfig> = {}): DevStackConfig {
@@ -110,5 +110,74 @@ describe('runLogs', () => {
     } finally {
       rmSync(root, { recursive: true });
     }
+  });
+});
+
+describe('misplacedSubcommand', () => {
+  it('says nothing when the subcommand is where it belongs', () => {
+    assert.equal(misplacedSubcommand(['up', '-d', '--instance', 'e2e']), null);
+    assert.equal(misplacedSubcommand(['ctl', 'status']), null);
+  });
+
+  it('catches a subcommand written after the flags', () => {
+    // This used to be ignored in silence and the TUI rendered instead, so
+    // `devup --instance e2e up -d` sat there while its user waited for a
+    // daemon that was never coming.
+    assert.equal(misplacedSubcommand(['--instance', 'e2e', 'up', '-d']), 'up');
+    assert.equal(misplacedSubcommand(['--config', './x.ts', 'down']), 'down');
+  });
+
+  it('does not mistake a flag\'s value for a subcommand', () => {
+    // `--profile status` names a profile; `--services logs` names services.
+    assert.equal(misplacedSubcommand(['--profile', 'status']), null);
+    assert.equal(misplacedSubcommand(['--services', 'logs']), null);
+    assert.equal(misplacedSubcommand(['--instance', 'up']), null);
+  });
+
+  it('stops at --, so exec\'s command is never scanned', () => {
+    // `devup exec -- npm run status` must not be read as a misplaced `status`.
+    assert.equal(misplacedSubcommand(['exec', '--', 'npm', 'run', 'status']), null);
+    assert.equal(misplacedSubcommand(['--instance', 'e2e', '--', 'up']), null);
+  });
+
+  it('says nothing about a plain TUI invocation', () => {
+    assert.equal(misplacedSubcommand(['--no-lazy', '--proxy']), null);
+    assert.equal(misplacedSubcommand([]), null);
+  });
+});
+
+describe('positionalArgs', () => {
+  it('skips a flag and the value it takes', () => {
+    // One bug, over and over: a flag's value read as a positional. It has been
+    // `--profile status` taken for the status command, `--config ./x.ts api`
+    // taken for a service, and `--instance e2e api` taken for one — which
+    // broke every ctl command against a named instance at once.
+    assert.deepEqual(positionalArgs(['start', '--instance', 'e2e', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['start', '--config', './devup.config.ts', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['logs', '--since', '5m', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['debug', '--port', '9230', 'api'], 1), ['api']);
+  });
+
+  it('is unbothered by a value-taking flag with no value', () => {
+    assert.deepEqual(positionalArgs(['wait', '--timeout', '--json', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['start', 'api', '--profile'], 1), ['api']);
+  });
+
+  it('drops bare flags', () => {
+    assert.deepEqual(positionalArgs(['start', '--all', '--json', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['debug', '--off', 'api'], 1), ['api']);
+  });
+
+  it('keeps every positional, in order', () => {
+    assert.deepEqual(positionalArgs(['start', 'a', 'b', 'c'], 1), ['a', 'b', 'c']);
+  });
+
+  it('stops at --, so exec\'s command is never scanned', () => {
+    assert.deepEqual(positionalArgs(['exec', '--instance', 'e2e', '--', 'npm', 'run', 'x'], 1), []);
+  });
+
+  it('honours the start index', () => {
+    assert.deepEqual(positionalArgs(['ctl', 'start', 'api'], 1), ['start', 'api']);
+    assert.deepEqual(positionalArgs(['ctl', 'start', 'api'], 2), ['api']);
   });
 });

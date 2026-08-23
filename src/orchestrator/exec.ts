@@ -29,6 +29,7 @@ import { createClient, resolveSocket } from '../control-plane/client.js';
 import { waitForServices, UnknownServicesError, DEFAULT_WAIT_TIMEOUT_MS } from '../control-plane/wait.js';
 import { fmtSettled } from './subcommands.js';
 import { flagValue } from '../config/cli.js';
+import { instanceFlag, describeStack } from '../config/instance.js';
 import { isDaemonRunning, runDetached, stopDaemon, type DaemonOpts } from './daemon.js';
 import type { ServiceSnapshot } from '../control-plane/types.js';
 
@@ -176,7 +177,7 @@ const ENOENT_CODE = 127;
 
 export async function runExec(opts: ExecOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
-  const projectName = opts.config.name;
+  const projectName = opts.instanceName ?? opts.config.name;
 
   let flags: ExecFlags;
   try { flags = parseExecArgs(opts.argv); }
@@ -195,9 +196,9 @@ export async function runExec(opts: ExecOpts): Promise<number> {
   let ownsDaemon = false;
 
   if (existing.pid && !existing.stale) {
-    out(`↩ reusing the daemon already running for "${projectName}" (pid=${existing.pid}) — it will be left up`);
+    out(`↩ reusing the daemon already running for ${describeStack(opts.config.name, opts.cliArgs.instance)} (pid=${existing.pid}) — it will be left up`);
   } else {
-    if (existing.stale) out(`ℹ clearing a stale pid file for "${projectName}"`);
+    if (existing.stale) out(`ℹ clearing a stale pid file for ${describeStack(opts.config.name, opts.cliArgs.instance)}`);
     if (!await opts.ensurePortsFree()) return 1;
     const code = await runDetached({ ...opts, out, childArgs: opts.childArgs });
     if (code !== 0) return 1;
@@ -269,7 +270,7 @@ export async function runExec(opts: ExecOpts): Promise<number> {
       // sends them looking in the wrong place.
       if (!ownsDaemon && e instanceof UnknownServicesError) {
         out('    The daemon already running was started with a different set of services.');
-        out('    Stop it with `devup down` and let this run boot its own, or match its selection.');
+        out(`    Stop it with \`devup down${instanceFlag(opts.cliArgs.instance)}\` and let this run boot its own, or match its selection.`);
       }
       return 1;
     }

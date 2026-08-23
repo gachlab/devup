@@ -122,6 +122,18 @@ export const CONTRACT_VERSION = 1;
 
 export interface ProjectInfo {
   project: string;
+  /** Which parallel instance this daemon is, from `--instance`. Absent for the
+   *  ordinary single stack. Without it two instances of the same project are
+   *  indistinguishable over the control plane — and telling them apart is the
+   *  entire point of having them. Sent since 0.16.0. */
+  instance?: string;
+  /** The daemon's own process id.
+   *
+   *  Not decoration: in lazy mode the on-demand proxy listens on the
+   *  *configured* port from inside this process, so when a port conflict names
+   *  a holder, this is the pid it names — no service of ours will match it.
+   *  Sent since 0.16.0. */
+  pid?: number;
   profiles: Record<string, string[]>;
   /** The devup release running this daemon, or `'unknown'` if it could not
    *  read its own manifest. */

@@ -22,6 +22,7 @@ import { readLogWindow } from '../process/log-reader.js';
 const SUSPENDED_READY_TIMEOUT_MS = 10 * 60_000;
 import { watchConfig } from './config-watcher.js';
 import { findConfigFile } from '../config/loader.js';
+import { instanceFlag, describeStack } from '../config/instance.js';
 
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
@@ -73,6 +74,10 @@ export interface DaemonOpts {
   baseCwd: string;
   proxyProvider: ProxyConfigProvider | null;
   proxyOpts: ProxyOpts | null;
+  /** The project name qualified by `--instance`: what the socket, pid file,
+   *  boot-error file and log directory are all keyed by. Defaults to the
+   *  project name. */
+  instanceName?: string;
 }
 
 /** Runs in the detached child process. Boots the stack, opens the control
@@ -80,7 +85,7 @@ export interface DaemonOpts {
  *  stays alive until SIGTERM/SIGINT. */
 export async function daemonBody(opts: DaemonOpts): Promise<void> {
   const { config, services, cliArgs, platform, env, baseCwd, proxyProvider, proxyOpts } = opts;
-  const projectName = config.name;
+  const projectName = opts.instanceName ?? config.name;
   const errPath = bootErrorPathFor(projectName);
   const pidPath = pidPathFor(projectName);
 
@@ -237,7 +242,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         };
       },
       getInfo() {
-        return { project: projectName, profiles: config.profiles ?? {} };
+        // The project as configured, plus which instance we are — `projectName`
+        // above is the qualified path key and would read as a project name that
+        // does not exist.
+        return { project: config.name, ...(cliArgs.instance ? { instance: cliArgs.instance } : {}), profiles: config.profiles ?? {} };
       },
     }, { onLog: msg => writeDevupLog(msg) });
 
@@ -401,7 +409,7 @@ export interface DetachedOpts extends DaemonOpts {
  *  prints the welcome line, and returns the exit code. */
 export async function runDetached(opts: DetachedOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
-  const projectName = opts.config.name;
+  const projectName = opts.instanceName ?? opts.config.name;
 
   if (process.platform === 'win32') {
     out('❌ daemon mode (devup up -d) is not yet supported on Windows. Run `devup` to use the TUI instead.');
@@ -410,11 +418,11 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
 
   const existing = isDaemonRunning(projectName);
   if (existing.pid && !existing.stale) {
-    out(`❌ daemon already running for "${projectName}" (pid=${existing.pid}). Run \`devup down\` to stop it.`);
+    out(`❌ daemon already running for ${describeStack(opts.config.name, opts.cliArgs.instance)} (pid=${existing.pid}). Run \`devup down${instanceFlag(opts.cliArgs.instance)}\` to stop it.`);
     return 1;
   }
   if (existing.stale) {
-    out(`ℹ removing stale pid file for "${projectName}"`);
+    out(`ℹ removing stale pid file for ${describeStack(opts.config.name, opts.cliArgs.instance)}`);
     try { unlinkSync(pidPathFor(projectName)); } catch { /* ignore */ }
   }
 
@@ -430,7 +438,7 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
     return true;
   });
 
-  out(`⏳ starting devup in detached mode for "${projectName}"...`);
+  out(`⏳ starting devup in detached mode for ${describeStack(opts.config.name, opts.cliArgs.instance)}...`);
 
   // Preserve any node-level args (e.g. --loader tsx in dev) so the child can be re-executed.
   const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, ...filteredArgs], {
@@ -446,11 +454,14 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
   while (Date.now() < deadline) {
     if (existsSync(pidPath)) {
       const pid = Number(readFileSync(pidPath, 'utf8').trim());
+      const flag = instanceFlag(opts.cliArgs.instance);
       out('');
       out(`🚀 devup detached (PID ${pid})`);
-      out('   inspect:  devup ctl status');
-      out('   logs:     devup ctl logs <svc> --follow');
-      out('   stop:     devup down');
+      out(`   inspect:  devup ctl status${flag}`);
+      out(`   logs:     devup ctl logs <svc> --follow${flag}`);
+      // Without the flag this told the user to stop the *main* stack, which
+      // is the opposite of what it says and leaves this one running.
+      out(`   stop:     devup down${flag}`);
       return 0;
     }
     if (existsSync(errPath)) {

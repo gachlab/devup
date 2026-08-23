@@ -57,7 +57,7 @@ export interface RpcContext {
   getStats(): Promise<StatsResult>;
   /** Active proxy configuration, or null when no proxy is running. */
   getProxyInfo(): ProxyInfo | null;
-  /** Project metadata: name and profiles defined in config. */
+  /** Project metadata: name, instance, and the profiles defined in config. */
   getInfo(): ProjectInfo;
 }
 
@@ -294,6 +294,10 @@ const HANDLER_TABLE = {
     version: readVersion(),
     contract: CONTRACT_VERSION,
     methods: METHODS,
+    // The daemon's own pid, and composed here for the same reason as the rest:
+    // it is the same answer for every daemon of every build, so neither
+    // `getInfo` implementation should have to remember to supply it.
+    pid: process.pid,
   }),
 
   restart: async (params, ctx) => {

@@ -14,6 +14,7 @@ import { startService } from '../../process/start-service.js';
 import { debugService } from '../../process/debug-service.js';
 import { readLogWindow } from '../../process/log-reader.js';
 import { restartService } from '../../process/restart-service.js';
+import { qualifyInstance } from '../../config/instance.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -32,6 +33,8 @@ export function useControlPlane(
   platform: Platform,
   proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
   profiles: Record<string, string[]>,
+  /** From `--instance`; reported by `info` so two instances are telling apart. */
+  instance?: string,
 ): React.RefObject<SocketServerHandle | null> {
   const handleRef = useRef<SocketServerHandle | null>(null);
   const prevCpuMap = useRef(new Map<string, { time: number; cpu: number }>());
@@ -41,7 +44,10 @@ export function useControlPlane(
     let handle: SocketServerHandle | null = null;
     (async () => {
       try {
-        handle = await startSocketServer(projectName, {
+        // Qualified here rather than by the caller, so `getInfo` below can still
+        // report the project as configured: the qualified name is a path key,
+        // not a project anybody has heard of.
+        handle = await startSocketServer(qualifyInstance(projectName, instance), {
           states: () => manager.state,
           restart: (name) => restartService(manager, lazyProxies.current, name),
           stop: (name) => manager.stop(name),
@@ -111,7 +117,7 @@ export function useControlPlane(
             };
           },
           getInfo() {
-            return { project: projectName, profiles };
+            return { project: projectName, ...(instance ? { instance } : {}), profiles };
           },
         }, { onLog: msg => pushLog('devup', msg, 12) });
         handleRef.current = handle;
@@ -120,6 +126,6 @@ export function useControlPlane(
       }
     })();
     return () => { void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, lazyProxies, platform, proxy, profiles]);
+  }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, lazyProxies, platform, proxy, profiles, instance]);
   return handleRef;
 }
