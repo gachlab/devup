@@ -110,13 +110,17 @@ describe('HealthPoller and readyPattern', () => {
         ...baseSvc, name: 'web', type: 'web', port,
         readyPattern: 'Application bundle generation complete',
       };
+      // `status: 'running'`, not `'starting'` — because that is the state the
+      // daemon actually leaves a web in. `bootNormal`/`bootLazy` flip every
+      // web to `running` the moment it is spawned, and the health poller only
+      // starts afterwards, so a guard keyed on `'starting'` would never fire
+      // for a real web while this test happily passed.
       const state = new Map<string, ProcessState>([
-        ['web', mkState({ svc, status: 'starting', health: 'wait', pid: 1234 })],
+        ['web', mkState({ svc, status: 'running', health: 'wait', pid: 1234 })],
       ]);
       const poller = new HealthPoller({ state, events: mkEvents() });
       await poller.checkAll();
       assert.equal(state.get('web')!.health, 'wait', 'the port answering is not the announcement');
-      assert.equal(state.get('web')!.status, 'starting');
     });
   });
 
@@ -132,6 +136,19 @@ describe('HealthPoller and readyPattern', () => {
       await poller.checkAll();
       assert.equal(state.get('web')!.health, 'up');
       assert.equal(state.get('web')!.status, 'running');
+    });
+  });
+
+  it('holds a web at wait through the state boot really leaves it in', async () => {
+    // Belt and braces on the one above: the same service, spawned the way the
+    // daemon spawns it, must not be promoted by its port.
+    await withOpenPort(async port => {
+      const svc: ServiceConfig = { ...baseSvc, name: 'web', type: 'web', port, readyPattern: 'compiled successfully' };
+      for (const status of ['starting', 'running'] as const) {
+        const state = new Map<string, ProcessState>([['web', mkState({ svc, status, health: 'wait', pid: 1234 })]]);
+        await new HealthPoller({ state, events: mkEvents() }).checkAll();
+        assert.equal(state.get('web')!.health, 'wait', `promoted from status=${status}`);
+      }
     });
   });
 

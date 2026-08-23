@@ -235,9 +235,12 @@ Three things it knows that a hand-written polling loop usually does not:
   speak for a service that said how it announces itself. A web with a pattern
   therefore announces itself exactly like an API does.
 
-A service that has spent its restart budget fails the wait immediately rather
-than burning the clock — the restarter will not touch it again. A service in
-`timeout` does **not**: that only means its 45-second startup timer gave up,
+Nothing fails the wait early except a service the daemon has stopped having at
+all. In particular a **crash does not**: `Restarter` bumps the restart count to
+its maximum and *then* schedules the last auto-restart, so "crashed with the
+budget spent" is also what a service looks like for the eight seconds before
+the restart that saves it, and the snapshot cannot tell the two apart. Nor does
+`timeout`: that only means the service's own 45-second startup timer gave up,
 and the health poller keeps probing it.
 
 The same logic is importable — `waitForServices` from

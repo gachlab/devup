@@ -24,9 +24,11 @@
  *     request. */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { constants } from 'node:os';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { createClient, resolveSocket } from '../control-plane/client.js';
-import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS } from '../control-plane/wait.js';
+import { waitForServices, UnknownServicesError, DEFAULT_WAIT_TIMEOUT_MS } from '../control-plane/wait.js';
 import { fmtSettled } from './subcommands.js';
+import { flagValue } from '../config/cli.js';
 import { isDaemonRunning, runDetached, stopDaemon, type DaemonOpts } from './daemon.js';
 import type { ServiceSnapshot } from '../control-plane/types.js';
 
@@ -100,13 +102,13 @@ export function parseExecArgs(argv: string[]): ExecFlags {
   const command = dashdash === -1 ? [] : argv.slice(dashdash + 1);
 
   let waitTimeoutMs = DEFAULT_WAIT_TIMEOUT_MS;
-  const idx = mine.indexOf('--wait-timeout');
-  if (idx >= 0) {
-    const secs = Number(mine[idx + 1]);
+  const raw = flagValue(mine, '--wait-timeout');
+  if (raw !== undefined) {
+    const secs = Number(raw);
     // Not `|| default`: a bad value silently becoming 120 s is how someone
     // spends an afternoon wondering why their 5 s budget was ignored.
     if (!Number.isFinite(secs) || secs <= 0) {
-      throw new Error(`invalid --wait-timeout: ${mine[idx + 1] ?? '(missing)'}`);
+      throw new Error(`invalid --wait-timeout: ${raw || '(missing)'}`);
     }
     waitTimeoutMs = secs * 1000;
   }
@@ -165,6 +167,10 @@ export function crashedDuring(before: Map<string, CrashWindow>, after: ServiceSn
 
 /** Exit code for a command killed by a signal, by shell convention. */
 const SIGNAL_BASE = 128;
+/** How long to let the daemon notice a service that died as the command ended.
+ *  The count is bumped in the child's `close` handler, which is prompt but not
+ *  synchronous with the command's own exit. */
+const CRASH_SETTLE_MS = 750;
 /** Exit code for "command not found", by shell convention. */
 const ENOENT_CODE = 127;
 
@@ -209,13 +215,24 @@ export async function runExec(opts: ExecOpts): Promise<number> {
   // starts.
   let child: ChildProcess | null = null;
   let interrupted: NodeJS.Signals | null = null;
+  const abort = new AbortController();
   const onSignal = (sig: NodeJS.Signals) => {
-    if (interrupted) return;   // a second Ctrl-C while we tear down
+    if (interrupted) {
+      // Second Ctrl-C: whatever we are doing is taking too long for the person
+      // asking. Stand down and let the default handler have it, rather than
+      // swallowing every signal and leaving them nothing short of SIGKILL.
+      process.off('SIGINT', onInt);
+      process.off('SIGTERM', onTerm);
+      process.kill(process.pid, sig);
+      return;
+    }
     interrupted = sig;
+    // Ends the readiness wait on its next poll instead of at its deadline —
+    // which can be two minutes away.
+    abort.abort();
     try { child?.kill(sig); } catch { /* already gone */ }
-    // No exit here: the `finally` needs to run. If the command is still going,
-    // its own close handler resolves and unwinds; if we are still waiting, the
-    // check after the wait picks this up.
+    // No exit: the `finally` has to run, or a daemon we started is orphaned
+    // holding every port.
   };
   const onInt = () => onSignal('SIGINT');
   const onTerm = () => onSignal('SIGTERM');
@@ -241,24 +258,32 @@ export async function runExec(opts: ExecOpts): Promise<number> {
         services: selection,
         start: flags.start,
         timeoutMs: flags.waitTimeoutMs,
+        signal: abort.signal,
         onSettled: svc => out(fmtSettled(svc)),
       });
     } catch (e: any) {
       out(`✗ ${e.message ?? String(e)}`);
-      if (!ownsDaemon) {
+      // Only for an actual selection mismatch. `waitForServices` talks to the
+      // socket on its first line, so a dead or stale socket surfaces here too
+      // — and telling someone to fix a profile when their daemon just died
+      // sends them looking in the wrong place.
+      if (!ownsDaemon && e instanceof UnknownServicesError) {
         out('    The daemon already running was started with a different set of services.');
         out('    Stop it with `devup down` and let this run boot its own, or match its selection.');
       }
       return 1;
     }
+    // Interruption is checked first: an aborted wait is also an unready one,
+    // and reporting "not ready" for a run somebody cancelled blames the stack
+    // for the user's Ctrl-C — and returns 1 where the shell expects 130.
+    if (interrupted || wait.aborted) {
+      out(`⏹ interrupted${interrupted ? ` (${interrupted})` : ''} before the command started`);
+      return SIGNAL_BASE + (signalNumber(interrupted ?? 'SIGINT') ?? 0);
+    }
     if (!wait.ok) {
       out(`✗ not ready after ${(wait.elapsedMs / 1000).toFixed(1)}s: ${wait.notReady.map(s => s.name).join(', ')}`);
       for (const s of wait.notReady) out(`    ${s.name}  ${s.reason ?? `${s.status}/${s.health}`}`);
       return 1;
-    }
-    if (interrupted) {
-      out(`⏹ interrupted (${interrupted}) before the command started`);
-      return SIGNAL_BASE + (signalNumber(interrupted) ?? 0);
     }
     out(`✓ ready in ${(wait.elapsedMs / 1000).toFixed(1)}s`);
 
@@ -275,9 +300,13 @@ export async function runExec(opts: ExecOpts): Promise<number> {
 
     // ── 4. Did anything crash while it ran? ──
     if (flags.failOnCrash) {
-      // Read the window before teardown: stopping the daemon is itself a
-      // wave of process exits, and reading after it would report every
-      // service as having died.
+      // A short settle first. The daemon counts a crash in the child's `close`
+      // handler, and a service killed by the suite's last request may not have
+      // reached it by the time the command's own exit unblocks us — so reading
+      // immediately misses exactly the crash worth catching.
+      await sleep(CRASH_SETTLE_MS);
+      // And read it before teardown: stopping the daemon is itself a wave of
+      // process exits, and reading after would report every service as dead.
       const crashed = crashedDuring(before, (await client.status()).services);
       if (crashed.length) {
         out(`✗ crashed while the command ran: ${crashed.join(', ')}`);

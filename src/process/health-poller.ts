@@ -59,11 +59,18 @@ export class HealthPoller {
         // marks a front end ready while a browser still gets nothing. The
         // pattern gets the startup window to itself.
         //
-        // Only while `starting`. Once the startup timer has given up the port
-        // is accepted, because a pattern that never matches — a typo, a tool
-        // that changed its wording — must not keep a working service marked
-        // down for ever.
-        if (st.svc.readyPattern && st.status === 'starting') continue;
+        // Keyed on `health`, **not** on `status === 'starting'`: boot flips
+        // every web to `running` the moment it is spawned (`bootNormal`,
+        // `bootLazy`, `useBootSequence`), and the poller only starts after
+        // that — so a status-based guard never fires for the very services it
+        // was written for. `health` is still `wait` until something says
+        // otherwise, which is exactly the window meant here.
+        //
+        // The window ends at `timeout`: once the startup timer has given up,
+        // the port is accepted, because a pattern that never matches — a typo,
+        // a tool that changed its wording — must not keep a working service
+        // marked down for ever.
+        if (st.svc.readyPattern && st.health !== 'up' && st.status !== 'timeout') continue;
         st.health = deriveHealth(true, st.status);
         if (st.health === 'up' && (st.status === 'starting' || st.status === 'timeout')) st.status = 'running';
       } else {

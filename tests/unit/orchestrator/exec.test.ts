@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseExecArgs, crashedDuring, execOwnArgs, ownArgsFor, daemonChildArgs } from '../../../src/orchestrator/exec.js';
-import { parseCliArgs } from '../../../src/config/cli.js';
+import { parseCliArgs, flagValue } from '../../../src/config/cli.js';
 import type { ServiceSnapshot } from '../../../src/control-plane/types.js';
 
 function svc(over: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
@@ -52,6 +52,38 @@ describe('parseExecArgs', () => {
 
   it('defaults to 120s', () => {
     assert.equal(parseExecArgs(['--', 'true']).waitTimeoutMs, 120_000);
+  });
+
+  it('reads --wait-timeout=45 as well as --wait-timeout 45', () => {
+    // Only handling the spaced form meant `=45` fell through to the default
+    // without a word — the same silent fallback the strict parsing exists to
+    // prevent.
+    assert.equal(parseExecArgs(['--wait-timeout=45', '--', 'true']).waitTimeoutMs, 45_000);
+    assert.throws(() => parseExecArgs(['--wait-timeout=soon', '--', 'true']), /invalid --wait-timeout: soon/);
+  });
+});
+
+describe('flagValue', () => {
+  it('reads both spellings', () => {
+    assert.equal(flagValue(['--timeout', '5'], '--timeout'), '5');
+    assert.equal(flagValue(['--timeout=5'], '--timeout'), '5');
+  });
+
+  it('is undefined when the flag is absent, and empty when it has no value', () => {
+    // The two have to differ: absent means "use the default", present-with-no-
+    // value means "the caller made a mistake and should hear about it".
+    assert.equal(flagValue(['--json'], '--timeout'), undefined);
+    assert.equal(flagValue(['--timeout'], '--timeout'), '');
+    assert.equal(flagValue(['--timeout=' ], '--timeout'), '');
+  });
+
+  it('does not read the next flag as the value', () => {
+    // `wait --timeout --json` must not come out as timeout "--json".
+    assert.equal(flagValue(['--timeout', '--json'], '--timeout'), '');
+  });
+
+  it('does not match a longer flag that starts the same', () => {
+    assert.equal(flagValue(['--timeout-extra=9'], '--timeout'), undefined);
   });
 });
 

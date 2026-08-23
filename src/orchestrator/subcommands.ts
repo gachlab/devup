@@ -9,6 +9,7 @@ import { checkHealth } from '../process/health.js';
 import { needsInstall, writeInstallStamp } from '../utils.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
 import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
+import { flagValue } from '../config/cli.js';
 import { stopDaemon } from './daemon.js';
 import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
@@ -265,35 +266,37 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     if (method === 'wait') {
       const json = argv.includes('--json');
       const start = argv.includes('--start');
-      const timeoutIdx = argv.indexOf('--timeout');
       let timeoutMs = DEFAULT_WAIT_TIMEOUT_MS;
-      if (timeoutIdx >= 0) {
-        const secs = Number(argv[timeoutIdx + 1]);
+      const rawTimeout = flagValue(argv, '--timeout');
+      if (rawTimeout !== undefined) {
+        const secs = Number(rawTimeout);
         // A bad value falling back to the default is how someone spends an
-        // afternoon wondering why their 5 s budget was ignored.
+        // afternoon wondering why their 5 s budget was ignored. `--timeout=5`
+        // counts as given, too.
         if (!Number.isFinite(secs) || secs <= 0) {
-          out(`invalid --timeout: ${argv[timeoutIdx + 1] ?? '(missing)'}`);
+          out(`invalid --timeout: ${rawTimeout || '(missing)'}`);
           return 1;
         }
         timeoutMs = secs * 1000;
       }
 
       // Positional names, minus flags and the value --timeout takes.
+      // Positional names, minus flags and the value a spaced flag takes.
+      // `wait --timeout 5` must not wait for a service called "5".
       const names: string[] = [];
       for (let i = 1; i < argv.length; i++) {
         const a = argv[i]!;
-        if (a === '--timeout' || a === '--profile') { i++; continue; }
+        if ((a === '--timeout' || a === '--profile') && !argv[i + 1]?.startsWith('-')) { i++; continue; }
         if (a.startsWith('-')) continue;
         names.push(a);
       }
 
-      const profileIdx = argv.indexOf('--profile');
-      if (profileIdx >= 0) {
-        const profile = argv[profileIdx + 1];
+      const profile = flagValue(argv, '--profile');
+      if (profile !== undefined) {
         const members = profile ? opts.config.profiles?.[profile] : undefined;
         if (!members) {
           const available = Object.keys(opts.config.profiles ?? {});
-          out(`unknown profile: "${profile ?? '(missing)'}". ${available.length ? `Available: ${available.join(', ')}` : 'No profiles defined in config.'}`);
+          out(`unknown profile: "${profile || '(missing)'}". ${available.length ? `Available: ${available.join(', ')}` : 'No profiles defined in config.'}`);
           return 1;
         }
         names.push(...members);

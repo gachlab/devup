@@ -223,6 +223,39 @@ describe('devup exec against a real daemon', { skip: !isUnix }, () => {
     });
   });
 
+  it('a signal actually ends the wait, rather than being noted and ignored', async () => {
+    // Installing a handler is not the fix. The first version set a flag and
+    // killed a child that did not exist yet, then kept polling to the deadline
+    // — so Ctrl-C during a two-minute wait did nothing for two minutes.
+    await withDaemon('ExecInterrupt', async ({ config, projectDir, socketPath }) => {
+      const out: string[] = [];
+      // Something that will not become ready inside the timeout.
+      const client = createClient(socketPath);
+      await client.stop('dummy');
+      await waitFor(
+        async () => (await client.status()).services.every(s => s.health !== 'up'),
+        20_000,
+        'the daemon to notice the service is down',
+      );
+
+      const started = Date.now();
+      const run = runExec(execOpts(config, projectDir, ['--wait-timeout', '60', '--', 'true'], out, {
+        out: (l: string) => {
+          out.push(l);
+          // Fire once the wait is genuinely under way.
+          if (l.includes('waiting for')) setTimeout(() => process.emit('SIGINT'), 300);
+        },
+        spawnCommand: async () => { throw new Error('the command must not run'); },
+      }));
+      const code = await run;
+      const elapsed = Date.now() - started;
+
+      assert.ok(elapsed < 20_000, `should not have waited out 60s, took ${elapsed}ms`);
+      assert.equal(code, 128 + 2, 'SIGINT is 128+2 by shell convention');
+      assert.ok(out.some(l => l.includes('interrupted')), out.join('|'));
+    });
+  });
+
   it('refuses when the running daemon has a different set of services', async () => {
     // Testing against a stack that is missing services is exactly the failure
     // `up -d`'s refusal exists to prevent. Narrowing to the intersection

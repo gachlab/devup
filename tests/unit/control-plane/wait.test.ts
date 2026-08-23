@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  classify, selectServices, waitForServices, DEFAULT_WAIT_TIMEOUT_MS,
+  classify, selectServices, waitForServices, UnknownServicesError, DEFAULT_WAIT_TIMEOUT_MS,
 } from '../../../src/control-plane/wait.js';
 import type { DevupClient } from '../../../src/control-plane/client.js';
 import type { ServiceSnapshot, StatusResult } from '../../../src/control-plane/types.js';
@@ -71,16 +71,21 @@ describe('classify', () => {
     assert.match(r.reason!, /4201/);
   });
 
-  it('gives up on a service that has spent its restart budget', () => {
-    // The restarter will not touch it again, so nothing can change.
+  it('keeps waiting on a crash even at the restart limit, and says how many', () => {
+    // Tempting to fail fast here, and wrong: `Restarter.scheduleAutoRestart`
+    // bumps `restarts` to the maximum and *then* schedules the last restart,
+    // so "crashed with the budget spent" is also what a service looks like for
+    // the eight seconds before the restart that saves it. Nothing in the
+    // snapshot tells the two apart.
     const r = classify(svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 4, pid: null, startedAt: null }), false);
-    assert.equal(r.readiness, 'failed');
-    assert.match(r.reason!, /will not be restarted again/);
+    assert.equal(r.readiness, 'waiting');
+    assert.match(r.reason!, /4 times/, 'the count is `crashes`, not the restart budget');
   });
 
   it('keeps waiting on a crash that still has budget left', () => {
     const r = classify(svc({ status: 'crashed', health: 'down', restarts: 1, crashes: 1, pid: null, startedAt: null }), false);
     assert.equal(r.readiness, 'waiting');
+    assert.match(r.reason!, /1 time\b/, 'singular, and from `crashes`');
   });
 
   it('keeps waiting on a service still starting', () => {
@@ -98,6 +103,20 @@ describe('selectServices', () => {
   it('names what is actually running when asked for something that is not', () => {
     const all = [svc(), svc({ name: 'app-web' })];
     assert.throws(() => selectServices(all, ['app-api', 'nope']), /unknown service: nope.*app-api, app-web/s);
+  });
+
+  it('throws a type a caller can tell from a dead socket', () => {
+    // Otherwise `devup exec` blames a profile mismatch when the daemon simply
+    // stopped answering, and sends someone looking in the wrong place.
+    const all = [svc()];
+    try {
+      selectServices(all, ['ghost']);
+      assert.fail('should have thrown');
+    } catch (e) {
+      assert.ok(e instanceof UnknownServicesError);
+      assert.deepEqual((e as UnknownServicesError).missing, ['ghost']);
+      assert.deepEqual((e as UnknownServicesError).running, ['app-api']);
+    }
   });
 
   it('keeps the caller\'s order, not the daemon\'s', () => {
@@ -126,14 +145,42 @@ describe('waitForServices', () => {
     assert.equal(typeof res.services[0]!.readyAfterMs, 'number');
   });
 
-  it('gives up immediately on a service that will not be restarted again', async () => {
+  it('waits out a crash loop rather than calling it early', async () => {
     const dead = svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 3, pid: null, startedAt: null });
     const client = fakeClient([[dead]]);
-    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 30_000 });
+    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 60 });
     assert.equal(res.ok, false);
-    assert.equal(res.failedFast, true);
-    assert.ok(res.elapsedMs < 1000, `should not have waited 30s, waited ${res.elapsedMs}ms`);
+    assert.equal(res.failedFast, false, 'the restarter may still have it');
     assert.deepEqual(res.notReady.map(s => s.name), ['app-api']);
+  });
+
+  it('lets a crashed service that comes back count as ready', async () => {
+    const client = fakeClient([
+      [svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 3, pid: null, startedAt: null })],
+      [svc()],
+    ]);
+    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 2000 });
+    assert.equal(res.ok, true);
+  });
+
+  it('stops on the caller\'s abort signal instead of running out its clock', async () => {
+    // Ctrl-C during a two-minute wait has to be acted on now, not at the
+    // deadline — otherwise `devup exec` sits there while its user waits.
+    const controller = new AbortController();
+    const client = fakeClient([[svc({ status: 'starting', health: 'wait' })]]);
+    setTimeout(() => controller.abort(), 30);
+    const started = Date.now();
+    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 30_000, signal: controller.signal });
+    assert.equal(res.aborted, true);
+    assert.equal(res.ok, false);
+    assert.ok(Date.now() - started < 2000, `waited ${Date.now() - started}ms after the abort`);
+  });
+
+  it('does not report an abort when nothing aborted it', async () => {
+    const client = fakeClient([[svc()]]);
+    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 2000, signal: new AbortController().signal });
+    assert.equal(res.aborted, false);
+    assert.equal(res.ok, true);
   });
 
   it('still waits on a service in timeout that comes good late', async () => {

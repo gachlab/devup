@@ -288,11 +288,24 @@ The hard half is what the snapshot means:
   probing it, so a cold front end that lands at 60 s still counts. Treating it
   as terminal would cap every wait at 45 s, well under the two minutes this
   function defaults to.
-- **A service that has spent its restart budget does fail the wait**, right
-  away: the restarter will not touch it again, so nothing can change.
+- **A crash does not fail the wait.** `Restarter` bumps the restart count to
+  its maximum and *then* schedules the last auto-restart, so "crashed with the
+  budget spent" is also what a service looks like for the eight seconds before
+  the restart that saves it. Nothing in the snapshot separates them, and
+  aborting on a service that was about to come back is the worse mistake. Only
+  a service the daemon no longer has ends a wait early.
 - **Readiness is `health`**, and the daemon computes that from the service's
   own `readyPattern` when it declares one — a bare port probe is not allowed to
   speak for a service that said how it announces itself.
+
+Pass a `signal` (an `AbortSignal`, or anything with `aborted`) to end a wait
+early — it is checked once per poll, so a Ctrl-C during a two-minute wait is
+acted on in well under a second. The result says `aborted: true`.
+
+An unknown service name throws `UnknownServicesError`, which carries `missing`
+and `running`. Its own type because the same call also raises transport
+failures, and telling someone to fix their service selection when their daemon
+has just died sends them looking in the wrong place.
 
 Two things it cannot know. **The daemon's own health lags.** A service stopped
 or killed a moment ago still reads `running`/`up` until the health poller

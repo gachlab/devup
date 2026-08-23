@@ -11,17 +11,19 @@
  *    every wait at the startup timeout — 45 s by default, well under the two
  *    minutes a cold front end can need. It only means the startup timer gave
  *    up first.
- *  - A service that has exhausted its restart budget is terminal, and that is
- *    worth not waiting out.
+ *  - There is deliberately **no** fail-fast on a crash. `Restarter` bumps
+ *    `restarts` to its maximum and *then* schedules the last auto-restart, so
+ *    "crashed and out of budget" is also what a service looks like for the
+ *    eight seconds before the restart that saves it. Nothing in the snapshot
+ *    tells the two apart — see issue on exposing a pending restart — and a
+ *    wait that aborts on a service which was about to come back is worse than
+ *    one that waits out its own clock.
  *  - Readiness is `health`, and the daemon computes that from the service's
  *    own `readyPattern` when it declares one — see `HealthPoller.checkAll`,
  *    which deliberately does not let a bare port probe speak for a service
  *    that said how it announces itself. */
 import type { DevupClient } from './client.js';
 import type { ServiceSnapshot, ProcessStatus, HealthStatus } from './types.js';
-// One number, from the daemon's own definition of it. Copying it here would
-// be a second source of truth for how many times a service gets to crash.
-import { MAX_RESTARTS } from '../process/internals.js';
 
 /** How long `waitForServices` waits when the caller says nothing. Generous on
  *  purpose: a cold `ng serve` is the slowest thing in a typical stack. */
@@ -52,6 +54,8 @@ export interface WaitResult {
   /** True when the wait ended because a service reached a state it cannot
    *  leave, rather than because the clock ran out. */
   failedFast: boolean;
+  /** True when the caller's `signal` ended it. Neither ready nor timed out. */
+  aborted: boolean;
 }
 
 export interface WaitOptions {
@@ -69,6 +73,10 @@ export interface WaitOptions {
   start?: boolean;
   timeoutMs?: number;
   intervalMs?: number;
+  /** Give up early. Checked once per poll, so a Ctrl-C during a two-minute
+   *  wait is acted on in well under a second rather than at the deadline.
+   *  Structurally an `AbortSignal`, but anything with `aborted` will do. */
+  signal?: { readonly aborted: boolean };
   /** Called the first time each service settles, ready or failed. */
   onSettled?: (svc: WaitServiceResult) => void;
   /** Testing seam. */
@@ -80,13 +88,12 @@ export interface WaitOptions {
  *  Pure, and the only place the policy lives. */
 export function classify(svc: ServiceSnapshot, requireUp: boolean): { readiness: Readiness; reason?: string } {
   if (svc.health === 'up') return { readiness: 'ready' };
-  if (svc.status === 'crashed' && svc.restarts >= MAX_RESTARTS) {
-    // The restarter has given up on it, so nothing will bring it back and
-    // waiting out the clock only wastes the clock. Note the *budget*, not the
-    // crash: a service inside its budget is on its way back up.
+  if (svc.status === 'crashed') {
+    // Not `failed`: the auto-restarter may still have it. See the note above
+    // on why the snapshot cannot tell a spent budget from a pending restart.
     return {
-      readiness: 'failed',
-      reason: `crashed ${svc.restarts} times and will not be restarted again — see \`devup ctl logs ${svc.name}\``,
+      readiness: 'waiting',
+      reason: `crashed (${svc.crashes} time${svc.crashes === 1 ? '' : 's'} so far) — see \`devup ctl logs ${svc.name}\``,
     };
   }
   if (svc.status === 'timeout') {
@@ -109,15 +116,30 @@ export function classify(svc: ServiceSnapshot, requireUp: boolean): { readiness:
   return { readiness: 'waiting', reason: `${svc.status}/${svc.health}` };
 }
 
+/** Thrown when a caller asks for a service the daemon does not have.
+ *
+ *  Its own type so a caller can tell it from the transport failures
+ *  `waitForServices` can also raise — a dead socket is not a typo in a profile,
+ *  and telling someone to fix their service selection when their daemon just
+ *  died is worse than saying nothing. */
+export class UnknownServicesError extends Error {
+  constructor(message: string, readonly missing: string[], readonly running: string[]) {
+    super(message);
+    this.name = 'UnknownServicesError';
+  }
+}
+
 /** Narrow a snapshot to the requested names, or throw naming what exists. */
 export function selectServices(all: ServiceSnapshot[], wanted?: string[]): ServiceSnapshot[] {
   if (!wanted?.length) return all;
   const byName = new Map(all.map(s => [s.name, s]));
   const missing = wanted.filter(n => !byName.has(n));
   if (missing.length) {
-    throw new Error(
+    const running = all.map(s => s.name);
+    throw new UnknownServicesError(
       `unknown service${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. ` +
-      `Running: ${all.map(s => s.name).join(', ') || '(none)'}`,
+      `Running: ${running.join(', ') || '(none)'}`,
+      missing, running,
     );
   }
   return wanted.map(n => byName.get(n)!);
@@ -134,7 +156,7 @@ export async function waitForServices(client: DevupClient, opts: WaitOptions = {
   const first = await client.status();
   const wanted = selectServices(first.services, opts.services).map(s => s.name);
 
-  if (opts.start) await warmUp(client, first.services, wanted, deadline, now);
+  if (opts.start) await warmUp(client, first.services, wanted, deadline, now, opts.signal);
 
   const readyAt = new Map<string, number>();
   const settled = new Set<string>();
@@ -173,13 +195,15 @@ export async function waitForServices(client: DevupClient, opts: WaitOptions = {
     }
 
     const notReady = rows.filter(r => r.readiness !== 'ready');
-    if (!notReady.length || failedFast || now() >= deadline) {
+    const aborted = opts.signal?.aborted === true;
+    if (!notReady.length || failedFast || aborted || now() >= deadline) {
       return {
         ok: notReady.length === 0,
         elapsedMs: now() - startedAt,
         services: rows,
         notReady,
         failedFast,
+        aborted,
       };
     }
 
@@ -200,13 +224,14 @@ async function warmUp(
   wanted: string[],
   deadline: number,
   now: () => number,
+  signal?: { readonly aborted: boolean },
 ): Promise<void> {
   const want = new Set(wanted);
   const todo = snapshot.filter(s => want.has(s.name) && s.health !== 'up');
   const phases = [...new Set(todo.map(s => s.phase))].sort((a, b) => a - b);
 
   for (const phase of phases) {
-    if (now() >= deadline) return;
+    if (now() >= deadline || signal?.aborted) return;
     const batch = todo.filter(s => s.phase === phase);
     await Promise.all(batch.map(async s => {
       // Failures are not raised here: `start` reporting false is one more

@@ -80,6 +80,23 @@ Other:
 
 See https://github.com/gachlab/devup for the full documentation.`;
 
+/** The value of `--flag value` or `--flag=value`, or `undefined` if the flag
+ *  is absent.
+ *
+ *  Both spellings, because only handling the spaced one means `--wait-timeout=45`
+ *  falls through to the default without a word — the exact silent fallback the
+ *  strict parsing exists to prevent. An empty string is returned for a flag
+ *  with no value, so the caller can reject it rather than read the next flag
+ *  as the value. */
+export function flagValue(argv: string[], flag: string): string | undefined {
+  const eq = argv.find(a => a.startsWith(`${flag}=`));
+  if (eq !== undefined) return eq.slice(flag.length + 1);
+  const idx = argv.indexOf(flag);
+  if (idx < 0) return undefined;
+  const next = argv[idx + 1];
+  return next === undefined || next.startsWith('-') ? '' : next;
+}
+
 export function parseCliArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     skip: [],

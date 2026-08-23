@@ -1,7 +1,6 @@
 import { ProcessManager } from '../process/manager.js';
 import { checkHealth } from '../process/health.js';
 import { groupByPhase } from '../utils.js';
-import { MAX_RESTARTS } from '../process/internals.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
 import type { Platform } from '../platform/types.js';
@@ -78,14 +77,18 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       const ok = await waitReady(mgr, svc, deadline);
       if (!ok) {
         const st = mgr.state.get(svc.name);
-        out(st?.status === 'crashed' && st.restarts >= MAX_RESTARTS
-          ? `✗ ${svc.name} crashed ${st.restarts} times and will not be restarted again`
-          : `✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
-        if (svc.type === 'web' && !svc.readyPattern) {
+        out(`✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
+        if (st?.status === 'crashed') {
+          out(`    (it crashed ${st.crashes ?? 0} time${(st.crashes ?? 0) === 1 ? '' : 's'} — \`devup logs ${svc.name}\`)`);
+        } else if (svc.type === 'web' && !svc.readyPattern) {
           // Its port is all we had to go on, and for a dev server that opens
           // late this is the difference between a real failure and a config
           // that never said what "ready" looks like.
           out(`    (no readyPattern for ${svc.name} — devup could only watch its port)`);
+        } else if (svc.type === 'web' && svc.readyPattern) {
+          // The other half of that: a pattern that is right for a tool version
+          // you no longer run fails just as silently.
+          out(`    (waited for readyPattern /${svc.readyPattern}/ — check it still matches what ${svc.name} prints)`);
         }
         await mgr.cleanup();
         await stopExternals(externals, platform, { baseCwd, env });
@@ -121,15 +124,17 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
  *  the pattern and better than not waiting at all; it is also the reason
  *  `readyPattern` is worth setting on every web in the config. */
 async function waitReady(mgr: ProcessManager, svc: ServiceConfig, deadline: number): Promise<boolean> {
-  const patternOnly = svc.type === 'web' && !!svc.readyPattern;
+  const declaresPattern = svc.type === 'web' && !!svc.readyPattern;
   while (Date.now() < deadline) {
     const st = mgr.state.get(svc.name);
     // The spawner sets health to 'up' the moment a line matches readyPattern.
     if (st?.health === 'up') return true;
-    // Nothing is going to bring it back: the restarter has spent its budget.
-    // Waiting out the remaining two minutes only delays a failure that is
-    // already decided, and CI pays for the delay.
-    if (st?.status === 'crashed' && st.restarts >= MAX_RESTARTS) return false;
+    // The pattern gets the startup window to itself, and then the port is
+    // accepted — the same rule `HealthPoller` follows, and for the same
+    // reason: a pattern that no longer matches its tool's output must not fail
+    // a run for a front end that is serving perfectly well. The spawner's
+    // startup timer is what ends the window.
+    const patternOnly = declaresPattern && st?.status !== 'timeout';
     if (!patternOnly) {
       const { ok } = await checkHealth(svc.port, svc.healthCheck);
       if (ok) return true;
