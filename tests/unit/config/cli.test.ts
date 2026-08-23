@@ -140,6 +140,20 @@ describe('--env and --json', () => {
     assert.equal(parseCliArgs([]).envFile, undefined);
   });
 
+  it('reads the --env=path form, which is the likely typo', () => {
+    // `--env-file=x` is the spelling node users have in their fingers, so the
+    // near-miss must not be swallowed: falling back to `.env` in silence means
+    // running the suite against the development database.
+    assert.equal(parseCliArgs(['--once', '--env=.env.e2e']).envFile, '.env.e2e');
+  });
+
+  it('distinguishes a bare --env from no flag at all', () => {
+    // Both used to come out `undefined`, so a bare `--env` fell back to `.env`
+    // without a word. index.ts rejects the empty string.
+    assert.equal(parseCliArgs(['--once', '--env']).envFile, '');
+    assert.equal(parseCliArgs(['--once']).envFile, undefined);
+  });
+
   it('is not spelled --env-file, which node takes for itself', () => {
     // Node claims `--env-file` from anywhere in argv, script arguments
     // included: with the file present it loads it and moves on, and with it

@@ -194,6 +194,36 @@ describe('runOnce --json', { skip: !isUnix }, () => {
     assert.equal(report.timeoutMs, 15_000);
   });
 
+  it('does not say "never started" about a service it started', async () => {
+    // Everything in a phase is spawned before any of it is awaited, so an
+    // install failure on the *second* service leaves the first running and
+    // unchecked. Calling that "never started" sends a pipeline past the logs
+    // of the service that may well be the culprit.
+    const port = await findFreePort();
+    const config: DevStackConfig = {
+      name: 'OnceJsonStarted',
+      services: [
+        { name: 'first', cwd: '.', cmd: 'node', args: ['--import', 'tsx', 'dummy-server.ts', String(port)], type: 'api', port, phase: 0 },
+        { name: 'uninstallable', cwd: 'no-such-directory', cmd: 'node', args: ['-e', ''], type: 'api', port: 19961, phase: 0 },
+      ],
+    };
+    const stdout: string[] = [];
+    const code = await runOnce({
+      config, services: config.services,
+      cliArgs: { ...baseCli, onceJson: true, onceTimeout: 5 },
+      platform: new LinuxPlatform(),
+      env: { ...process.env as Record<string, string> },
+      baseCwd: fixtures, logSink: null,
+      out: l => stdout.push(l),
+    });
+    assert.equal(code, 1);
+    const report = JSON.parse(stdout.join('\n'));
+    const byName = Object.fromEntries(report.services.map((s: { name: string }) => [s.name, s]));
+    assert.match(byName['uninstallable'].reason, /install failed/);
+    assert.match(byName['first'].reason, /started, but the run stopped/);
+    assert.ok(!/never started/.test(byName['first'].reason), byName['first'].reason);
+  });
+
   it('reports every selected service, including ones that never got their turn', async () => {
     // A service skipped because an earlier one failed is not "ready", and
     // leaving it out of the report makes the pipeline guess.

@@ -151,6 +151,15 @@ export interface OkResult {
   ok: boolean;
 }
 
+export interface RestartResult {
+  /** Whether the service is running again. */
+  ok: boolean;
+  /** True when it was lazy and idle, so there was nothing to restart — and
+   *  waking it is not what someone resetting state between suites asked for.
+   *  Sent since 0.16.0. */
+  skippedIdle?: boolean;
+}
+
 export interface DebugResult {
   debug: boolean;
   /** `null` while the service is still starting — `status` reports it as

@@ -116,6 +116,10 @@ async function main() {
   const platform = await detectPlatform();
 
   // Env. `--env-file` wins over the config, which wins over `.env`.
+  if (cliArgs.envFile === '') {
+    console.error('❌ --env needs a path');
+    process.exit(1);
+  }
   const envFile = cliArgs.envFile
     ? resolve(cwd, cliArgs.envFile)
     : (config.envFile ? join(cwd, config.envFile) : join(cwd, '.env'));

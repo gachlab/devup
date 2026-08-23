@@ -63,6 +63,9 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
   });
 
   const reports: OnceServiceReport[] = [];
+  /** Names actually spawned, so the report can tell "never launched" from
+   *  "launched but never reached". */
+  const started = new Set<string>();
   const describe = (svc: ServiceConfig, ready: boolean, reason?: string): OnceServiceReport => ({
     name: svc.name, type: svc.type, phase: svc.phase, port: svc.port,
     ready, readyAfterMs: ready ? Date.now() - startedAt : null,
@@ -74,9 +77,14 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       // got its turn because an earlier phase failed is not "ready", and
       // leaving it out of the report makes the pipeline guess.
       for (const svc of services) {
-        if (!reports.some(r => r.name === svc.name)) {
-          reports.push(describe(svc, false, 'never started — an earlier service failed first'));
-        }
+        if (reports.some(r => r.name === svc.name)) continue;
+        // Everything in a phase is spawned before any of it is awaited, so a
+        // service can have been started and still not appear above. Saying
+        // "never started" would send a pipeline past the logs of the service
+        // that may well be the culprit.
+        reports.push(describe(svc, false, started.has(svc.name)
+          ? 'started, but the run stopped before it was checked'
+          : 'never started — an earlier phase failed first'));
       }
       emitJson({ ok, elapsedMs: Date.now() - startedAt, timeoutMs: cliArgs.onceTimeout * 1000, services: reports });
     }
@@ -125,40 +133,56 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
         return finish(false);
       }
       await mgr.start(svc, ci);
+      started.add(svc.name);
     }
 
     // Wait for everything in this phase, webs included. Waiting only for APIs
     // is why `--once` used to hand back control while the front end was still
     // compiling — and `--once` exists precisely so the caller does not have to
     // wait again on its own.
-    for (const svc of phases[num]!) {
-      const ok = await waitReady(mgr, svc, deadline);
-      if (!ok) {
+    //
+    // Concurrently, because they were started concurrently: awaiting them one
+    // at a time made `readyAfterMs` measure when the loop got round to a
+    // service rather than when it was ready, so one that came up in 2 s behind
+    // a sibling taking 40 s was reported at 40 s. Results are reported in
+    // config order afterwards, so the output stays deterministic.
+    const settled = await Promise.all(phases[num]!.map(async svc => ({
+      svc,
+      ok: await waitReady(mgr, svc, deadline),
+      atMs: Date.now() - startedAt,
+    })));
+
+    for (const { svc, ok, atMs } of settled) {
+      if (ok) {
+        out(`✓ ${svc.name} ready`);
+        reports.push({ ...describe(svc, true), readyAfterMs: atMs });
         const st = mgr.state.get(svc.name);
-        out(`✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
-        if (st?.status === 'crashed') {
-          out(`    (it crashed ${st.crashes ?? 0} time${(st.crashes ?? 0) === 1 ? '' : 's'} — \`devup logs ${svc.name}\`)`);
-        } else if (svc.type === 'web' && !svc.readyPattern) {
-          // Its port is all we had to go on, and for a dev server that opens
-          // late this is the difference between a real failure and a config
-          // that never said what "ready" looks like.
-          out(`    (no readyPattern for ${svc.name} — devup could only watch its port)`);
-        } else if (svc.type === 'web' && svc.readyPattern) {
-          // The other half of that: a pattern that is right for a tool version
-          // you no longer run fails just as silently.
-          out(`    (waited for readyPattern /${svc.readyPattern}/ — check it still matches what ${svc.name} prints)`);
-        }
-        reports.push(describe(svc, false, st?.status === 'crashed'
-          ? `crashed ${st.crashes ?? 0} time${(st.crashes ?? 0) === 1 ? '' : 's'}`
-          : `did not become ready within ${cliArgs.onceTimeout}s`));
-        await mgr.cleanup();
-        await stopExternals(externals, platform, { baseCwd, env });
-        return finish(false);
+        if (st) { st.status = 'running'; st.health = 'up'; }
+        continue;
       }
-      out(`✓ ${svc.name} ready`);
-      reports.push(describe(svc, true));
       const st = mgr.state.get(svc.name);
-      if (st) { st.status = 'running'; st.health = 'up'; }
+      out(`✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
+      if (st?.status === 'crashed') {
+        out(`    (it crashed ${st.crashes ?? 0} time${(st.crashes ?? 0) === 1 ? '' : 's'} — \`devup logs ${svc.name}\`)`);
+      } else if (svc.type === 'web' && !svc.readyPattern) {
+        // Its port is all we had to go on, and for a dev server that opens
+        // late this is the difference between a real failure and a config
+        // that never said what "ready" looks like.
+        out(`    (no readyPattern for ${svc.name} — devup could only watch its port)`);
+      } else if (svc.type === 'web' && svc.readyPattern) {
+        // The other half of that: a pattern that is right for a tool version
+        // you no longer run fails just as silently.
+        out(`    (waited for readyPattern /${svc.readyPattern}/ — check it still matches what ${svc.name} prints)`);
+      }
+      reports.push(describe(svc, false, st?.status === 'crashed'
+        ? `crashed ${st.crashes ?? 0} time${(st.crashes ?? 0) === 1 ? '' : 's'}`
+        : `did not become ready within ${cliArgs.onceTimeout}s`));
+    }
+
+    if (settled.some(r => !r.ok)) {
+      await mgr.cleanup();
+      await stopExternals(externals, platform, { baseCwd, env });
+      return finish(false);
     }
   }
 

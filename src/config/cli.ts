@@ -137,8 +137,13 @@ export function parseCliArgs(argv: string[]): CliArgs {
   };
 
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    const next = argv[i + 1];
+    let arg = argv[i]!;
+    let next = argv[i + 1];
+    // `--env=path`, because `--env-file=path` is the spelling node users have
+    // in their fingers and the near-miss must not be swallowed. Only for the
+    // flag where silence is dangerous; the rest keep the spaced form they have
+    // always had.
+    if (arg.startsWith('--env=')) { next = arg.slice('--env='.length); arg = '--env'; i--; }
 
     switch (arg) {
       case '--config':     args.configPath = next; i++; break;
@@ -160,7 +165,12 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
-      case '--env':              args.envFile = next; i++; break;
+      // `next ?? ''` and not `next`: a bare `--env` has to be
+      // distinguishable from no flag at all, or it falls back to `.env` in
+      // silence — which for a per-run override pointing at a test database
+      // means running the suite against the development one. index.ts rejects
+      // the empty string.
+      case '--env':              args.envFile = next ?? ''; i++; break;
       case '--json':             args.onceJson = true; break;
       case '--watch-config':     args.watchConfig = true; break;
       case '--kill-port-conflicts': args.killPortConflicts = true; break;

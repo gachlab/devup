@@ -29,6 +29,7 @@ import type { Platform } from '../platform/types.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from '../proxy-config/types.js';
 import type { ProcessState } from '../process/types.js';
 import { startService } from '../process/start-service.js';
+import { restartService } from '../process/restart-service.js';
 import { debugService } from '../process/debug-service.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
@@ -177,7 +178,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
     // ── Control plane ──
     socket = await startSocketServer(projectName, {
       states: () => mgr.state,
-      restart: (n) => mgr.restart(n),
+      restart: (n) => restartService(mgr, lazyProxies, n),
       stop: (n) => mgr.stop(n),
       tailLogs: (svcName, opts) => readLogWindow(logSink.pathFor(svcName), opts),
       watchLogs: (svcName, onLine) => logBus.subscribe(({ svc, text }) => {

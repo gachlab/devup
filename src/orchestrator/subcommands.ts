@@ -217,7 +217,12 @@ export function resolveTargets(
   opts: { defaultAll: boolean; verb: string },
 ): { names: string[] | null; error?: string } {
   // Positional names, minus flags and the value a spaced flag takes.
-  const takesValue = new Set(['--timeout', '--profile']);
+  //
+  // devup's globals are in here too, not just ctl's own: `runCtl` gets the
+  // whole argv, and `index.ts` really does honour `--config` and `--log-dir`
+  // for ctl. Without them, `devup ctl start --config ./devup.config.ts api`
+  // reads the path as a service name and starts nothing.
+  const takesValue = new Set(['--timeout', '--profile', '--config', '--log-dir', '--env', '--lines', '--since']);
   const names: string[] = [];
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]!;
@@ -519,18 +524,20 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       // all at once is how a phase-4 web comes up against a phase-0 API that
       // is still going down, and then spends its restart budget finding out.
       const results = await forEachInPhaseOrder(snapshot, names, async name => {
-        if (method === 'start') return (await client.start(name)).ok;
-        await client.restart(name);
+        if (method === 'start') return { ok: (await client.start(name)).ok, skippedIdle: false };
         // `restart` resolves once the service has been respawned, not once it
-        // is healthy — see the client. Saying "restarted" is the honest limit
-        // of what we know here; `--wait` below is how you ask for more.
-        return true;
+        // is healthy — see the client. `--wait` below is how you ask for more.
+        const res = await client.restart(name);
+        return { ok: res.ok, skippedIdle: res.skippedIdle === true };
       });
 
-      const failed = results.filter(r => r.error !== null || r.value === false);
+      const failed = results.filter(r => r.error !== null || r.value?.ok === false);
       for (const r of results) {
         if (r.error) out(`✗ ${r.name}  ${r.error.message}`);
-        else if (r.value === false) out(`✗ ${r.name} did not come up — check \`devup ctl logs ${r.name}\``);
+        else if (r.value?.ok === false) out(`✗ ${r.name} did not come up — check \`devup ctl logs ${r.name}\``);
+        // A lazy service that was asleep had nothing to restart, and waking it
+        // is not what someone resetting state between suites asked for.
+        else if (r.value?.skippedIdle) out(`· ${r.name} left idle (lazy, was not running)`);
         else out(`✓ ${r.name} ${method === 'start' ? 'started' : 'restarted'}`);
       }
 

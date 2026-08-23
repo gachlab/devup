@@ -30,8 +30,9 @@ export { defaultSocketPath };
 export interface RpcContext {
   /** State of every service (read-only snapshot). */
   states(): Map<string, ProcessState>;
-  /** Restart a service by name. */
-  restart(name: string): Promise<void>;
+  /** Restart a service by name, through its lazy proxy when it has one.
+   *  Reports whether it came back, and whether it was left asleep. */
+  restart(name: string): Promise<{ ok: boolean; skippedIdle: boolean }>;
   /** Stop a service by name. */
   stop(name: string): void;
   /** Read a window out of the service's persistent log — the last N lines, or
@@ -297,8 +298,10 @@ const HANDLER_TABLE = {
 
   restart: async (params, ctx) => {
     const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-    await ctx.restart(svc);
-    return { ok: true };
+    // `ok` is the outcome, as it is for `start`: a lazy service restarted
+    // through its proxy can fail to come back, and answering `true` regardless
+    // would hand a client a tick over a dead service.
+    return await ctx.restart(svc);
   },
 
   start: async (params, ctx) => {

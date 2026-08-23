@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { defaultSocketPath } from './socket-path.js';
 import type {
-  DebugResult, LogsTailResult, OkResult, PingResult, ProjectInfo,
+  DebugResult, LogsTailResult, OkResult, PingResult, ProjectInfo, RestartResult,
   StatsResult, StatusResult, StreamFrame,
 } from './types.js';
 
@@ -28,7 +28,7 @@ export type {
 export { CONTRACT_VERSION } from './types.js';
 export type {
   ServiceSnapshot, ProxyInfo, StatusResult, StatsResult, ServiceStatEntry,
-  ProjectInfo, PingResult, OkResult, DebugResult, LogsTailResult, StreamFrame,
+  ProjectInfo, PingResult, OkResult, RestartResult, DebugResult, LogsTailResult, StreamFrame,
   ProcessStatus, HealthStatus,
 } from './types.js';
 
@@ -250,7 +250,7 @@ export interface DevupClient {
    *  much more). It does *not* wait for the service to become healthy: poll
    *  `status` for that. An unknown name is a silent no-op that still answers
    *  `ok: true`. */
-  restart(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
+  restart(svc: string, opts?: SendRpcOpts): Promise<RestartResult>;
   /** SIGTERM the service's process tree and suppress the auto-restart. */
   stop(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
   /** Restart a service under (or out of) the Node inspector. Omitted options
@@ -316,7 +316,7 @@ export function createClient(socketPath: string, opts: CreateClientOpts = {}): D
     info: o => call('info', {}, o) as Promise<ProjectInfo>,
     stats: o => call('stats', {}, o) as Promise<StatsResult>,
     start: (svc, o) => call('start', { svc }, o) as Promise<OkResult>,
-    restart: (svc, o) => call('restart', { svc }, o) as Promise<OkResult>,
+    restart: (svc, o) => call('restart', { svc }, o) as Promise<RestartResult>,
     stop: (svc, o) => call('stop', { svc }, o) as Promise<OkResult>,
     // Omitted request options are left out of the request rather than filled
     // in here: the daemon already has the defaults, and a second copy of them

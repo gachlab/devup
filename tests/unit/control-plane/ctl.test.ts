@@ -25,7 +25,7 @@ function mkConfig(name = 'test'): DevStackConfig {
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
   return {
     states: () => new Map(),
-    restart: async () => {},
+    restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
     tailLogs: async () => ({ lines: [], oldestRetained: null, truncated: false }),
     watchLogs: () => () => {},
@@ -100,7 +100,7 @@ describe('runCtl', { skip: !isUnix }, () => {
     const states = new Map([['api', mkState({})]]);
     await withServer(noopCtx({
       states: () => states,
-      restart: async n => { restarted.push(n); },
+      restart: async n => { restarted.push(n); return { ok: true, skippedIdle: false }; },
     }), async path => {
       const code = await runCtl(['restart', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0, lines.join('|'));
@@ -114,7 +114,7 @@ describe('runCtl', { skip: !isUnix }, () => {
     let callCount = 0;
     const states = new Map([['api', mkState({ health: 'down' })]]);
     await withServer(noopCtx({
-      restart: async () => {},
+      restart: async () => ({ ok: true, skippedIdle: false }),
       states: () => {
         callCount++;
         if (callCount >= 2) states.set('api', mkState({ health: 'up' }));
@@ -629,13 +629,54 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     });
   });
 
+  it('does not read a global flag\'s value as a service name', async () => {
+    // `runCtl` gets the whole argv, and index.ts really does honour --config
+    // and --log-dir for ctl — so the path was being read as a service and the
+    // batch died on it having started nothing.
+    const started: string[] = [];
+    const states = new Map([['api', svcAt('api', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return true; } }), async path => {
+      const code = await runCtl(['start', '--config', './devup.config.ts', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.deepEqual(started, ['api']);
+    });
+  });
+
+  it('says a lazy service was left idle rather than claiming it restarted', async () => {
+    const states = new Map([['api', svcAt('api', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      restart: async () => ({ ok: true, skippedIdle: true }),
+    }), async path => {
+      const code = await runCtl(['restart', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.ok(lines.some(l => l.includes('left idle')), lines.join('|'));
+      assert.ok(!lines.some(l => l.includes('restarted')), lines.join('|'));
+    });
+  });
+
+  it('reports a restart that did not bring the service back', async () => {
+    const states = new Map([['api', svcAt('api', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      restart: async () => ({ ok: false, skippedIdle: false }),
+    }), async path => {
+      const code = await runCtl(['restart', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines.some(l => l.includes('did not come up')), lines.join('|'));
+    });
+  });
+
   it('restarts a whole stack with --all', async () => {
     const restarted: string[] = [];
     const states = new Map([['api', svcAt('api', 0)], ['web', svcAt('web', 1)]]);
     const lines: string[] = [];
     await withServer(noopCtx({
       states: () => states,
-      restart: async n => { restarted.push(n); },
+      restart: async n => { restarted.push(n); return { ok: true, skippedIdle: false }; },
     }), async path => {
       const code = await runCtl(['restart', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0, lines.join('|'));

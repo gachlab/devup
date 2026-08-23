@@ -216,7 +216,11 @@ concurrency inside a phase is the point, since warming eight lazy services one
 at a time is most of the reason people write their own loop instead.
 
 `restart --all` is what you want *between* test suites: it resets in-memory
-state without taking the stack down and paying a cold boot.
+state without taking the stack down and paying a cold boot. A lazy service that
+is **idle is left asleep** — there is nothing to restart, its state is already
+fresh, and waking it is the opposite of what you asked for. One that *is*
+running goes back up through its on-demand proxy rather than around it; see
+[lazy mode](./lazy-mode.md).
 
 Exits `1` naming the ones that did not come up. Neither takes an implicit
 "everything" — say `--all` if you mean it, because restarting a whole stack
