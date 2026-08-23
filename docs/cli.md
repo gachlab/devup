@@ -101,6 +101,71 @@ signal that is actually honest for each:
 Because the wait now covers more, the default timeout went from 90 s to 120 s.
 A cold `ng serve` is the slowest thing in a typical stack by a wide margin.
 
+### Instances
+
+| Flag | Description |
+|---|---|
+| `--instance <name>` | Run a second stack for this project alongside the first |
+
+```bash
+devup up -d                                        # the stack you work in
+devup up -d --instance e2e --config e2e.config.ts  # a second one beside it
+devup ctl status --instance e2e
+devup exec --instance e2e -- npx playwright test
+devup down --instance e2e                          # leaves the first alone
+```
+
+The instance gets its own **socket, pid file, boot-error file and log
+directory** — everything keyed by the project name:
+
+```
+~/.devup/sock-Guesthub-e2e.sock
+~/.devup/Guesthub-e2e.pid
+~/.devup/logs/Guesthub-e2e/
+```
+
+So an e2e run stops being a disruptive act: it does not restart the services
+you are working on, seed their databases, or take their debug flags. And two CI
+jobs for the same repo stop colliding on the socket.
+
+#### Ports are deliberately not shifted
+
+This is the part worth understanding before reaching for it. Displacing the
+ports would have to reach the **services themselves** — a front end calling
+`localhost:3000` knows nothing about instances — so it is a change in every
+consuming app, not in devup. Two instances therefore cannot serve the same
+ports at once.
+
+devup does not pretend otherwise. When the ports collide it says which instance
+has them, having asked that instance's control plane which of its services
+holds the port:
+
+```
+⚠ Port conflicts detected on the following services:
+
+  :3000   app-api    pid=41234  process=node
+
+That is another devup instance: "Guesthub".
+Instances have separate sockets and logs but the *same* ports, so only one can serve at a time.
+Stop it with `devup down`, or give this one different ports in its config.
+```
+
+Give the second instance its own config with its own ports — `--config
+e2e.config.ts` — and the two run together.
+
+`info` reports which instance a daemon is, so a client can tell two apart:
+
+```json
+{ "project": "Guesthub", "instance": "e2e", "version": "0.16.0", "contract": 1, ... }
+```
+
+The VS Code extension needs no changes: `devup.socketPath` already points
+wherever you like.
+
+**The subcommand comes first**: `devup up -d --instance e2e`, not
+`devup --instance e2e up -d`. The second form used to render the TUI in
+silence; it now says so.
+
 ### Environment
 
 | Flag | Description |

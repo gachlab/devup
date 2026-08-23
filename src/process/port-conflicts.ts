@@ -30,6 +30,19 @@ export interface PortConflict {
   holder: PortHolder | null;
 }
 
+/** Names another devup instance that may be holding a port, and how to stop
+ *  it. Injected rather than imported so this module stays about ports; see
+ *  `orchestrator/instances`. */
+export interface BlamedInstance {
+  name: string;
+  /** The exact command that stops it, instance flag included. Built by the
+   *  caller, which knows the project name — deriving it here by cutting the
+   *  qualified name at a dash would misname the default instance of any
+   *  project whose own name has one. */
+  stopCommand: string;
+}
+export type AttributeHolder = (conflict: PortConflict) => BlamedInstance | null;
+
 const isUnix = process.platform === 'linux' || process.platform === 'darwin';
 
 /** Run `lsof` to find what's listening on a port. Returns the first matching
@@ -106,6 +119,8 @@ function pidAlive(pid: number): boolean {
 
 export interface ResolveOpts {
   autoKill: boolean;
+  /** Optional: names another devup instance behind a conflict. */
+  attribute?: AttributeHolder;
   out: (line: string) => void;
   /** Returns true if user confirms, false otherwise. Skipped when autoKill or
    *  when stdin is not a TTY. */
@@ -129,13 +144,25 @@ export async function resolvePortConflicts(
   out('⚠ Port conflicts detected on the following services:');
   out('');
   const maxName = Math.max(...conflicts.map(c => c.service.length), 8);
+  let blamed: BlamedInstance | null = null;
   for (const c of conflicts) {
     const holder = c.holder
       ? `pid=${c.holder.pid}  process=${c.holder.command}`
       : `(unable to identify holder${isUnix ? '' : ' — Windows not supported'})`;
     out(`  :${String(c.port).padEnd(6)} ${c.service.padEnd(maxName)}  ${holder}`);
+    blamed ??= opts.attribute?.(c) ?? null;
   }
   out('');
+
+  // Instances share their project's ports on purpose, so this is the expected
+  // way two of them collide — and "some process has your port" would send
+  // someone hunting for a process that is their own devup.
+  if (blamed) {
+    out(`That is another devup instance: "${blamed.name}".`);
+    out('Instances have separate sockets and logs but the *same* ports, so only one can serve at a time.');
+    out(`Stop it with \`${blamed.stopCommand}\`, or give this one different ports in its config.`);
+    out('');
+  }
 
   if (autoKill) {
     return await killAll(conflicts, out);

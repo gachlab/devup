@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { detectSubcommand, runHelp, runLogs, runStatus } from '../../../src/orchestrator/subcommands.js';
+import { detectSubcommand, runHelp, runLogs, runStatus, misplacedSubcommand } from '../../../src/orchestrator/subcommands.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
 
 function mkConfig(over: Partial<DevStackConfig> = {}): DevStackConfig {
@@ -110,5 +110,38 @@ describe('runLogs', () => {
     } finally {
       rmSync(root, { recursive: true });
     }
+  });
+});
+
+describe('misplacedSubcommand', () => {
+  it('says nothing when the subcommand is where it belongs', () => {
+    assert.equal(misplacedSubcommand(['up', '-d', '--instance', 'e2e']), null);
+    assert.equal(misplacedSubcommand(['ctl', 'status']), null);
+  });
+
+  it('catches a subcommand written after the flags', () => {
+    // This used to be ignored in silence and the TUI rendered instead, so
+    // `devup --instance e2e up -d` sat there while its user waited for a
+    // daemon that was never coming.
+    assert.equal(misplacedSubcommand(['--instance', 'e2e', 'up', '-d']), 'up');
+    assert.equal(misplacedSubcommand(['--config', './x.ts', 'down']), 'down');
+  });
+
+  it('does not mistake a flag\'s value for a subcommand', () => {
+    // `--profile status` names a profile; `--services logs` names services.
+    assert.equal(misplacedSubcommand(['--profile', 'status']), null);
+    assert.equal(misplacedSubcommand(['--services', 'logs']), null);
+    assert.equal(misplacedSubcommand(['--instance', 'up']), null);
+  });
+
+  it('stops at --, so exec\'s command is never scanned', () => {
+    // `devup exec -- npm run status` must not be read as a misplaced `status`.
+    assert.equal(misplacedSubcommand(['exec', '--', 'npm', 'run', 'status']), null);
+    assert.equal(misplacedSubcommand(['--instance', 'e2e', '--', 'up']), null);
+  });
+
+  it('says nothing about a plain TUI invocation', () => {
+    assert.equal(misplacedSubcommand(['--no-lazy', '--proxy']), null);
+    assert.equal(misplacedSubcommand([]), null);
   });
 });

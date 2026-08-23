@@ -122,6 +122,11 @@ export const CONTRACT_VERSION = 1;
 
 export interface ProjectInfo {
   project: string;
+  /** Which parallel instance this daemon is, from `--instance`. Absent for the
+   *  ordinary single stack. Without it two instances of the same project are
+   *  indistinguishable over the control plane — and telling them apart is the
+   *  entire point of having them. Sent since 0.16.0. */
+  instance?: string;
   profiles: Record<string, string[]>;
   /** The devup release running this daemon, or `'unknown'` if it could not
    *  read its own manifest. */

@@ -29,17 +29,47 @@ export function detectSubcommand(argv: string[]): string | null {
   return first && KNOWN.has(first) ? first : null;
 }
 
+/** Flags that take a separate value, so the value is not mistaken for a
+ *  subcommand: `--profile status` names a profile, not the `status` command. */
+const VALUE_FLAGS = new Set([
+  '--config', '--only', '--skip', '--services', '--profile', '--timeout',
+  '--proxy-host', '--proxy-conf', '--proxy-entrypoint', '--once-timeout',
+  '--log-dir', '--env', '--instance', '--lines', '--since', '--wait-timeout',
+]);
+
+/** A subcommand that was written *after* the flags, which devup does not
+ *  accept — and used to fail silently by rendering the TUI instead.
+ *
+ *  `devup --instance e2e up -d` reads as "launch the TUI with these flags",
+ *  so it sat there doing nothing while the user waited for a daemon. Returning
+ *  the name lets the caller say what to type instead of leaving them to work
+ *  it out. Stops at `--` so `exec`'s command is never scanned. */
+export function misplacedSubcommand(argv: string[]): string | null {
+  if (detectSubcommand(argv)) return null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === '--') return null;
+    if (VALUE_FLAGS.has(a)) { i++; continue; }
+    if (a.startsWith('-')) continue;
+    if (KNOWN.has(a)) return a;
+  }
+  return null;
+}
+
 interface SubOpts {
   config: DevStackConfig;
+  /** The project name qualified by `--instance` — what every path is keyed by.
+   *  Defaults to the project name, for callers with no instance. */
+  instanceName?: string;
   baseCwd: string;
   env: Record<string, string>;
   logDir?: string;
   out?: (line: string) => void;
 }
 
-function logRoot(config: DevStackConfig, override?: string): string {
+function logRoot(config: DevStackConfig, override?: string, instanceName?: string): string {
   const root = override ?? join(homedir(), '.devup', 'logs');
-  return join(root, sanitize(config.name));
+  return join(root, sanitize(instanceName ?? config.name));
 }
 
 function sanitize(name: string): string {
@@ -61,7 +91,7 @@ export async function runLogs(argv: string[], opts: SubOpts): Promise<number> {
     out(`Unknown service "${svcArg}". Known: ${knownSvcs.join(', ')}`);
     return 1;
   }
-  const file = join(logRoot(opts.config, opts.logDir), `${sanitize(svcArg)}.log`);
+  const file = join(logRoot(opts.config, opts.logDir, opts.instanceName), `${sanitize(svcArg)}.log`);
   if (!existsSync(file)) {
     out(`No log file yet for "${svcArg}" (${file})`);
     return follow ? await followFile(file, out) : 1;
@@ -174,6 +204,8 @@ export async function runStatus(opts: SubOpts): Promise<number> {
 
 interface CtlOpts {
   config: DevStackConfig;
+  /** See SubOpts. */
+  instanceName?: string;
   out?: (line: string) => void;
   socketPath?: string;
 }
@@ -267,7 +299,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
   const method = argv[0];
   const follow = argv.includes('--follow') || argv.includes('-f');
-  const socketPath = resolveSocket(opts.config.name, opts.socketPath);
+  const socketPath = resolveSocket(opts.instanceName ?? opts.config.name, opts.socketPath);
 
   if (!method || method === 'help') {
     out('Usage: devup ctl <method> [args] [--follow]');
@@ -287,7 +319,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
   }
 
   try {
-    assertSocketExists(socketPath, opts.config.name);
+    assertSocketExists(socketPath, opts.instanceName ?? opts.config.name);
   } catch (e: any) {
     out(e.message);
     return 1;
@@ -642,7 +674,7 @@ function redactConfig(config: DevStackConfig): DevStackConfig {
 
 export async function runDown(opts: SubOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
-  return stopDaemon(opts.config.name, { out });
+  return stopDaemon(opts.instanceName ?? opts.config.name, { out });
 }
 
 // ── devup help <subcommand> ──

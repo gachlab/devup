@@ -176,7 +176,7 @@ const ENOENT_CODE = 127;
 
 export async function runExec(opts: ExecOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
-  const projectName = opts.config.name;
+  const projectName = opts.instanceName ?? opts.config.name;
 
   let flags: ExecFlags;
   try { flags = parseExecArgs(opts.argv); }

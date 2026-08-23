@@ -57,7 +57,7 @@ export interface RpcContext {
   getStats(): Promise<StatsResult>;
   /** Active proxy configuration, or null when no proxy is running. */
   getProxyInfo(): ProxyInfo | null;
-  /** Project metadata: name and profiles defined in config. */
+  /** Project metadata: name, instance, and the profiles defined in config. */
   getInfo(): ProjectInfo;
 }
 

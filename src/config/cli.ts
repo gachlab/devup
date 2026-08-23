@@ -30,6 +30,8 @@ export interface CliArgs {
   logDir?: string;
   envFile?: string;
   onceJson: boolean;
+  /** Name of a parallel instance — see `qualifyInstance`. */
+  instance?: string;
   watchConfig: boolean;
   killPortConflicts: boolean;
 }
@@ -95,6 +97,18 @@ Port conflicts:
   --kill-port-conflicts    Kill any processes already holding a configured
                            port before boot. Interactive prompt without it;
                            required for non-TTY (daemon, --once, CI)
+
+Instances:
+  --instance <name>        Run a second stack for this project alongside the
+                           first: its own socket, pid file and logs, so an
+                           e2e run does not disturb the one you work in.
+                           Ports are NOT shifted, so two instances cannot
+                           serve at once — devup says which one has them.
+                           Pass it to every command that talks to it, after
+                           the subcommand — which always comes first:
+                           devup up -d --instance e2e
+                           devup ctl status --instance e2e
+                           devup down --instance e2e
 
 Other:
   -h, --help               Show this help and exit
@@ -165,6 +179,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
+      case '--instance':         args.instance = next; i++; break;
       // Empty string, not `undefined`, when there is no value: a bare `--env`
       // has to be distinguishable from no flag at all, or it falls back to
       // `.env` in silence — which for a per-run override pointing at a test
