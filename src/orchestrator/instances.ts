@@ -16,6 +16,7 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { instanceFlag } from '../config/instance.js';
 
 export interface DaemonIdentity {
   /** The project as configured, not a sanitised file name. */
@@ -48,8 +49,17 @@ export interface AttributeProbe {
 
 export interface Attribution {
   identity: DaemonIdentity;
-  /** The exact command that stops it. */
-  stopCommand: string;
+  /** Whether it is another **instance of the same project** — which is the
+   *  case `--instance` creates, and the only one where a `devup down` typed
+   *  here would reach it.
+   *
+   *  A different project's daemon on the same port is a different situation:
+   *  its ports are not ours by design, `--kill-port-conflicts` is a legitimate
+   *  answer, and `devup down` from this directory would stop *our* daemon,
+   *  never theirs. */
+  sameProject: boolean;
+  /** The command that stops it, when one typed here can. */
+  stopCommand: string | null;
 }
 
 /** Which running instance holds `holderPid`, asked rather than guessed.
@@ -61,54 +71,60 @@ export interface Attribution {
  *    is the default. No service pid will ever match in that case.
  *  - **One of its services**, otherwise.
  *
- *  Returns null rather than guessing when nothing matches *and* every daemon
- *  answered: a stray `node server.js` on a devup port is not another instance,
- *  and saying it is sends someone to stop a daemon that is innocent. The
- *  single-other fallback applies only when a daemon could not be reached at
- *  all — too old for a control plane, or still booting — where a good hint
- *  beats none. */
+ *  Returns null when nothing claims the port. No fallback guess: a daemon that
+ *  answered and did not claim it has ruled itself out, and one that could not
+ *  be reached tells us nothing to say either. A stray `node server.js` on a
+ *  devup port is not another instance, and naming one sends someone to stop a
+ *  daemon that is innocent. */
 export async function attributePort(
   holderPid: number | null,
   selfSocketPath: string,
+  /** The project asking, so a holder can be told apart from a sibling
+   *  instance of it. */
+  selfProject: string,
   probe: AttributeProbe,
   sockets: string[] = listInstanceSockets(),
 ): Promise<Attribution | null> {
   const others = sockets.filter(p => p !== selfSocketPath);
   if (!others.length) return null;
 
-  let unreachable = 0;
-  let onlyReachable: DaemonIdentity | null = null;
   for (const socketPath of others) {
     let identity: DaemonIdentity;
     try {
       identity = await probe.info(socketPath);
     } catch {
-      unreachable++;
-      continue;
+      continue;   // cannot be asked, so it has told us nothing
     }
-    onlyReachable ??= identity;
 
-    if (holderPid !== null && identity.pid === holderPid) return attribute(identity);
+    if (holderPid !== null && identity.pid === holderPid) return attribute(identity, selfProject);
     if (holderPid !== null) {
       try {
         const { services } = await probe.status(socketPath);
-        if (services.some(s => s.pid === holderPid)) return attribute(identity);
+        if (services.some(s => s.pid === holderPid)) return attribute(identity, selfProject);
       } catch { /* it answered `info`; a failed `status` is not a match */ }
     }
   }
 
-  // Nobody claimed it. Only guess when someone could not be asked.
-  if (unreachable === 0) return null;
-  if (others.length === 1 && onlyReachable) return attribute(onlyReachable);
+  // Nobody claimed it. There is deliberately no guess here: a daemon that
+  // answered and did not claim the port has ruled itself out, and one that
+  // could not be answered tells us nothing to say. A stray `node server.js` on
+  // a devup port is not another instance, and naming one sends someone to stop
+  // a daemon that is innocent.
   return null;
 }
 
-function attribute(identity: DaemonIdentity): Attribution {
+function attribute(identity: DaemonIdentity, selfProject: string): Attribution {
+  const sameProject = identity.project === selfProject;
   return {
     identity,
-    // Built from what the daemon says it is, never from its file name: the
+    sameProject,
+    // Built from what the daemon says it is, never from its file name: a
     // suffix cannot be cut off a qualified name without misreading a project
-    // whose own name has a dash.
-    stopCommand: `devup down${identity.instance ? ` --instance ${identity.instance}` : ''}`,
+    // whose own name has a dash. And null for another project, because `devup
+    // down` resolves the project from *this* directory's config — it would
+    // stop ours, or report nothing, but never reach theirs.
+    stopCommand: sameProject
+      ? `devup down${instanceFlag(identity.instance)}`
+      : null,
   };
 }

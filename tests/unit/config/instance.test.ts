@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { qualifyInstance, validateInstance, instanceSuffix } from '../../../src/config/instance.js';
+import { qualifyInstance, validateInstance } from '../../../src/config/instance.js';
 import { defaultSocketPath } from '../../../src/control-plane/socket-path.js';
 
 describe('qualifyInstance', () => {
@@ -10,7 +10,15 @@ describe('qualifyInstance', () => {
   });
 
   it('appends the instance', () => {
-    assert.equal(qualifyInstance('Guesthub', 'e2e'), 'Guesthub-e2e');
+    assert.equal(qualifyInstance('Guesthub', 'e2e'), 'Guesthub--e2e');
+  });
+
+  it('separates with a doubled dash, so a dashed project name cannot collide', () => {
+    // A single dash makes project `foo-bar` and project `foo` with
+    // `--instance bar` share a pid file and a log directory, and `devup down`
+    // in one would stop the other.
+    assert.notEqual(qualifyInstance('foo', 'bar'), qualifyInstance('foo-bar'));
+    assert.notEqual(defaultSocketPath(qualifyInstance('foo', 'bar')), defaultSocketPath(qualifyInstance('foo-bar')));
   });
 
   it('qualifies before sanitising, so each sanitiser keeps its own rule', () => {
@@ -19,7 +27,7 @@ describe('qualifyInstance', () => {
     // `logs/gachlab_web/`. That divergence is load-bearing for anything
     // already running, so the instance is appended to the *name* and each rule
     // is left to apply itself.
-    assert.ok(defaultSocketPath(qualifyInstance('@gachlab/web', 'e2e')).endsWith('sock-_gachlab_web-e2e.sock'));
+    assert.ok(defaultSocketPath(qualifyInstance('@gachlab/web', 'e2e')).endsWith('sock-_gachlab_web--e2e.sock'));
     assert.ok(defaultSocketPath(qualifyInstance('@gachlab/web')).endsWith('sock-_gachlab_web.sock'));
   });
 
@@ -52,31 +60,5 @@ describe('validateInstance', () => {
   it('caps the length', () => {
     assert.equal(validateInstance('a'.repeat(32)), null);
     assert.match(validateInstance('a'.repeat(33))!, /too long/);
-  });
-});
-
-describe('instanceSuffix', () => {
-  it('recovers the instance from a qualified name', () => {
-    assert.equal(instanceSuffix('Guesthub-e2e', 'Guesthub'), 'e2e');
-    assert.equal(instanceSuffix('Guesthub', 'Guesthub'), undefined);
-  });
-
-  it('does not mistake a dash in the project name for an instance', () => {
-    // Cutting at the last dash would report `my-app`'s default instance as
-    // "app", and the message would suggest `devup down --instance app` for a
-    // daemon that does not exist.
-    assert.equal(instanceSuffix('my-app', 'my-app'), undefined);
-    assert.equal(instanceSuffix('my-app-e2e', 'my-app'), 'e2e');
-    assert.equal(instanceSuffix('my-app-ci-2', 'my-app'), 'ci-2');
-  });
-
-  it('says nothing for a name that is not this project at all', () => {
-    assert.equal(instanceSuffix('OtherProject-e2e', 'Guesthub'), undefined);
-  });
-
-  it('round-trips with qualifyInstance', () => {
-    for (const [project, instance] of [['Guesthub', 'e2e'], ['my-app', 'ci-2'], ['@gachlab/web', 'x']] as const) {
-      assert.equal(instanceSuffix(qualifyInstance(project, instance), project), instance);
-    }
   });
 });

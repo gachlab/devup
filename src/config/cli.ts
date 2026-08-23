@@ -157,7 +157,13 @@ export function parseCliArgs(argv: string[]): CliArgs {
     // in their fingers and the near-miss must not be swallowed. Only for the
     // flag where silence is dangerous; the rest keep the spaced form they have
     // always had.
-    if (arg.startsWith('--env=')) { next = arg.slice('--env='.length); arg = '--env'; i--; }
+    // `--flag=value` for the two flags where being silently ignored means
+    // acting on the wrong thing: `--env=` runs the suite against the
+    // development database, `--instance=` stops the daemon you are working in.
+    // The rest keep the spaced form they have always had.
+    for (const f of ['--env', '--instance']) {
+      if (arg.startsWith(`${f}=`)) { next = arg.slice(f.length + 1); arg = f; i--; break; }
+    }
 
     switch (arg) {
       case '--config':     args.configPath = next; i++; break;

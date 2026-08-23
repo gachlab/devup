@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `info` now reports `instance` and the daemon's own `pid`, so two daemons for one project are telling apart over the control plane — and so a port conflict can be attributed exactly. The lookup opens every other devup socket and asks; it checks the daemon's pid as well as its services', because under lazy mode (the default) the on-demand proxy holds the configured port *inside the daemon process*, and no service pid would ever match. Nothing answers for a port and nothing is claimed: a stray `node server.js` is not another instance, and saying it is would send someone to stop a daemon that is innocent.
 
-  `--kill-port-conflicts` is refused when the holder is another instance: killing its services hands them straight to its restarter, so the ports are taken again and this boot fails to bind anyway.
+  `--kill-port-conflicts` is refused when the holder is a **sibling instance** of the same project: killing its services hands them straight to its restarter, so the ports are taken again and this boot fails to bind anyway. A different project's daemon is named but not refused — its ports colliding with ours is an ordinary conflict that flag has always been allowed to resolve.
 
 - **`ctl start` and `ctl restart` take more than one service** (#109): several names, `--profile <name>`, or `--all`. Ascending config phase, concurrent within a phase — warming eight lazy services one at a time is most of the reason people write their own loop instead. `restart --all` is what you want between test suites: it resets in-memory state without taking the stack down.
 

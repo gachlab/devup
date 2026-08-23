@@ -13,6 +13,7 @@ import {
   type WaitServiceResult,
 } from '../control-plane/wait.js';
 import { flagValue } from '../config/cli.js';
+import { instanceFlag, describeStack } from '../config/instance.js';
 import { parseSince } from '../process/log-reader.js';
 import { MAX_FOLLOW_TAIL } from '../control-plane/socket-server.js';
 import { stopDaemon } from './daemon.js';
@@ -86,6 +87,8 @@ interface SubOpts {
   /** The project name qualified by `--instance` — what every path is keyed by.
    *  Defaults to the project name, for callers with no instance. */
   instanceName?: string;
+  /** The raw `--instance` value, for messages and command hints. */
+  instance?: string;
   baseCwd: string;
   env: Record<string, string>;
   logDir?: string;
@@ -231,6 +234,8 @@ interface CtlOpts {
   config: DevStackConfig;
   /** See SubOpts. */
   instanceName?: string;
+  /** The raw `--instance` value, for messages and command hints. */
+  instance?: string;
   out?: (line: string) => void;
   socketPath?: string;
 }
@@ -334,7 +339,9 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
   }
 
   try {
-    assertSocketExists(socketPath, opts.instanceName ?? opts.config.name);
+    // The project as configured, not the qualified path key — that reads as
+    // a project nobody has — and a start hint that carries the flag.
+    assertSocketExists(socketPath, describeStack(opts.config.name, opts.instance), `devup up -d${instanceFlag(opts.instance)}`);
   } catch (e: any) {
     out(e.message);
     return 1;

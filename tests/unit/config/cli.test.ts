@@ -183,6 +183,13 @@ describe('--instance', () => {
     assert.equal(parseCliArgs(['down']).instance, undefined);
   });
 
+  it('reads the --instance=name form', () => {
+    // Silently dropped, it stopped the default daemon — the same silent
+    // wrong-stack failure the bare-flag guard below exists to prevent.
+    assert.equal(parseCliArgs(['down', '--instance=e2e']).instance, 'e2e');
+    assert.equal(parseCliArgs(['down', '--instance=']).instance, '');
+  });
+
   it('distinguishes a bare --instance from no flag at all', () => {
     // The sharp one: a value forgotten, or eaten by an empty shell variable,
     // used to fall through to the default stack — so `devup down --instance`

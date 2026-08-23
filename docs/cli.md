@@ -119,10 +119,14 @@ The instance gets its own **socket, pid file, boot-error file and log
 directory** — everything keyed by the project name:
 
 ```
-~/.devup/sock-Guesthub-e2e.sock
-~/.devup/Guesthub-e2e.pid
-~/.devup/logs/Guesthub-e2e/
+~/.devup/sock-Guesthub--e2e.sock
+~/.devup/Guesthub--e2e.pid
+~/.devup/logs/Guesthub--e2e/
 ```
+
+The separator is a **doubled** dash: a single one would make project `foo-bar`
+and project `foo` with `--instance bar` share a pid file and a log directory,
+and `devup down` in one would stop the other.
 
 So an e2e run stops being a disruptive act: it does not restart the services
 you are working on, seed their databases, or take their debug flags. And two CI
@@ -148,7 +152,7 @@ from inside the daemon process).
 
   :3000   app-api    pid=41234  process=node
 
-That is another devup instance: "Guesthub (instance "e2e")".
+That is another instance of this project: Guesthub (instance "e2e").
 Instances have separate sockets and logs but the *same* ports, so only one can serve at a time.
 Stop it with `devup down --instance e2e`, or give this one different ports in its config.
 
@@ -159,8 +163,15 @@ Stop it first: `devup down --instance e2e`.
 ```
 
 `--kill-port-conflicts` is refused here on purpose: it is for stray processes,
-not for a live devup. Killing another instance's services hands them straight
-to *its* restarter.
+not for a live devup. Killing a sibling instance's services hands them straight
+to *its* restarter, so the ports are taken again and this boot fails to bind
+anyway.
+
+A **different project's** daemon on the same port is not refused — its ports
+are not ours by design, that is an ordinary conflict, and
+`--kill-port-conflicts` has always been allowed to resolve it. devup still
+names it, and says to stop it from its own directory: `devup down` typed here
+resolves the project from *this* config and would stop ours, never theirs.
 
 Give the second instance its own config with its own ports — `--config
 e2e.config.ts` — and the two run together.

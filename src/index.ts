@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
-import { qualifyInstance, validateInstance } from './config/instance.js';
+import { qualifyInstance, validateInstance, instanceFlag, describeStack } from './config/instance.js';
 import { detectSubcommand, misplacedSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
 import { scanPortConflicts, resolvePortConflicts, type BlamedInstance } from './process/port-conflicts.js';
@@ -86,6 +86,7 @@ async function main() {
     const subOpts = {
       config: cfg, baseCwd: cwd, env: process.env as Record<string, string>, logDir: cliArgs.logDir,
       instanceName: qualifyInstance(cfg.name, cliArgs.instance),
+      instance: cliArgs.instance,
     };
     if (subcmd === 'logs')    process.exit(await runLogs(subArgs, subOpts));
     if (subcmd === 'install') process.exit(await runInstall(subOpts));
@@ -209,12 +210,13 @@ async function main() {
   if (process.env.DEVUP_DAEMON_CHILD !== '1' && subcmd !== 'exec') {
     const daemonStatus = isDaemonRunning(instanceName);
     if (daemonStatus.pid && !daemonStatus.stale) {
-      console.error(`❌ A devup daemon is already running for "${instanceName}" (pid=${daemonStatus.pid}).`);
+      const flag = instanceFlag(cliArgs.instance);
+      console.error(`❌ A devup daemon is already running for ${describeStack(config.name, cliArgs.instance)} (pid=${daemonStatus.pid}).`);
       console.error('');
-      console.error('Stop it first with `devup down`, or interact via the control plane:');
-      console.error('  devup ctl status');
-      console.error('  devup ctl logs <svc> --follow');
-      console.error('  devup ctl restart <svc>');
+      console.error(`Stop it first with \`devup down${flag}\`, or interact via the control plane:`);
+      console.error(`  devup ctl status${flag}`);
+      console.error(`  devup ctl logs <svc> --follow${flag}`);
+      console.error(`  devup ctl restart <svc>${flag}`);
       await logSink?.close();
       process.exit(1);
     }
@@ -239,11 +241,10 @@ async function main() {
     for (const c of conflicts) {
       const pid = c.holder?.pid ?? null;
       if (pid === null || blame.has(pid)) continue;
-      const found = await attributePort(pid, selfSocket, probe);
+      const found = await attributePort(pid, selfSocket, config.name, probe);
       blame.set(pid, found ? {
-        name: found.identity.instance
-          ? `${found.identity.project} (instance "${found.identity.instance}")`
-          : found.identity.project,
+        name: describeStack(found.identity.project, found.identity.instance),
+        sameProject: found.sameProject,
         stopCommand: found.stopCommand,
       } : null);
     }

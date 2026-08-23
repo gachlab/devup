@@ -35,11 +35,15 @@ export interface PortConflict {
  *  `orchestrator/instances`. */
 export interface BlamedInstance {
   name: string;
-  /** The exact command that stops it, instance flag included. Built by the
-   *  caller, which knows the project name — deriving it here by cutting the
+  /** Whether it is another instance of *this* project — the case `--instance`
+   *  creates. A different project's daemon that happens to configure the same
+   *  port is a different situation entirely. */
+  sameProject: boolean;
+  /** The command that stops it, when one typed here can reach it. Built by the
+   *  caller, which knows the project name — deriving it here by cutting a
    *  qualified name at a dash would misname the default instance of any
    *  project whose own name has one. */
-  stopCommand: string;
+  stopCommand: string | null;
 }
 export type AttributeHolder = (conflict: PortConflict) => BlamedInstance | null;
 
@@ -157,19 +161,30 @@ export async function resolvePortConflicts(
   // Instances share their project's ports on purpose, so this is the expected
   // way two of them collide — and "some process has your port" would send
   // someone hunting for a process that is their own devup.
-  if (blamed) {
-    out(`That is another devup instance: "${blamed.name}".`);
+  if (blamed?.sameProject) {
+    out(`That is another instance of this project: ${blamed.name}.`);
     out('Instances have separate sockets and logs but the *same* ports, so only one can serve at a time.');
     out(`Stop it with \`${blamed.stopCommand}\`, or give this one different ports in its config.`);
     out('');
+  } else if (blamed) {
+    // A different project's devup. Its ports are not ours by design, so this
+    // is an ordinary conflict — worth naming, not worth refusing, and `devup
+    // down` typed here would stop *our* daemon rather than reaching theirs.
+    out(`Those belong to devup running a different project: ${blamed.name}.`);
+    out('Stop it from its own directory, or give one of the two different ports.');
+    out('');
   }
 
-  // Refused, not warned. Killing another instance's services hands them
-  // straight to *its* auto-restarter, which respawns them seconds later — so
-  // the ports are taken again, this boot fails to bind anyway, and the churn
-  // is exactly what the "a daemon is already running" guard exists to prevent.
-  // `--kill-port-conflicts` is for stray processes, not for a live devup.
-  if (blamed) {
+  // Refused, not warned — but only for a sibling instance. Killing its
+  // services hands them straight to *its* auto-restarter, which respawns them
+  // seconds later: the ports are taken again, this boot fails to bind anyway,
+  // and the churn is exactly what the "a daemon is already running" guard
+  // exists to prevent.
+  //
+  // A different project's daemon is not refused. Its ports colliding with ours
+  // is an ordinary conflict that `--kill-port-conflicts` has always been
+  // allowed to resolve, and taking that away would break CI that relies on it.
+  if (blamed?.sameProject) {
     out(autoKill
       ? 'Not killing them despite --kill-port-conflicts: they belong to a running devup,'
       : 'Not offering to kill them: they belong to a running devup,');

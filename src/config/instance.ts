@@ -20,8 +20,15 @@
  *  divergence is load-bearing for anything already running. Qualifying first
  *  leaves each rule to apply itself, untouched. */
 export function qualifyInstance(projectName: string, instance?: string): string {
-  return instance ? `${projectName}-${instance}` : projectName;
+  return instance ? `${projectName}${INSTANCE_SEPARATOR}${instance}` : projectName;
 }
+
+/** Doubled on purpose. A single dash makes project `foo-bar` and project `foo`
+ *  with `--instance bar` produce the same socket, pid file and log directory —
+ *  two unrelated projects silently sharing state, where `devup down` in one
+ *  stops the other. A single dash is legal in both project and instance names,
+ *  so the collision needs a project literally called `foo--a-b` to come back. */
+const INSTANCE_SEPARATOR = '--';
 
 /** A name safe to put in a file name, and short enough to read.
  *
@@ -37,14 +44,18 @@ export function validateInstance(instance: string): string | null {
   return null;
 }
 
-/** The instance part of a qualified name, given the project it belongs to.
+/** The ` --instance x` to append to a command in a message, or `''`.
  *
- *  `undefined` for the project's own default instance. Anchored on the known
- *  project name rather than cut at the last dash: a project called `my-app`
- *  would otherwise report its default instance as `app`, and the suggested
- *  `devup --instance app down` would be for a daemon that does not exist. */
-export function instanceSuffix(qualifiedName: string, projectName: string): string | undefined {
-  if (qualifiedName === projectName) return undefined;
-  const prefix = `${projectName}-`;
-  return qualifiedName.startsWith(prefix) ? qualifiedName.slice(prefix.length) : undefined;
+ *  Every hint devup prints has to carry it. `devup up -d --instance e2e` used
+ *  to answer "stop: devup down", and that command stops the **main** stack and
+ *  leaves the e2e one running — the opposite of what it says. */
+export function instanceFlag(instance?: string): string {
+  return instance ? ` --instance ${instance}` : '';
+}
+
+/** How to name the stack in a message: the project as configured, plus which
+ *  instance. Never the qualified name — that is a path key, and reads as a
+ *  project nobody has. */
+export function describeStack(projectName: string, instance?: string): string {
+  return instance ? `${projectName} (instance "${instance}")` : projectName;
 }

@@ -38,10 +38,10 @@ export function resolveSocket(projectName: string, overridePath?: string): strin
 }
 
 /** Throw a friendly error if the socket doesn't exist (devup not running). */
-export function assertSocketExists(socketPath: string, projectName: string): void {
+export function assertSocketExists(socketPath: string, projectName: string, hint = 'devup'): void {
   if (!existsSync(socketPath)) {
     throw new Error(
-      `devup is not running for project "${projectName}".\nStart it with \`devup\` first.`,
+      `devup is not running for ${projectName}.\nStart it with \`${hint}\` first.`,
     );
   }
 }
