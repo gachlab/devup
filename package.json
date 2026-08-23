@@ -13,6 +13,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./client": {
+      "types": "./dist/control-plane/client.d.ts",
+      "import": "./dist/control-plane/client.js"
+    },
     "./contract/status-snapshot.json": "./contract/status-snapshot.json"
   },
   "files": [
@@ -45,7 +49,8 @@
     "url": "https://github.com/gachlab/devup/issues"
   },
   "scripts": {
-    "build": "tsup && tsc --emitDeclarationOnly",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsup && tsc --emitDeclarationOnly",
     "contract:update": "node --import tsx scripts/update-contract.ts",
     "dev": "tsup --watch",
     "prepack": "npm pkg fix",

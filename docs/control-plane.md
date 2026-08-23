@@ -173,7 +173,14 @@ Added in 0.14.0.
 → { "result": { "ok": true } }
 ```
 
-Calls `ProcessManager.restart(name)` — stops the current process (kill-tree), resets the auto-restart counter to 0, and spawns it again. The respawn is async; query `status` afterwards to confirm.
+Calls `ProcessManager.restart(name)` — stops the current process (kill-tree), resets the auto-restart counter to 0, and spawns it again.
+
+**The call blocks until the respawn has happened.** The daemon waits ~1.5 s for
+the old process to settle before spawning, and a `preBuild` runs inside that
+window too, so a second or a minute are both normal. What it does *not* wait
+for is health: the answer means "spawned", not "serving". Query `status` for
+that. Do not put a short timeout on this call — the daemon carries on either
+way, and giving up early only loses you the answer.
 
 Errors:
 
@@ -232,6 +239,100 @@ echo '{"method":"ping"}' | nc -U $HOME/.devup/sock-MyProject.sock
 
 ## From Node
 
+devup ships the client it uses itself, as a subpath export:
+
+```javascript
+import { createClient, resolveSocket } from '@gachlab/devup/client';
+
+const devup = createClient(resolveSocket('MyProject'));
+
+const { services, proxy } = await devup.status();
+for (const s of services) {
+  // `originalPort` is the one to connect to — see the note under `status`.
+  console.log(`${s.name} ${s.status}/${s.health} :${s.originalPort}`);
+}
+```
+
+The types come with it, so nothing has to be re-declared by hand:
+
+```ts
+import type { ServiceSnapshot, StatusResult, ProxyInfo } from '@gachlab/devup/client';
+```
+
+### What `./client` exports
+
+| | |
+|---|---|
+| `createClient(socketPath, opts?)` | typed handle on one daemon |
+| `createClientForProject(name, opts?)` | the same, resolving the default socket path |
+| `resolveSocket(name, override?)`, `defaultSocketPath(name)`, `assertSocketExists(path, name)` | locating a daemon |
+| `sendRpc(path, method, params?, opts?)`, `openStream(path, method, params, onFrame, onError?, onClose?)` | the raw transport, for methods newer than your copy of the client |
+| types | `ServiceSnapshot`, `StatusResult`, `ProxyInfo`, `StatsResult`, `ServiceStatEntry`, `ProjectInfo`, `PingResult`, `OkResult`, `DebugResult`, `LogsTailResult`, `StreamFrame`, `ProcessStatus`, `HealthStatus` |
+
+`DevupClient` has one method per RPC — `ping`, `status`, `info`, `stats`,
+`start`, `restart`, `stop`, `debug`, `logsTail`, `followStatus`, `followLogs`
+— plus `call(method, params?, opts?)` for anything not covered.
+
+Deliberately **not** exported: the socket server, `ProcessManager`, the config
+loader, and the orchestrator. Those are internals and change between releases;
+`./client` is API and does not.
+
+### Two things to know
+
+**One-shot calls have no timeout by default.** Pass `timeoutMs` where a script
+must not wait:
+
+```javascript
+const { services } = await devup.status({ timeoutMs: 5_000 });
+```
+
+A client-wide `createClient(path, { timeoutMs })` works too, but it applies to
+**every** call — `start`, `restart` and `debug` included, and those three
+restart a service, which legitimately takes a minute. Under a client-wide
+timeout, opt them back out per call:
+
+```javascript
+const devup = createClient(socketPath, { timeoutMs: 5_000 });
+await devup.restart('app-api', { timeoutMs: undefined });   // per call wins
+```
+
+A daemon that dies mid-request rejects the call rather than hanging, timeout or
+not.
+
+**A stream tells you when the daemon goes away.** `devup down` destroys its
+clients, and over a Unix socket that is a clean EOF — no error is raised, and
+without `onClose` the stream just goes quiet:
+
+```javascript
+const stop = devup.followStatus(onFrame, {
+  onError: err => report(err),
+  onClose: () => scheduleReconnect(),   // daemon gone; not called if you stop()
+});
+```
+
+**A throw from a stream's `onFrame` is not caught.** It escapes as an uncaught
+exception, deliberately: swallowing it is how `ctl status --follow` once came
+to print nothing at all. Wrap your own handler when streaming from a
+long-lived process:
+
+```javascript
+const stop = devup.followStatus(frame => {
+  try { render(frame); } catch (e) { report(e); }
+});
+```
+
+**The types describe the daemon of the same version.** A globally installed
+`devup` can be older than the copy your project depends on, and an older daemon
+omits fields added since (`originalPort` from 0.12.0, `debugPort` from 0.14.0).
+They are typed as always present on purpose — making them optional would push a
+fallback onto every call site, which is the hand-written guessing this export
+exists to end. Ask the daemon what it is instead of guarding field by field.
+
+### Or by hand
+
+The protocol is small enough to speak directly, and nothing here requires the
+package:
+
 ```javascript
 import { createConnection } from 'node:net';
 import { createInterface } from 'node:readline';
@@ -271,6 +372,10 @@ Subsequent `status` frames carry **one** service — they are updates, not snaps
 ```
 
 Omit `svc` (or pass `null`) to receive every service's output. Replayed tail lines carry `svc` too, so a client can route every frame the same way.
+
+**The replay is per service.** `tail` only applies when you name one: the
+all-services stream sends no history at all and starts from the next line
+written. Ask for each service separately if you need its backlog.
 
 ### `stats`
 
@@ -328,4 +433,8 @@ Some of these may be added later if there's clear demand. Open an issue.
 
 ## Compatibility
 
-The protocol is plain text JSON over a Unix socket — any language with a JSON library and a Unix socket client can talk to it. There's no client SDK in devup itself; the protocol is small enough that you don't need one.
+The protocol is plain text JSON over a Unix socket — any language with a JSON
+library and a Unix socket client can talk to it. From Node you can skip that
+work: `@gachlab/devup/client` is the same client the CLI uses, types included
+(see [From Node](#from-node)). Added in 0.16.0; earlier releases compiled the
+client into the package without exporting it.

@@ -41,14 +41,25 @@ opt-in**, so with it off every port is already real and a service configured on
 
 ## 4. The control-plane contract lives in three places
 
-`serializeState()`, `docs/control-plane.md`, and a **hand-written copy** in
-gachlab/devup-vscode (`src/types.ts`, `src/socket-client.ts`). Nothing keeps
-them honest — see issue #87.
+`src/control-plane/types.ts` (which `serializeState()` is typed against),
+`docs/control-plane.md`, and a **hand-written copy** in gachlab/devup-vscode
+(`src/types.ts`, `src/socket-client.ts`). Nothing keeps them honest — see issue
+#87.
 
 Changing the snapshot shape means changing all three. The doc has been wrong
 before (`port: from config`, and a "No notifications" section written years
 after `status.follow` shipped), and the extension shipped a broken release
 because it trusted it.
+
+The types are now public as `@gachlab/devup/client`, so the extension's copy
+*could* go away — until it does, it is still a copy, and still drifts.
+
+A new subpath export needs **two** edits, not one: the `exports` map in
+`package.json` *and* an entry in `tsup.config.ts`. `tsc --emitDeclarationOnly`
+writes a `.d.ts` for every file under `src/`, but tsup only bundles the entries
+it is given — so a missing entry type-checks fine in the consumer and fails at
+runtime with a missing file. That is how `dist/control-plane/client.d.ts`
+shipped for releases with no `client.js` beside it.
 
 ## 5. `tests/` is not typechecked
 
