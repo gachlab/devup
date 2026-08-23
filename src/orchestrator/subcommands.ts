@@ -8,7 +8,10 @@ import { createInterface } from 'node:readline';
 import { checkHealth } from '../process/health.js';
 import { needsInstall, writeInstallStamp } from '../utils.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
-import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
+import {
+  waitForServices, selectServices, forEachInPhaseOrder, DEFAULT_WAIT_TIMEOUT_MS,
+  type WaitServiceResult,
+} from '../control-plane/wait.js';
 import { flagValue } from '../config/cli.js';
 import { parseSince } from '../process/log-reader.js';
 import { MAX_FOLLOW_TAIL } from '../control-plane/socket-server.js';
@@ -197,6 +200,52 @@ function fmtStatus(rows: ServiceRow[], out: (l: string) => void): void {
   }
 }
 
+/** Which services a batch command was aimed at: positional names, a
+ *  `--profile`, or `--all`.
+ *
+ *  Shared by `wait`, `start` and `restart` so the three cannot disagree about
+ *  what `--profile e2e` means. Returns a message instead of throwing, because
+ *  every caller wants to print it and return 1.
+ *
+ *  `defaultAll` is the difference between them: `wait` with no arguments
+ *  sensibly means "everything", while `start`/`restart` with no arguments must
+ *  not — silently restarting a whole stack because someone forgot to type a
+ *  name is not a mistake worth being quiet about. */
+export function resolveTargets(
+  argv: string[],
+  config: Pick<DevStackConfig, 'profiles'>,
+  opts: { defaultAll: boolean; verb: string },
+): { names: string[] | null; error?: string } {
+  // Positional names, minus flags and the value a spaced flag takes.
+  const takesValue = new Set(['--timeout', '--profile']);
+  const names: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (takesValue.has(a) && !argv[i + 1]?.startsWith('-')) { i++; continue; }
+    if (a.startsWith('-')) continue;
+    names.push(a);
+  }
+
+  const profile = flagValue(argv, '--profile');
+  if (profile !== undefined) {
+    const members = profile ? config.profiles?.[profile] : undefined;
+    if (!members) {
+      const available = Object.keys(config.profiles ?? {});
+      return { names: null, error: `unknown profile: "${profile || '(missing)'}". ${available.length ? `Available: ${available.join(', ')}` : 'No profiles defined in config.'}` };
+    }
+    names.push(...members);
+  }
+
+  const all = argv.includes('--all');
+  if (all && names.length) {
+    return { names: null, error: '--all cannot be combined with named services or --profile' };
+  }
+  if (all) return { names: [] };            // empty means "everything the daemon has"
+  if (names.length) return { names: [...new Set(names)] };
+  if (opts.defaultAll) return { names: [] };
+  return { names: null, error: `usage: devup ctl ${opts.verb} <service...> | --profile <name> | --all` };
+}
+
 /** One line per service as it settles, so a slow boot shows progress rather
  *  than a silent two minutes. Shared with `devup exec`, which reports the same
  *  wait. */
@@ -222,10 +271,12 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  wait [svc...] [--start]      Wait until services are ready; 0 when they are');
     out('  logs <svc> [--since <when>] [--lines <n>] [--follow]');
     out('                               Tail logs, or follow the live stream');
-    out('  start <svc>                  Start a stopped service');
+    out('  start <svc...> | --profile <p> | --all');
+    out('                               Start stopped services, in config phase order');
     out('  debug <svc> [--off] [--port n] [--brk]');
     out('                               Restart a service under the Node inspector');
-    out('  restart <svc>                Restart a service');
+    out('  restart <svc...> | --profile <p> | --all [--wait]');
+    out('                               Restart services, in config phase order');
     out('  stop <svc>                   Stop a service');
     return 0;
   }
@@ -288,28 +339,9 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       }
 
       // Positional names, minus flags and the value --timeout takes.
-      // Positional names, minus flags and the value a spaced flag takes.
-      // `wait --timeout 5` must not wait for a service called "5".
-      const names: string[] = [];
-      for (let i = 1; i < argv.length; i++) {
-        const a = argv[i]!;
-        if ((a === '--timeout' || a === '--profile') && !argv[i + 1]?.startsWith('-')) { i++; continue; }
-        if (a.startsWith('-')) continue;
-        names.push(a);
-      }
-
-      const profile = flagValue(argv, '--profile');
-      if (profile !== undefined) {
-        const members = profile ? opts.config.profiles?.[profile] : undefined;
-        if (!members) {
-          const available = Object.keys(opts.config.profiles ?? {});
-          out(`unknown profile: "${profile || '(missing)'}". ${available.length ? `Available: ${available.join(', ')}` : 'No profiles defined in config.'}`);
-          return 1;
-        }
-        names.push(...members);
-      }
-
-      const selection = names.length ? [...new Set(names)] : undefined;
+      const target = resolveTargets(argv, opts.config, { defaultAll: true, verb: 'wait' });
+      if (!target.names) { out(target.error!); return 1; }
+      const selection = target.names.length ? target.names : undefined;
       const client = createClient(socketPath);
       if (!json) {
         out(`⏳ waiting${selection ? ` for ${selection.length} service${selection.length === 1 ? '' : 's'}` : ''} (timeout ${Math.round(timeoutMs / 1000)}s)${start ? ', starting what is idle' : ''}`);
@@ -467,38 +499,58 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       return 0;
     }
 
-    if (method === 'start') {
-      const svc = argv[1];
-      if (!svc) { out('usage: devup ctl start <service>'); return 1; }
-      const res = await sendRpc(socketPath, 'start', { svc }) as { ok: boolean };
-      if (!res.ok) {
-        out(`✗ ${svc} did not come up — check \`devup ctl logs ${svc}\``);
-        return 1;
-      }
-      out(`✓ ${svc} started`);
-      return 0;
-    }
+    if (method === 'start' || method === 'restart') {
+      const target = resolveTargets(argv, opts.config, { defaultAll: false, verb: method });
+      if (!target.names) { out(target.error!); return 1; }
 
-    if (method === 'restart') {
-      const svc = argv[1];
-      if (!svc) { out('usage: devup ctl restart <service> [--wait] [--timeout <s>]'); return 1; }
+      const client = createClient(socketPath);
+      const snapshot = (await client.status()).services;
+      let names: string[];
+      try {
+        // Empty means --all: everything the *daemon* has, which is not
+        // necessarily everything the config lists.
+        names = target.names.length
+          ? selectServices(snapshot, target.names).map(s => s.name)
+          : snapshot.map(s => s.name);
+      } catch (e: any) { out(`✗ ${e.message}`); return 1; }
+      if (!names.length) { out('(no services)'); return 0; }
+
+      // Ascending phase, concurrent within a phase. Restarting a whole stack
+      // all at once is how a phase-4 web comes up against a phase-0 API that
+      // is still going down, and then spends its restart budget finding out.
+      const results = await forEachInPhaseOrder(snapshot, names, async name => {
+        if (method === 'start') return (await client.start(name)).ok;
+        await client.restart(name);
+        // `restart` resolves once the service has been respawned, not once it
+        // is healthy — see the client. Saying "restarted" is the honest limit
+        // of what we know here; `--wait` below is how you ask for more.
+        return true;
+      });
+
+      const failed = results.filter(r => r.error !== null || r.value === false);
+      for (const r of results) {
+        if (r.error) out(`✗ ${r.name}  ${r.error.message}`);
+        else if (r.value === false) out(`✗ ${r.name} did not come up — check \`devup ctl logs ${r.name}\``);
+        else out(`✓ ${r.name} ${method === 'start' ? 'started' : 'restarted'}`);
+      }
+
       const wait = argv.includes('--wait');
-      const timeoutIdx = argv.indexOf('--timeout');
-      const timeoutSec = timeoutIdx >= 0 ? Number(argv[timeoutIdx + 1] ?? 60) : 60;
-      await sendRpc(socketPath, 'restart', { svc });
-      if (!wait) {
-        out(`✓ restart sent to ${svc}`);
-        return 0;
+      if (!wait || failed.length) {
+        if (failed.length) out(`${failed.length} of ${results.length} failed: ${failed.map(r => r.name).join(', ')}`);
+        return failed.length ? 1 : 0;
       }
-      out(`⏳ waiting for ${svc} to become healthy…`);
-      const deadline = Date.now() + timeoutSec * 1000;
-      while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 500));
-        const status = await sendRpc(socketPath, 'status') as { services: ServiceRow[] };
-        const row = status.services.find(s => s.name === svc);
-        if (row?.health === 'up') { out(`✓ ${svc} is healthy`); return 0; }
+
+      const rawTimeout = flagValue(argv, '--timeout');
+      let timeoutMs = 60_000;
+      if (rawTimeout !== undefined) {
+        const secs = Number(rawTimeout);
+        if (!Number.isFinite(secs) || secs <= 0) { out(`invalid --timeout: ${rawTimeout || '(missing)'}`); return 1; }
+        timeoutMs = secs * 1000;
       }
-      out(`✗ ${svc} did not become healthy within ${timeoutSec}s`);
+      out(`⏳ waiting for ${names.length === 1 ? names[0] : `${names.length} services`} to become healthy…`);
+      const res = await waitForServices(client, { services: names, timeoutMs, onSettled: svc => out(fmtSettled(svc)) });
+      if (res.ok) { out(`✓ healthy in ${(res.elapsedMs / 1000).toFixed(1)}s`); return 0; }
+      out(`✗ not healthy after ${(res.elapsedMs / 1000).toFixed(1)}s: ${res.notReady.map(s => s.name).join(', ')}`);
       return 1;
     }
 
@@ -636,10 +688,25 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('                               failing test wants: with --lines alone you have to');
     out('                               guess how many, and a noisy service pushes the part');
     out('                               you care about out of the tail before you ask.');
-    out('  start <svc>                  Start the named service if stopped');
+    out('  start <svc...> | --profile <p> | --all');
+    out('                               Start stopped services. Ascending config phase,');
+    out('                               concurrent within a phase — warming eight lazy');
+    out('                               services one at a time is most of the reason');
+    out('                               people write their own loop instead.');
+    out('                               Exits 1 naming the ones that did not come up.');
     out('  debug <svc> [--off] [--port n] [--brk]');
     out('                               Restart the named service under the Node inspector');
-    out('  restart <svc>                Restart the named service');
+    out('  restart <svc...> | --profile <p> | --all [--wait] [--timeout <s>]');
+    out('                               Restart services, same ordering as start.');
+    out('                               `restart --all` is what you want between test');
+    out('                               suites: it resets in-memory state without');
+    out('                               taking the stack down.');
+    out('                               --wait blocks until they are healthy again.');
+    out('');
+    out('                               Neither takes an implicit "everything": say');
+    out('                               --all if you mean it. Restarting a whole stack');
+    out('                               because a name was forgotten is not a mistake');
+    out('                               worth being quiet about.');
     out('  stop <svc>                   Stop the named service');
     out('');
     out('  devup must be running in the same project directory.');

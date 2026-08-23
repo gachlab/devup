@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startSocketServer, type RpcContext } from '../../../src/control-plane/socket-server.js';
-import { runCtl } from '../../../src/orchestrator/subcommands.js';
+import { runCtl, resolveTargets } from '../../../src/orchestrator/subcommands.js';
 import type { ProcessState } from '../../../src/process/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
@@ -94,13 +94,18 @@ describe('runCtl', { skip: !isUnix }, () => {
   it('restart sends rpc and prints confirmation', async () => {
     const restarted: string[] = [];
     const lines: string[] = [];
+    // The daemon has to actually have the service: `restart` resolves names
+    // against the snapshot now, rather than sending an RPC that the daemon
+    // would silently ignore.
+    const states = new Map([['api', mkState({})]]);
     await withServer(noopCtx({
+      states: () => states,
       restart: async n => { restarted.push(n); },
     }), async path => {
       const code = await runCtl(['restart', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
-      assert.equal(code, 0);
+      assert.equal(code, 0, lines.join('|'));
       assert.deepEqual(restarted, ['api']);
-      assert.ok(lines[0].includes('restart sent'));
+      assert.ok(lines[0].includes('restarted'), lines.join('|'));
     });
   });
 
@@ -168,7 +173,8 @@ describe('runCtl', { skip: !isUnix }, () => {
     const path = join(dir, 's.sock');
     try {
       let started: string | null = null;
-      const handle = await startSocketServer('t', noopCtx({ start: async (n) => { started = n; return true; } }), { path });
+      const states = new Map([['api', mkState({})]]);
+      const handle = await startSocketServer('t', noopCtx({ states: () => states, start: async (n) => { started = n; return true; } }), { path });
       const lines: string[] = [];
       try {
         const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
@@ -185,7 +191,8 @@ describe('runCtl', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
     const path = join(dir, 's.sock');
     try {
-      const handle = await startSocketServer('t', noopCtx({ start: async () => false }), { path });
+      const states = new Map([['api', mkState({})]]);
+      const handle = await startSocketServer('t', noopCtx({ states: () => states, start: async () => false }), { path });
       const lines: string[] = [];
       try {
         const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
@@ -517,6 +524,148 @@ describe('runCtl logs --since', { skip: !isUnix }, () => {
       assert.equal(code, 0);
       assert.deepEqual(asked, [{ lines: 100, since: undefined }]);
       assert.deepEqual(out, ['one']);
+    });
+  });
+});
+
+describe('resolveTargets', () => {
+  const config = { profiles: { e2e: ['api', 'web'] } };
+
+  it('takes positional names', () => {
+    assert.deepEqual(resolveTargets(['start', 'a', 'b'], config, { defaultAll: false, verb: 'start' }).names, ['a', 'b']);
+  });
+
+  it('de-duplicates', () => {
+    assert.deepEqual(resolveTargets(['start', 'a', 'a'], config, { defaultAll: false, verb: 'start' }).names, ['a']);
+  });
+
+  it('expands a profile, and says what exists when it does not', () => {
+    assert.deepEqual(resolveTargets(['start', '--profile', 'e2e'], config, { defaultAll: false, verb: 'start' }).names, ['api', 'web']);
+    const bad = resolveTargets(['start', '--profile', 'nope'], config, { defaultAll: false, verb: 'start' });
+    assert.equal(bad.names, null);
+    assert.match(bad.error!, /Available: e2e/);
+  });
+
+  it('reads --all as "everything the daemon has"', () => {
+    assert.deepEqual(resolveTargets(['start', '--all'], config, { defaultAll: false, verb: 'start' }).names, []);
+  });
+
+  it('refuses --all together with names, rather than quietly picking one', () => {
+    const r = resolveTargets(['start', '--all', 'api'], config, { defaultAll: false, verb: 'start' });
+    assert.equal(r.names, null);
+    assert.match(r.error!, /--all cannot be combined/);
+  });
+
+  it('will not restart everything just because a name was forgotten', () => {
+    // `wait` with no arguments sensibly means everything; `start`/`restart`
+    // must not, and the usage line is the whole answer.
+    const r = resolveTargets(['restart'], config, { defaultAll: false, verb: 'restart' });
+    assert.equal(r.names, null);
+    assert.match(r.error!, /devup ctl restart <service\.\.\.> \| --profile <name> \| --all/);
+    // ...while wait does.
+    assert.deepEqual(resolveTargets(['wait'], config, { defaultAll: true, verb: 'wait' }).names, []);
+  });
+
+  it('does not read the value of a spaced flag as a service name', () => {
+    assert.deepEqual(resolveTargets(['wait', '--timeout', '5'], config, { defaultAll: true, verb: 'wait' }).names, []);
+  });
+});
+
+describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
+  const svcAt = (name: string, phase: number) =>
+    mkState({ svc: { ...svc, name, phase, port: 3000 + phase }, status: 'idle', health: 'idle', pid: null });
+
+  it('starts several at once, in ascending config phase', async () => {
+    // The phase order is the only statement anyone has made about what needs
+    // what — a phase-4 web started before its phase-0 API just spends its
+    // restart budget finding out.
+    const order: string[] = [];
+    const states = new Map([
+      ['web', svcAt('web', 4)], ['auth', svcAt('auth', 0)], ['app', svcAt('app', 1)],
+    ]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      start: async n => { order.push(n); return true; },
+    }), async path => {
+      const code = await runCtl(['start', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.deepEqual(order, ['auth', 'app', 'web']);
+    });
+  });
+
+  it('exits 1 naming the ones that did not come up, and 0 for the ones that did', async () => {
+    const states = new Map([['api', svcAt('api', 0)], ['web', svcAt('web', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      start: async n => n !== 'web',
+    }), async path => {
+      const code = await runCtl(['start', 'api', 'web'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      const said = lines.join(' ');
+      assert.match(said, /✓ api started/);
+      assert.match(said, /✗ web did not come up/);
+      assert.match(said, /1 of 2 failed: web/);
+    });
+  });
+
+  it('keeps going when one service throws, and still reports the others', async () => {
+    // A returned `false` and a thrown RPC are different paths. Without a catch
+    // per service, `Promise.all` rejects and the whole batch unwinds — the
+    // successes go unreported and the failure loses its name.
+    const states = new Map([['api', svcAt('api', 0)], ['web', svcAt('web', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      start: async n => { if (n === 'web') throw new Error('the spawner exploded'); return true; },
+    }), async path => {
+      const code = await runCtl(['start', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      const said = lines.join(' ');
+      assert.match(said, /✓ api started/, 'the one that worked must still be reported');
+      assert.match(said, /✗ web/);
+      assert.match(said, /the spawner exploded/, 'and the reason it did not');
+    });
+  });
+
+  it('restarts a whole stack with --all', async () => {
+    const restarted: string[] = [];
+    const states = new Map([['api', svcAt('api', 0)], ['web', svcAt('web', 1)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      restart: async n => { restarted.push(n); },
+    }), async path => {
+      const code = await runCtl(['restart', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.deepEqual(restarted, ['api', 'web']);
+      assert.ok(lines.some(l => l.includes('✓ api restarted')), lines.join('|'));
+    });
+  });
+
+  it('refuses a name the daemon does not have, rather than half-doing the batch', async () => {
+    const started: string[] = [];
+    const states = new Map([['api', svcAt('api', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      start: async n => { started.push(n); return true; },
+    }), async path => {
+      const code = await runCtl(['start', 'api', 'ghost'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.deepEqual(started, [], 'nothing should have been started');
+      assert.ok(lines.some(l => l.includes('ghost')), lines.join('|'));
+    });
+  });
+
+  it('still works for a single service, as it always did', async () => {
+    const states = new Map([['api', svcAt('api', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states, start: async () => true }), async path => {
+      const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(lines, ['✓ api started']);
     });
   });
 });

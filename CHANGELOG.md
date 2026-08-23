@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`ctl start` and `ctl restart` take more than one service** (#109): several names, `--profile <name>`, or `--all`. Ascending config phase, concurrent within a phase — warming eight lazy services one at a time is most of the reason people write their own loop instead. `restart --all` is what you want between test suites: it resets in-memory state without taking the stack down.
+
+  Neither takes an implicit "everything": say `--all` if you mean it. And a name the daemon does not have now fails the batch before anything starts, rather than being sent as an RPC the daemon silently ignores.
+
+- **`--env <path>`** (#109) — one run against a test database without editing a versioned config file. The file must exist: a mistyped path that quietly falls back to `.env` means running the suite against your development database, which is not a convenience worth having.
+
+  It is `--env`, **not** `--env-file`. Node claims that name and takes it from anywhere in argv, script arguments included, so `devup --env-file x` never reaches devup — it either loads the file behind our back or exits `node: x: not found` before we run.
+
+- **`--once --json`** (#109) — a machine-readable summary of what came up, what did not, and how long each took. The services' own output moves to stderr under `--json`, because one log line in the middle of the JSON makes it unparseable and dropping it entirely makes a failing CI run undiagnosable.
+
 - **`logs.tail` can be asked by time, not just by line count** (#108): `{ "since": 1755800000000 }` over the socket, `devup ctl logs <svc> --since 5m` from the shell — a duration, an ISO timestamp, or epoch milliseconds.
 
   "The last N lines" is right for looking over a service's shoulder and wrong for the question a test harness has: *what did this service do while the test that just failed was running*. With a line count alone you have to guess how many — too few and you miss the beginning, too many and you drag in the previous test — and a service that recompiles on every save pushes the window out of the tail before you ask for it. The lines have carried an ISO timestamp since LogSink was written; there was just no way to ask by it.

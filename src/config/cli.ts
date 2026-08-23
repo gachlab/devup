@@ -1,5 +1,15 @@
 import type { DevStackConfig, ServiceConfig } from './types.js';
 
+/** The flag is `--env`, **not** `--env-file`, and that is not a style choice.
+ *
+ *  Node claims `--env-file` for itself and takes it from *anywhere* in argv,
+ *  script arguments included — so `devup --env-file .env.e2e` never reaches
+ *  devup's parser at all. When the file exists node quietly loads it and moves
+ *  on; when it does not, node exits with `node: .env.e2e: not found` before a
+ *  line of devup runs, and devup's own message is unreachable. Verified on
+ *  Node 26 with both `--env-file x` and `--env-file=x`.
+ *
+ *  Do not "fix" this back to the obvious name. */
 export interface CliArgs {
   configPath?: string;
   only?: string;
@@ -18,6 +28,8 @@ export interface CliArgs {
   onceTimeout: number;
   logFile: boolean;
   logDir?: string;
+  envFile?: string;
+  onceJson: boolean;
   watchConfig: boolean;
   killPortConflicts: boolean;
 }
@@ -55,11 +67,21 @@ CI / scripting:
   --dry-run                Print the resolved boot plan and exit
   --once                   Boot, wait for every service to be ready, exit 0/1
   --once-timeout <s>       Max seconds to wait in --once mode. Default: 120
+  --json                   With --once, print a machine-readable summary
+                           instead of progress lines
 
   devup exec -- <cmd>      Boot if needed, wait until ready, run <cmd>, and
                            stop only what this invocation started. See
                            "devup help exec".
   devup ctl wait [svc...]  Block until services are ready. See "devup help ctl".
+
+Environment:
+  --env <path>             Read this .env instead of config.envFile / .env.
+                           For one run against a test database, without
+                           editing a versioned config file. Must exist:
+                           a mistyped path silently running against your
+                           development database is not worth the convenience.
+                           (Not --env-file: node takes that one itself)
 
 Log files:
   --no-log-file            Disable persistent log files
@@ -109,6 +131,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     once: false,
     onceTimeout: DEFAULT_ONCE_TIMEOUT,
     logFile: true,
+    onceJson: false,
     watchConfig: false,
     killPortConflicts: false,
   };
@@ -137,6 +160,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
+      case '--env':              args.envFile = next; i++; break;
+      case '--json':             args.onceJson = true; break;
       case '--watch-config':     args.watchConfig = true; break;
       case '--kill-port-conflicts': args.killPortConflicts = true; break;
     }

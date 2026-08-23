@@ -133,3 +133,23 @@ describe('filterServices', () => {
     });
   });
 });
+
+describe('--env and --json', () => {
+  it('reads --env', () => {
+    assert.equal(parseCliArgs(['--env', '.env.e2e']).envFile, '.env.e2e');
+    assert.equal(parseCliArgs([]).envFile, undefined);
+  });
+
+  it('is not spelled --env-file, which node takes for itself', () => {
+    // Node claims `--env-file` from anywhere in argv, script arguments
+    // included: with the file present it loads it and moves on, and with it
+    // absent it exits `node: X: not found` before devup runs at all. The
+    // obvious name is unusable, so the test says so out loud.
+    assert.equal(parseCliArgs(['--env-file', '.env.e2e']).envFile, undefined);
+  });
+
+  it('reads --json for the --once summary', () => {
+    assert.equal(parseCliArgs(['--once', '--json']).onceJson, true);
+    assert.equal(parseCliArgs(['--once']).onceJson, false);
+  });
+});
