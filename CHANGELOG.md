@@ -8,11 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`devup exec -- <cmd>`** (#106) — the mode between `--once` and `up -d`. Boots the stack if it is not already up, waits until it is ready, runs the command against it, and stops **only what it started**, whatever the command did.
+
+  The three hard parts all need something a shell script does not have. *Reuse or boot*: `up -d` refuses when a daemon is already running, which is the right failure for it and leaves every harness parsing that message to decide — here an existing daemon is used and left alone, and only one this invocation started gets stopped. *Teardown on the error path*: a bash `trap` is forgotten, or it kills the stack the developer already had open. *`--fail-on-crash`*: whether a service died **while the command ran** has to be photographed at both ends, and only the daemon has the counters — without it a suite goes green while an API throws on every request.
+
+  Also `--start` (warm the idle lazy services first, in phase order) and `--wait-timeout`. Everything after `--` is the command, untouched: `devup exec -- npx playwright test --timeout 30` would otherwise have set devup's own lazy idle timeout to 30 minutes. If the running daemon was started with a different set of services, `exec` refuses rather than narrowing to the intersection — a green suite that never exercised half the stack is worse than a clear failure.
+
+- **`devup ctl wait [svc...]`** (#105) — block until services are ready; `0` when they are, `1` naming the ones that did not make it. With `--profile`, `--start`, `--timeout` and `--json`.
+
+  What it knows that a hand-written polling loop does not: a lazy service that is **`idle` is ready, not down** — its proxy holds the configured port, so the stack serves and the first request just pays the start, and probing that port to decide is a false positive because the proxy answers either way. `--start` pays that cost up front instead, in phase order, which is what a suite with a ten-second action timeout actually wants. A service in `timeout` fails the wait immediately rather than burning the clock: the health poller skips that status outright, so it cannot leave it on its own.
+
+  The same logic is importable as `waitForServices` from `@gachlab/devup/client`, so a Node harness does not have to shell out for it.
+
 - **`@gachlab/devup/client`** (#104) — the control-plane client the CLI already used, now importable. `createClient(socketPath)` gives a typed handle with one method per RPC (`status`, `logsTail`, `debug`, `followStatus`, …) plus `call()` for anything newer than your copy; `sendRpc` / `openStream` remain available raw. The snapshot types (`ServiceSnapshot`, `StatusResult`, `ProxyInfo`, `StatsResult`, …) ship with it, so a consumer no longer re-declares the wire shape by hand — which is what shipped a broken release of the VS Code extension once, and is trap 4 in `CLAUDE.md`.
 
   `serializeState` is now typed as returning `ServiceSnapshot` rather than `Record<string, unknown>`, so a field renamed there stops compiling instead of surfacing in a client weeks later.
 
   Two behaviours worth knowing before scripting against it: a one-shot call has **no timeout** by default (`restart` and `debug` restart a service, and a slow pre-build is not a dead daemon — pass `timeoutMs` where it matters), and a throw from a stream's `onFrame` is still not caught. Both are documented in [the control plane docs](docs/control-plane.md#from-node).
+
+### Changed
+- **`--once` waits for web services too** (#105), and its default timeout went from 90 s to 120 s because of it.
+
+  It used to wait only for `type: 'api'`, so it handed back control while the front end was still compiling — and the caller then had to wait again, which is the one thing `--once` exists to spare them. It now picks the signal that is honest for each service: a **web with a `readyPattern`** is ready when a line matches it, and its port is ignored (`ng serve` opens the port long before the bundle exists, so the port says ready while a browser gets nothing); an **API** is ready when its port answers, the same bar the daemon uses at boot. A web with no `readyPattern` has nothing better than its port — and the failure message now says so, because the fix is a pattern in the config, not a longer timeout.
+
+  **This can fail a build that passed before**, and that is the point: it was passing on a front end that was not serving yet. Raising `--once-timeout` is the usual answer for a slow cold start.
 
 ### Fixed
 - **An RPC no longer hangs for ever when the daemon dies mid-request.** `sendRpc` waited on a response line that a killed daemon never sends, with nothing watching the socket close. It rejects now — the failure mode a test harness can least afford.

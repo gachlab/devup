@@ -23,7 +23,9 @@ export interface CliArgs {
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
-const DEFAULT_ONCE_TIMEOUT = 90;
+// 120, not 90: `--once` waits for web services too now, and a cold `ng serve`
+// is the slowest thing in a typical stack by a wide margin.
+const DEFAULT_ONCE_TIMEOUT = 120;
 
 export const USAGE = `devup — terminal UI dev stack runner
 
@@ -51,8 +53,13 @@ Reverse proxy:
 
 CI / scripting:
   --dry-run                Print the resolved boot plan and exit
-  --once                   Boot, wait for readiness, exit 0/1 (no TUI)
-  --once-timeout <s>       Max seconds to wait in --once mode. Default: 90
+  --once                   Boot, wait for every service to be ready, exit 0/1
+  --once-timeout <s>       Max seconds to wait in --once mode. Default: 120
+
+  devup exec -- <cmd>      Boot if needed, wait until ready, run <cmd>, and
+                           stop only what this invocation started. See
+                           "devup help exec".
+  devup ctl wait [svc...]  Block until services are ready. See "devup help ctl".
 
 Log files:
   --no-log-file            Disable persistent log files

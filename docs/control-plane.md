@@ -259,11 +259,45 @@ The types come with it, so nothing has to be re-declared by hand:
 import type { ServiceSnapshot, StatusResult, ProxyInfo } from '@gachlab/devup/client';
 ```
 
+### Waiting for the stack
+
+```javascript
+import { createClient, waitForServices } from '@gachlab/devup/client';
+
+const devup = createClient(resolveSocket('MyProject'));
+const res = await waitForServices(devup, { start: true, timeoutMs: 120_000 });
+if (!res.ok) throw new Error(`not ready: ${res.notReady.map(s => s.name).join(', ')}`);
+```
+
+Exported rather than left to each consumer because the loop is the easy half.
+The hard half is what the snapshot means:
+
+- **A lazy service that is `idle` is ready**, not down — its on-demand proxy
+  holds `originalPort`, so the stack serves and the first request pays the
+  start. Polling that port to find out is a false positive: the proxy answers
+  either way. Pass `start: true` to have the start paid up front instead, in
+  ascending `phase` order.
+- **A service in `timeout` fails the wait immediately.** The health poller
+  skips that status outright, so it is a state the service cannot leave on its
+  own and waiting out the clock only wastes the clock.
+- **Readiness is `health`, not `type`.** A web with a `readyPattern` announces
+  itself exactly like an API does.
+
+One thing it cannot know: **the daemon's own health lags.** A service stopped
+or killed a moment ago still reads `running`/`up` until the health poller
+(every 3 s) has failed `failureThreshold` probes in a row — two by default. A
+wait issued immediately after a stop will correctly report ready about a
+service that is already gone. Give the daemon a beat, or watch `status.follow`.
+
+`classify` and `selectServices` are exported too, for a consumer that wants the
+policy without the loop.
+
 ### What `./client` exports
 
 | | |
 |---|---|
 | `createClient(socketPath, opts?)` | typed handle on one daemon |
+| `waitForServices(client, opts?)`, `classify`, `selectServices`, `DEFAULT_WAIT_TIMEOUT_MS` | readiness, as devup itself defines it |
 | `createClientForProject(name, opts?)` | the same, resolving the default socket path |
 | `resolveSocket(name, override?)`, `defaultSocketPath(name)`, `assertSocketExists(path, name)` | locating a daemon |
 | `sendRpc(path, method, params?, opts?)`, `openStream(path, method, params, onFrame, onError?, onClose?)` | the raw transport, for methods newer than your copy of the client |

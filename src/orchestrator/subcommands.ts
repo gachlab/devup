@@ -7,14 +7,15 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { checkHealth } from '../process/health.js';
 import { needsInstall, writeInstallStamp } from '../utils.js';
-import { sendRpc, openStream, resolveSocket, assertSocketExists } from '../control-plane/client.js';
+import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
+import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
 import { stopDaemon } from './daemon.js';
 import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
 import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
 
-const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config']);
+const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config', 'exec']);
 
 /** Returns the subcommand name if the first arg is one we recognise, else null. */
 export function detectSubcommand(argv: string[]): string | null {
@@ -189,6 +190,17 @@ function fmtStatus(rows: ServiceRow[], out: (l: string) => void): void {
   }
 }
 
+/** One line per service as it settles, so a slow boot shows progress rather
+ *  than a silent two minutes. */
+function fmtSettled(svc: WaitServiceResult): string {
+  if (svc.readiness !== 'ready') return `  ✗ ${svc.name}  ${svc.reason ?? `${svc.status}/${svc.health}`}`;
+  const when = svc.readyAfterMs === null ? '' : `  ${(svc.readyAfterMs / 1000).toFixed(1)}s`;
+  // A lazy service counts as ready without being up: its proxy is listening.
+  // Saying so avoids "why is it idle if you told me it was ready".
+  const note = svc.status === 'idle' ? '  idle (lazy — starts on demand)' : '';
+  return `  ✓ ${svc.name}${when}${note}`;
+}
+
 export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => process.stdout.write(l + '\n'));
   const method = argv[0];
@@ -199,6 +211,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('Usage: devup ctl <method> [args] [--follow]');
     out('  ping                         Check if devup is running');
     out('  status [--follow]            Service snapshot, or live updates');
+    out('  wait [svc...] [--start]      Wait until services are ready; 0 when they are');
     out('  logs <svc> [--follow]        Tail logs (last 100), or follow live stream');
     out('  start <svc>                  Start a stopped service');
     out('  debug <svc> [--off] [--port n] [--brk]');
@@ -246,6 +259,67 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
         () => { out('devup went away'); resolve(1); });
         process.once('SIGINT', () => { abort(); resolve(0); });
       });
+    }
+
+    if (method === 'wait') {
+      const json = argv.includes('--json');
+      const start = argv.includes('--start');
+      const timeoutIdx = argv.indexOf('--timeout');
+      let timeoutMs = DEFAULT_WAIT_TIMEOUT_MS;
+      if (timeoutIdx >= 0) {
+        const secs = Number(argv[timeoutIdx + 1]);
+        // A bad value falling back to the default is how someone spends an
+        // afternoon wondering why their 5 s budget was ignored.
+        if (!Number.isFinite(secs) || secs <= 0) {
+          out(`invalid --timeout: ${argv[timeoutIdx + 1] ?? '(missing)'}`);
+          return 1;
+        }
+        timeoutMs = secs * 1000;
+      }
+
+      // Positional names, minus flags and the value --timeout takes.
+      const names: string[] = [];
+      for (let i = 1; i < argv.length; i++) {
+        const a = argv[i]!;
+        if (a === '--timeout' || a === '--profile') { i++; continue; }
+        if (a.startsWith('-')) continue;
+        names.push(a);
+      }
+
+      const profileIdx = argv.indexOf('--profile');
+      if (profileIdx >= 0) {
+        const profile = argv[profileIdx + 1];
+        const members = profile ? opts.config.profiles?.[profile] : undefined;
+        if (!members) {
+          const available = Object.keys(opts.config.profiles ?? {});
+          out(`unknown profile: "${profile ?? '(missing)'}". ${available.length ? `Available: ${available.join(', ')}` : 'No profiles defined in config.'}`);
+          return 1;
+        }
+        names.push(...members);
+      }
+
+      const selection = names.length ? [...new Set(names)] : undefined;
+      const client = createClient(socketPath);
+      if (!json) {
+        out(`⏳ waiting${selection ? ` for ${selection.length} service${selection.length === 1 ? '' : 's'}` : ''} (timeout ${Math.round(timeoutMs / 1000)}s)${start ? ', starting what is idle' : ''}`);
+      }
+      const res = await waitForServices(client, {
+        services: selection,
+        start,
+        timeoutMs,
+        onSettled: json ? undefined : svc => out(fmtSettled(svc)),
+      });
+
+      if (json) {
+        out(JSON.stringify(res, null, 2));
+      } else if (res.ok) {
+        out(`✓ ready in ${(res.elapsedMs / 1000).toFixed(1)}s`);
+      } else {
+        const why = res.failedFast ? 'cannot become ready' : `not ready after ${(res.elapsedMs / 1000).toFixed(1)}s`;
+        out(`✗ ${why}: ${res.notReady.map(s => s.name).join(', ')}`);
+        for (const s of res.notReady) out(`    ${s.name}  ${s.reason ?? `${s.status}/${s.health}`}`);
+      }
+      return res.ok ? 0 : 1;
     }
 
     if (method === 'logs') {
@@ -464,6 +538,20 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('');
     out('  ping                         Check if devup is running');
     out('  status [--follow]            Service snapshot, or live state-change stream');
+    out('  wait [svc...] [--profile p] [--start] [--timeout <s>] [--json]');
+    out('                               Block until the named services are ready (all of');
+    out('                               them by default). Exits 0 when they are, 1 naming');
+    out('                               the ones that did not make it.');
+    out('');
+    out('                               A lazy service that is idle counts as ready: its');
+    out('                               proxy is listening, so the stack serves — the first');
+    out('                               request just pays the cold start. --start pays it');
+    out('                               up front instead, in config phase order, which is');
+    out('                               what a test suite with a short action timeout wants.');
+    out('');
+    out('                               Readiness is `health`, not `type`: a web with a');
+    out('                               readyPattern announces itself like an API does.');
+    out('');
     out('  logs <svc> [--follow]        Tail last 100 lines, or follow the live stream');
     out('  start <svc>                  Start the named service if stopped');
     out('  debug <svc> [--off] [--port n] [--brk]');
@@ -482,6 +570,34 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
     out('  Not supported on Windows yet — use `devup` (TUI) instead.');
     return 0;
   }
+  if (sub === 'exec') {
+    out('Usage: devup exec [options] -- <cmd> [args...]');
+    out('  Boot the stack if it is not already up, wait until it is ready, run the');
+    out('  command against it, and stop only what this invocation started.');
+    out('');
+    out('  --start              Start idle lazy services before waiting, in config');
+    out('                       phase order, so the first request does not pay the');
+    out('                       cold start');
+    out('  --wait-timeout <s>   Seconds to wait for readiness. Default: 120');
+    out('                       (not --timeout: that one is the lazy idle timeout,');
+    out('                       in minutes, and it still means that here)');
+    out('  --fail-on-crash      Fail the run if a service crashed while the command');
+    out('                       was running, even when the command itself passed');
+    out('');
+    out('  Service selection (--profile, --services, --only, --skip) and every other');
+    out('  boot flag work as they do for `devup up -d`; they are passed to the daemon');
+    out('  when this invocation is the one booting it.');
+    out('');
+    out('  Everything after `--` is the command, untouched — devup does not read its');
+    out('  flags as its own.');
+    out('');
+    out('  Exit code is the command\'s, except: 1 if the stack never became ready,');
+    out('  127 if the command could not be run, 128+n if a signal killed it.');
+    out('');
+    out('  An already-running daemon is reused and left up. One this invocation');
+    out('  started is stopped when the command ends, whatever the command did.');
+    return 0;
+  }
   if (sub === 'down') {
     out('Usage: devup down');
     out('  Stop the daemon for the current project. SIGTERM with 10s grace,');
@@ -493,6 +609,7 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
   out('  devup install                     Concurrent npm install across services');
   out('  devup status                      Health check every service in config');
   out('  devup up -d                       Boot the stack in detached/daemon mode');
+  out('  devup exec -- <cmd>               Boot if needed, wait, run <cmd>, tear down');
   out('  devup down                        Stop the running daemon');
   out('  devup ctl <method> [args]         Control a running devup (restart/stop/logs/...)');
   out('  devup help [<subcommand>]         Show detailed help for a subcommand');
