@@ -5,6 +5,18 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`@gachlab/devup/client`** (#104) — the control-plane client the CLI already used, now importable. `createClient(socketPath)` gives a typed handle with one method per RPC (`status`, `logsTail`, `debug`, `followStatus`, …) plus `call()` for anything newer than your copy; `sendRpc` / `openStream` remain available raw. The snapshot types (`ServiceSnapshot`, `StatusResult`, `ProxyInfo`, `StatsResult`, …) ship with it, so a consumer no longer re-declares the wire shape by hand — which is what shipped a broken release of the VS Code extension once, and is trap 4 in `CLAUDE.md`.
+
+  `serializeState` is now typed as returning `ServiceSnapshot` rather than `Record<string, unknown>`, so a field renamed there stops compiling instead of surfacing in a client weeks later.
+
+  Two behaviours worth knowing before scripting against it: a one-shot call has **no timeout** by default (`restart` and `debug` restart a service, and a slow pre-build is not a dead daemon — pass `timeoutMs` where it matters), and a throw from a stream's `onFrame` is still not caught. Both are documented in [the control plane docs](docs/control-plane.md#from-node).
+
+### Fixed
+- **An RPC no longer hangs for ever when the daemon dies mid-request.** `sendRpc` waited on a response line that a killed daemon never sends, with nothing watching the socket close. It rejects now — the failure mode a test harness can least afford.
+
 ## [0.15.0] — 2026-08-22
 
 Depurar de verdad: romper en la primera línea, y que nada del daemon se lleve por delante un proceso vivo mientras estás parado en un breakpoint.

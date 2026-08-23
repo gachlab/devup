@@ -2,9 +2,17 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { existsSync, unlinkSync, chmodSync, mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { ProcessState } from '../process/types.js';
+import { defaultSocketPath } from './socket-path.js';
+import type {
+  ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
+} from './types.js';
+
+// The wire types live in ./types.ts so `@gachlab/devup/client` can import them
+// without dragging this server in. Re-exported here because the daemon and the
+// tests reach for them through this module.
+export type { ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry };
+export { defaultSocketPath };
 
 /** Minimal JSON-RPC-like protocol over a local Unix socket.
  *  Request  ─►  { id?, method, params? }  newline-terminated JSON
@@ -15,39 +23,6 @@ import type { ProcessState } from '../process/types.js';
  *  to the socket file already has the same uid as the devup process — no
  *  additional auth needed. Strictly local; TCP exposure is intentionally
  *  out of scope. */
-
-export interface ServiceStatEntry {
-  cpu: number;   // percent (e.g. 2.3)
-  memMB: number; // RSS in MB (e.g. 184.2)
-}
-
-export interface StatsResult {
-  services: Record<string, ServiceStatEntry>;
-  system: {
-    totalMemMB: number;
-    freeMemMB: number;
-    cpuCores: number;
-    /** 1-minute load average. Absent on platforms that do not report one
-     *  (Windows returns zeroes, so it is omitted there rather than sent as 0). */
-    loadAvg1?: number;
-    /** Load average as a percentage of available cores — comparable across
-     *  machines, and the figure a client wants to show as "CPU". */
-    cpuPercent?: number;
-  };
-}
-
-export interface ProxyInfo {
-  active: boolean;
-  provider: string;
-  domain: string;
-  tls: boolean;
-  routes: Record<string, string>;
-}
-
-export interface ProjectInfo {
-  project: string;
-  profiles: Record<string, string[]>;
-}
 
 export interface RpcContext {
   /** State of every service (read-only snapshot). */
@@ -68,7 +43,7 @@ export interface RpcContext {
    *  so a removed service lingers until it reconnects. */
   watchRemoved(onRemoved: (name: string) => void): () => void;
   /** Turn the Node inspector on or off for a service, restarting it. */
-  debug(name: string, enable: boolean, port?: number, brk?: boolean): Promise<{ debug: boolean; port: number | null; ok: boolean }>;
+  debug(name: string, enable: boolean, port?: number, brk?: boolean): Promise<DebugResult>;
   /** Start a stopped service. Resolves to whether it is up: the spawner
    *  returns normally after recording a crash, so "no exception" is not
    *  success. Already running counts as up. */
@@ -85,11 +60,6 @@ export interface SocketServerHandle {
   server: Server;
   path: string;
   close(): Promise<void>;
-}
-
-export function defaultSocketPath(projectName: string): string {
-  const safe = projectName.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'devup';
-  return join(homedir(), '.devup', `sock-${safe}.sock`);
 }
 
 export async function startSocketServer(
@@ -220,7 +190,7 @@ async function handleFollow(
     respond(socket, { id: req.id, result: { ok: true } });
 
     // Send current snapshot immediately so the client has something to render.
-    const snapshot: Array<Record<string, unknown>> = [];
+    const snapshot: ServiceSnapshot[] = [];
     for (const [name, st] of ctx.states()) {
       snapshot.push(serializeState(name, st));
     }
@@ -245,7 +215,7 @@ async function handleFollow(
  *  Exported for the contract fixture: `contract/status-snapshot.json` is
  *  generated from this function, so a field renamed here fails a golden test
  *  instead of surfacing in a client weeks later. See docs/control-plane.md. */
-export function serializeState(name: string, st: ProcessState): Record<string, unknown> {
+export function serializeState(name: string, st: ProcessState): ServiceSnapshot {
   return {
     name,
     status: st.status,
@@ -281,7 +251,7 @@ async function dispatch(
 ): Promise<unknown> {
   switch (method) {
     case 'status': {
-      const out: Array<Record<string, unknown>> = [];
+      const out: ServiceSnapshot[] = [];
       for (const [name, st] of ctx.states()) {
         out.push(serializeState(name, st));
       }
