@@ -188,7 +188,14 @@ export class Spawner {
       }
     };
     const captureDebugPort = (line: string) => {
-      if (!svc.debug || state.debugPort) return;
+      // Deliberately not guarded on `state.debugPort` already being set. One
+      // process does print this line once — but with `node --watch` the
+      // restart happens *inside* node: the child devup watches never closes,
+      // so `wireCloseHandler` never clears the port, and the restarted process
+      // announces a new one. Keeping the first would leave every client
+      // attaching a debugger to an inspector that died with the previous
+      // process, for the rest of the session (gachlab/devup#100).
+      if (!svc.debug) return;
       const port = parseDebugPort(line);
       if (port === null) return;
       state.debugPort = port;
