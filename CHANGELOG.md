@@ -5,7 +5,19 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.0] — 2026-08-23
+
+Todo lo que le faltaba al daemon para servir de base a una suite de e2e: un
+cliente importable, una forma de esperar, una de correr algo contra el stack,
+una de preguntarle qué es, una de leer sus logs por tiempo, y una de levantar
+un segundo stack al lado del que estás usando.
+
+Siete tickets (#103–#109), y por el camino cinco bugs del daemon que sólo se
+ven cuando algo depende de él: un `readyPattern` que el health poller pisaba,
+un `restart` que arrancaba los servicios lazy por fuera de su proxy, un
+`status: 'timeout'` del que no se volvía, un RPC que se colgaba para siempre
+si el daemon moría a media petición, y un subcomando escrito tras los flags
+que se ignoraba en silencio.
 
 ### Added
 - **`--instance <name>`** (#103) — a second stack for the same project, alongside the first. Its own socket, pid file, boot-error file and log directory, so running the e2e suite stops being a disruptive act: it no longer restarts the services you are working on, seeds their databases or takes their debug flags. Two CI jobs for one repo stop colliding on the socket too.
