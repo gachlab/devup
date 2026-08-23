@@ -273,15 +273,21 @@ Read a window out of a service's persistent log — by line count, by time, or b
   } }
 ```
 
-- `lines` defaults to 100, capped at 10 000. The most recent are kept.
+- `lines` defaults to 100, capped at 10 000, and must be a **positive
+  integer** — it is not coerced, for the same reason `since` is not.
 - `since` (epoch ms) returns everything written from that moment on. **This is
   the question a failing test has**: with a line count alone you must guess how
   many, and a service that recompiles on every save pushes the interesting part
   out of the tail before you ask for it. Combine the two and `lines` still caps.
-- `oldestRetained` is when the oldest line devup still holds was written, or
-  `null` when it holds none. The log rotates on every launch and at 10 MB, so a
-  `since` from before a rotation has lost its beginning — compare, and if
-  `oldestRetained > since` the start of your window is gone. Added in 0.16.0.
+- `oldestRetained` is when the oldest line **in the files this call read** was
+  written; `null` when there were none, and `null` too when no `since` was
+  given, since a plain tail only opens the current file and half an answer is
+  worse than none.
+
+  It is a fact, not a verdict: `oldestRetained > since` means the log *starts*
+  after your window, which covers both "the earlier lines were rotated away"
+  and "the service had not written yet". devup cannot tell those apart, so do
+  not report it as data loss. Added in 0.16.0.
 - A window read also reaches into the rotated `.log.prev`, so one that spans a
   rotation stays whole. A plain tail does not: "the last N lines" has always
   meant the current file.
@@ -510,6 +516,10 @@ Subsequent `status` frames carry **one** service — they are updates, not snaps
 ```
 
 Omit `svc` (or pass `null`) to receive every service's output. Replayed tail lines carry `svc` too, so a client can route every frame the same way.
+
+`since` works here as it does for `logs.tail`: the replay is a window, so you
+can ask for what a service did during a failing test *and* keep watching what
+it does next. `tail` still caps the replay (at 1 000 here).
 
 **The replay is per service.** `tail` only applies when you name one: the
 all-services stream sends no history at all and starts from the next line

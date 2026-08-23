@@ -171,12 +171,21 @@ async function handleFollow(
     const rawSvc = params['svc'] ?? params['service'];
     const svcName = rawSvc != null ? stringOrThrow(rawSvc, 'svc') : null;
     const tail = Math.max(0, Math.min(1000, Number(params['tail'] ?? 50)));
+    // The replay can be a window too. Someone watching a service that just
+    // failed a test wants the window *and* what happens next, and offering
+    // `--since` alongside `--follow` and then ignoring it is the quiet wrong
+    // answer this whole change is against.
+    const rawSince = params['since'];
+    if (rawSince !== undefined && rawSince !== null && typeof rawSince !== 'number') {
+      throw new Error('param "since" must be a number (epoch milliseconds)');
+    }
+    const since = typeof rawSince === 'number' ? rawSince : undefined;
 
     respond(socket, { id: req.id, result: { ok: true } });
 
     // Replay recent history before going live.
-    if (svcName) {
-      const { lines } = await ctx.tailLogs(svcName, { lines: tail });
+    if (svcName && tail > 0) {
+      const { lines } = await ctx.tailLogs(svcName, { lines: tail, since });
       for (const l of lines) {
         // `svc` on the replay too: a client routing by frame.svc would drop or
         // misattribute the whole tail otherwise.
@@ -326,7 +335,7 @@ const HANDLER_TABLE = {
 
   'logs.tail': async (params, ctx) => {
     const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-    const lines = Math.max(1, Math.min(10_000, Number(params['lines'] ?? 100)));
+    const lines = clampLines(params['lines']);
     const rawSince = params['since'];
     // Not coerced with Number(): `since: "yesterday"` becoming NaN and then
     // silently meaning "everything" is how a harness attaches the wrong
@@ -379,6 +388,22 @@ async function dispatch(
   const handler = HANDLERS.get(method);
   if (!handler) throw new Error(`unknown method: ${method}`);
   return await handler(params, ctx);
+}
+
+/** How many lines to return, or a refusal.
+ *
+ *  Not `Number(...)`: `lines: "abc"` gave NaN, and `Math.max(1, Math.min(10_000,
+ *  NaN))` is NaN, so the reader's `length > opts.lines` cap was never true and
+ *  the daemon serialised the whole file — up to 10 MB, and now potentially the
+ *  rotated one too — back over the socket. */
+export const MAX_LOG_LINES = 10_000;
+
+function clampLines(raw: unknown): number {
+  if (raw === undefined || raw === null) return 100;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) {
+    throw new Error('param "lines" must be a positive integer');
+  }
+  return Math.min(MAX_LOG_LINES, raw);
 }
 
 function stringOrThrow(v: unknown, paramName: string): string {

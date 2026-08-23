@@ -172,8 +172,13 @@ diagnosable without reproducing it. With `--lines` alone you have to guess how
 many, and a service that recompiles on every save pushes the window you care
 about out of the tail before you ask for it.
 
+`--since` works with `--follow` too: the replay is a window, so you get what
+the service did during the failing test and then keep watching.
+
 The log rotates on every launch and at 10 MB. A window that spans a rotation is
-read out of both files; one that starts before what devup still has says so.
+read out of both files. If the log starts after the window you asked for, devup
+says so — and says both of the things that can mean, because it cannot tell
+"rotated away" from "the service was not running yet".
 
 ### `devup exec [options] -- <cmd> [args...]`
 

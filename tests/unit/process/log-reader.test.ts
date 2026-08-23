@@ -133,6 +133,29 @@ describe('readLogWindow', () => {
     });
   });
 
+  it('does not answer "the oldest devup holds" from a partial view', async () => {
+    // A plain tail only opens the current file, so it cannot say what the
+    // oldest line on disk is — and a client comparing a half-answer with a
+    // timestamp would conclude data was lost that devup still has.
+    await withLog({
+      'api.log.prev': [at(0, 'older')],
+      'api.log': [at(7_000, 'current')],
+    }, async file => {
+      assert.equal((await readLogWindow(file, { lines: 100 })).oldestRetained, null);
+      assert.equal((await readLogWindow(file, { lines: 100, since: T0 })).oldestRetained, T0);
+    });
+  });
+
+  it('takes the most recent N across both files, not N from each', async () => {
+    await withLog({
+      'api.log.prev': [at(1, 'p1'), at(2, 'p2')],
+      'api.log': [at(3, 'c1'), at(4, 'c2')],
+    }, async file => {
+      const res = await readLogWindow(file, { lines: 3, since: T0 });
+      assert.deepEqual(res.lines, [at(2, 'p2'), at(3, 'c1'), at(4, 'c2')]);
+    });
+  });
+
   it('caps the window at `lines`, keeping the most recent', async () => {
     await withLog({ 'api.log': [at(1, 'a'), at(2, 'b'), at(3, 'c'), at(4, 'd')] }, async file => {
       const res = await readLogWindow(file, { lines: 2, since: T0 });

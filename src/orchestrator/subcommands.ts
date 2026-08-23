@@ -11,6 +11,7 @@ import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } 
 import { waitForServices, DEFAULT_WAIT_TIMEOUT_MS, type WaitServiceResult } from '../control-plane/wait.js';
 import { flagValue } from '../config/cli.js';
 import { parseSince } from '../process/log-reader.js';
+import { MAX_LOG_LINES } from '../control-plane/socket-server.js';
 import { stopDaemon } from './daemon.js';
 import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
@@ -352,7 +353,9 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       let lines = 100;
       if (rawLines !== undefined) {
         const n = Number(rawLines);
-        if (!Number.isFinite(n) || n <= 0) { out(`invalid --lines: ${rawLines || '(missing)'}`); return 1; }
+        // Integer, not merely finite: `--lines 2.5` passed and the daemon then
+        // clamped it to 1, which is not what anyone typed.
+        if (!Number.isInteger(n) || n <= 0) { out(`invalid --lines: ${rawLines || '(missing)'}`); return 1; }
         lines = n;
       }
 
@@ -361,20 +364,29 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
           lines: string[]; oldestRetained: number | null;
         };
         for (const l of res.lines) out(l);
-        // The log rotates on every launch and at 10 MB, so a window that
-        // starts before a rotation has simply lost its beginning. Saying so
-        // beats handing back a short answer that looks complete.
+        // A fact, not a verdict. `oldestRetained` is when the log *starts*,
+        // which on a stack booted a minute ago is simply when the service
+        // first wrote — nothing was rotated. devup cannot tell "rotated away"
+        // from "was not running yet" from here, so it says the true thing and
+        // names both.
         if (since !== undefined && res.oldestRetained !== null && res.oldestRetained > since) {
-          out(`(devup only has ${svc} logs from ${new Date(res.oldestRetained).toISOString()} — the rest has been rotated away)`);
+          out(`(devup's log for ${svc} starts at ${new Date(res.oldestRetained).toISOString()}, after the window you asked for —`);
+          out(`  either it was not running yet, or the earlier lines have been rotated away)`);
         }
-        if (since !== undefined && res.lines.length === lines) {
-          out(`(stopped at the --lines limit of ${lines}; there may be more in the window)`);
+        // Against the effective cap: the daemon clamps to 10 000, so
+        // `--lines 50000` came back truncated with nothing said.
+        const effectiveCap = Math.min(lines, MAX_LOG_LINES);
+        if (res.lines.length >= effectiveCap) {
+          out(`(stopped at ${effectiveCap} lines${lines > MAX_LOG_LINES ? ` — the daemon's ceiling, below the ${lines} asked for` : ''}; there may be more)`);
         }
         return 0;
       }
 
+      // Both flags reach the stream: the replay is a window too, so
+      // `--since 5m --follow` shows the window and then keeps going. Parsing
+      // them and dropping them was the quiet wrong answer.
       return await new Promise<number>(resolve => {
-        const abort = openStream(socketPath, 'logs.follow', { svc, tail: 100 }, frame => {
+        const abort = openStream(socketPath, 'logs.follow', { svc, tail: lines, since }, frame => {
           out(frame.data as string);
         }, err => { out(`error: ${err.message}`); resolve(1); },
         () => { out('devup went away'); resolve(1); });

@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   "The last N lines" is right for looking over a service's shoulder and wrong for the question a test harness has: *what did this service do while the test that just failed was running*. With a line count alone you have to guess how many — too few and you miss the beginning, too many and you drag in the previous test — and a service that recompiles on every save pushes the window out of the tail before you ask for it. The lines have carried an ISO timestamp since LogSink was written; there was just no way to ask by it.
 
-  The result now also carries `oldestRetained`, because the file rotates on every launch and at 10 MB: a window that starts before a rotation has lost its beginning, and a short answer that looks complete is the failure mode worth naming. A window read reaches into the rotated `.log.prev` so that one spanning a rotation stays whole; a plain tail does not, since "the last N lines" has always meant the current file.
+  The result now also carries `oldestRetained`, because the file rotates on every launch and at 10 MB: a window that starts before a rotation has lost its beginning, and a short answer that looks complete is the failure mode worth naming. It reports when the log *starts*, which is a fact — devup cannot tell "rotated away" from "the service had not written yet", and says both rather than picking one. A window read reaches into the rotated `.log.prev` so that one spanning a rotation stays whole; a plain tail does not, since "the last N lines" has always meant the current file.
 
   The reader is now **one** implementation. It was written twice — once in the daemon, once in the TUI's control plane — so a feature added to one silently missed the other, and `--since` would have worked against `devup up -d` and done nothing against the TUI.
+
+- **`logs.tail` no longer serialises the whole file for a malformed `lines`.** It was coerced with `Number()`, so `"abc"` became `NaN`, the clamp stayed `NaN`, the reader's cap was never true, and the daemon sent back up to 10 MB. It must be a positive integer now, like `since` must be a number.
 
 - **`info` says what the daemon is** (#107): its `version`, a `contract` number, and the `methods` it answers.
 

@@ -440,9 +440,10 @@ describe('runCtl logs --since', { skip: !isUnix }, () => {
     });
   });
 
-  it('says when the start of the window has been rotated away', async () => {
-    // The log rotates on every launch and at 10 MB. A short answer that looks
-    // complete is the failure mode worth naming.
+  it('says the log starts after the window — without claiming anything was rotated', async () => {
+    // devup cannot tell "rotated away" from "the service was not running yet",
+    // and on a stack booted a minute ago the second is the ordinary case. The
+    // first version asserted a rotation that had not happened.
     const lines: string[] = [];
     const since = Date.parse('2026-08-23T10:00:00.000Z');
     await withServer(noopCtx({
@@ -450,28 +451,56 @@ describe('runCtl logs --since', { skip: !isUnix }, () => {
     }), async path => {
       const code = await runCtl(['logs', 'api', '--since', String(since)], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0);
-      assert.ok(lines.some(l => l.includes('rotated away')), lines.join('|'));
+      const said = lines.join(' ');
+      assert.match(said, /starts at 2026-08-23T11:00:00\.000Z/);
+      assert.match(said, /after the window you asked for/);
+      assert.match(said, /not running yet/, 'both explanations, since devup cannot choose between them');
     });
   });
 
-  it('stays quiet about rotation when the whole window survived', async () => {
+  it('says nothing when the log starts at or before the window', async () => {
     const lines: string[] = [];
     const since = Date.parse('2026-08-23T12:00:00.000Z');
     await withServer(noopCtx({
       tailLogs: async () => ({ lines: ['a'], oldestRetained: Date.parse('2026-08-23T11:00:00.000Z') }),
     }), async path => {
       await runCtl(['logs', 'api', '--since', String(since)], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
-      assert.ok(!lines.some(l => l.includes('rotated away')), lines.join('|'));
+      assert.ok(!lines.some(l => l.includes('after the window')), lines.join('|'));
     });
   });
 
-  it('warns when the answer stopped at the --lines cap', async () => {
+  it('warns when the answer stopped at the cap it asked for', async () => {
     const lines: string[] = [];
     await withServer(noopCtx({
       tailLogs: async (_svc, o) => ({ lines: Array.from({ length: o.lines }, (_, i) => `l${i}`), oldestRetained: 0 }),
     }), async path => {
       await runCtl(['logs', 'api', '--since', '5m', '--lines', '3'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
-      assert.ok(lines.some(l => l.includes('--lines limit of 3')), lines.join('|'));
+      assert.ok(lines.some(l => l.includes('stopped at 3 lines')), lines.join('|'));
+    });
+  });
+
+  it('warns against the daemon\'s ceiling, not the number asked for', async () => {
+    // `--lines 50000` comes back with 10 000 and `10000 === 50000` is false,
+    // so the first version truncated in silence.
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      tailLogs: async () => ({ lines: Array.from({ length: 10_000 }, (_, i) => `l${i}`), oldestRetained: 0 }),
+    }), async path => {
+      await runCtl(['logs', 'api', '--since', '5m', '--lines', '50000'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      const said = lines.slice(-2).join(' ');
+      assert.match(said, /stopped at 10000 lines/);
+      assert.match(said, /ceiling/);
+    });
+  });
+
+  it('rejects a fractional --lines instead of letting the daemon clamp it to 1', async () => {
+    const lines: string[] = [];
+    let called = false;
+    await withServer(noopCtx({ tailLogs: async () => { called = true; return { lines: [], oldestRetained: null }; } }), async path => {
+      const code = await runCtl(['logs', 'api', '--lines', '2.5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.equal(called, false);
+      assert.ok(lines.some(l => l.includes('invalid --lines')), lines.join('|'));
     });
   });
 

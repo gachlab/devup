@@ -20,14 +20,16 @@ export interface LogWindowOpts {
 
 export interface LogWindow {
   lines: string[];
-  /** When the oldest line devup still holds for this service was written, or
-   *  `null` if it holds none.
+  /** When the oldest line in the files this call read was written, or `null`
+   *  when there were none — and `null` too when no `since` was given, because
+   *  a plain tail only opens the current file and answering "the oldest devup
+   *  holds" from a partial view is worse than not answering.
    *
-   *  A fact rather than a verdict, and deliberately so: the file rotates on
-   *  every launch and at 10 MB, so a `since` from before a rotation has simply
-   *  lost its data. A boolean `complete` would make devup guess what "nothing
-   *  here" means — rotated away, or the service has not written yet — where
-   *  the caller can just compare and know. */
+   *  A fact, not a verdict. It does **not** mean data was lost: on a stack
+   *  that booted a minute ago it is simply when the service first wrote. The
+   *  caller compares it with the window it asked for and says something true —
+   *  "the log starts after your window" covers both "rotated away" and "not
+   *  running yet", and devup cannot tell those apart from here. */
   oldestRetained: number | null;
 }
 
@@ -42,35 +44,57 @@ export function lineTimestamp(line: string): number | null {
 /** Read a window out of `<svc>.log`, and out of `<svc>.log.prev` when a
  *  `since` is given and the rotated file might still hold part of it. */
 export async function readLogWindow(file: string, opts: LogWindowOpts): Promise<LogWindow> {
+  // The current file first, then the rotated one — order that matters when
+  // `LogSink` rotates *between* the two reads, which a chatty service crossing
+  // the 10 MB threshold can do. Reading `.prev` first would then read the old
+  // `.prev`, and the file that was current a moment ago — now `.prev` — would
+  // vanish from the window with nothing to show for it. This way the second
+  // read picks it up, and `.prev` is older than the current file either way,
+  // so prepending it is chronological in both cases.
+  const current = await readOneFile(file, opts);
+  const previous = opts.since !== undefined ? await readOneFile(`${file}.prev`, opts) : null;
+
+  // The last N of (last N of prev ++ last N of current) is the last N of the
+  // whole thing, so each file stays bounded by `lines` rather than being read
+  // into memory whole.
+  const combined = [...(previous?.lines ?? []), ...current.lines];
+  const lines = combined.length > opts.lines ? combined.slice(-opts.lines) : combined;
+
+  return {
+    lines,
+    // Only meaningful when a window was asked for — see the field's own note.
+    oldestRetained: opts.since === undefined ? null : (previous?.oldest ?? current.oldest ?? null),
+  };
+}
+
+interface OneFile {
+  lines: string[];
+  /** First timestamp seen in this file, or null if it had none. */
+  oldest: number | null;
+}
+
+async function readOneFile(file: string, opts: LogWindowOpts): Promise<OneFile> {
   const lines: string[] = [];
-  let oldestRetained: number | null = null;
+  let oldest: number | null = null;
   // A line with no timestamp of its own inherits the last one seen: the log
-  // holds whatever a service printed, and a stack trace continuation must not
+  // holds whatever a service printed, and a stack-trace continuation must not
   // be cut away from the header that dates it.
   let lastSeen: number | null = null;
 
-  const consume = (line: string) => {
+  await eachLine(file, line => {
     const ts = lineTimestamp(line) ?? lastSeen;
     if (ts !== null) {
       lastSeen = ts;
-      if (oldestRetained === null) oldestRetained = ts;
+      if (oldest === null) oldest = ts;
     }
     // An undated line before any dated one cannot be placed in time. Keeping
     // it would put the head of an old file inside a window it may predate.
     if (opts.since !== undefined && (ts === null || ts < opts.since)) return;
     lines.push(line);
     if (lines.length > opts.lines) lines.shift();
-  };
+  });
 
-  // Oldest first, so `oldestRetained` really is the oldest and the window can
-  // span a rotation. Only when asked by time: a plain tail wants the last N
-  // lines of the current file, which is what it has always meant.
-  const files = opts.since !== undefined ? [`${file}.prev`, file] : [file];
-  for (const f of files) {
-    if (!existsSync(f)) continue;
-    await eachLine(f, consume);
-  }
-  return { lines, oldestRetained };
+  return { lines, oldest };
 }
 
 function eachLine(file: string, onLine: (line: string) => void): Promise<void> {

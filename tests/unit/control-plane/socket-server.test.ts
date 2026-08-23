@@ -144,6 +144,61 @@ describe('socket-server', { skip: !isUnix }, () => {
     }
   });
 
+  it('refuses a non-numeric `lines` rather than reading the whole file', async () => {
+    // `Number("abc")` is NaN, and `Math.max(1, Math.min(10_000, NaN))` is NaN,
+    // so the reader's cap was never true and the daemon serialised the entire
+    // log — up to 10 MB, and now the rotated one too — over the socket.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-lines-'));
+    const path = join(dir, 's.sock');
+    try {
+      let askedFor: number | undefined;
+      const handle = await startSocketServer('l', noopCtx({
+        tailLogs: async (_svc, o) => { askedFor = o.lines; return { lines: [], oldestRetained: null }; },
+      }), { path });
+      try {
+        for (const bad of ['abc', 2.5, 0, -1, null]) {
+          const res = await rpcCall(path, { method: 'logs.tail', params: { svc: 'api', lines: bad } });
+          if (bad === null) {
+            // null means "not given" — the default still applies.
+            assert.equal(res.error, undefined);
+            assert.equal(askedFor, 100);
+            continue;
+          }
+          assert.match(res.error?.message ?? '', /"lines" must be a positive integer/, `accepted ${bad}`);
+        }
+        // And it still clamps a huge one instead of refusing it.
+        await rpcCall(path, { method: 'logs.tail', params: { svc: 'api', lines: 50_000 } });
+        assert.equal(askedFor, 10_000);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('logs.follow replays a window when asked for one', async () => {
+    // `--since` alongside `--follow` was advertised and then dropped, which is
+    // the quiet wrong window this whole change is against.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-fsince-'));
+    const path = join(dir, 's.sock');
+    try {
+      let asked: { lines: number; since?: number } | null = null;
+      const handle = await startSocketServer('f', noopCtx({
+        tailLogs: async (_svc, o) => { asked = o; return { lines: ['replayed'], oldestRetained: null }; },
+      }), { path });
+      try {
+        const frames = await rpcStream(path, { id: 1, method: 'logs.follow', params: { svc: 'api', tail: 7, since: 1755800000000 } }, 2, 1500);
+        assert.deepEqual(asked, { lines: 7, since: 1755800000000 });
+        assert.equal(frames[1]?.data, 'replayed');
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('status returns a snapshot of every service', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
