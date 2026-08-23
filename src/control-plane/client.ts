@@ -16,6 +16,15 @@ import type {
 } from './types.js';
 
 export { defaultSocketPath };
+// Readiness lives next door but is part of the same public surface: the hard
+// part of "is this stack ready?" is knowing what the snapshot means, and that
+// knowledge should not have to be rewritten in every harness.
+export {
+  waitForServices, classify, selectServices, DEFAULT_WAIT_TIMEOUT_MS,
+} from './wait.js';
+export type {
+  WaitOptions, WaitResult, WaitServiceResult, Readiness,
+} from './wait.js';
 export type {
   ServiceSnapshot, ProxyInfo, StatusResult, StatsResult, ServiceStatEntry,
   ProjectInfo, PingResult, OkResult, DebugResult, LogsTailResult, StreamFrame,

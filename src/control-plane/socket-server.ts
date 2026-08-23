@@ -233,6 +233,7 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
     cwd: st.svc.cwd,
     errors: st.errors,
     restarts: st.restarts,
+    crashes: st.crashes ?? 0,
     pid: st.pid,
     startedAt: st.startedAt,
     crashLog: st.crashLog ?? null,

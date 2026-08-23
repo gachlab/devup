@@ -74,6 +74,7 @@ Snapshot of every service.
           "cwd": "app/api",
           "errors": 0,
           "restarts": 0,
+          "crashes": 0,
           "pid": 12345,
           "startedAt": 1716279183421,
           "crashLog": null
@@ -100,7 +101,12 @@ Fields per service mirror `ProcessState`:
 - `phase`: boot phase from config
 - `cmd`, `cwd`: as resolved for the spawn — `cwd` is relative to the project root
 - `errors`: cumulative since spawn
-- `restarts`: cumulative since spawn
+- `restarts`: the **auto-restart budget spent**, not a history — every manual
+  `restart` and every explicit `start` resets it to 0. Do not use it to ask
+  whether something died between two moments
+- `crashes`: how many times the service has crashed since the daemon started.
+  Only ever goes up, which is what makes it usable as a window signal — this is
+  what `devup exec --fail-on-crash` compares. Added in 0.16.0
 - `pid`: OS pid, `null` if not currently running
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
@@ -259,11 +265,63 @@ The types come with it, so nothing has to be re-declared by hand:
 import type { ServiceSnapshot, StatusResult, ProxyInfo } from '@gachlab/devup/client';
 ```
 
+### Waiting for the stack
+
+```javascript
+import { createClient, waitForServices } from '@gachlab/devup/client';
+
+const devup = createClient(resolveSocket('MyProject'));
+const res = await waitForServices(devup, { start: true, timeoutMs: 120_000 });
+if (!res.ok) throw new Error(`not ready: ${res.notReady.map(s => s.name).join(', ')}`);
+```
+
+Exported rather than left to each consumer because the loop is the easy half.
+The hard half is what the snapshot means:
+
+- **A lazy service that is `idle` is ready**, not down — its on-demand proxy
+  holds `originalPort`, so the stack serves and the first request pays the
+  start. Polling that port to find out is a false positive: the proxy answers
+  either way. Pass `start: true` to have the start paid up front instead, in
+  ascending `phase` order.
+- **`status: 'timeout'` is not terminal.** It means the service's startup
+  timer gave up — 45 s by default — not that devup did. The health poller keeps
+  probing it, so a cold front end that lands at 60 s still counts. Treating it
+  as terminal would cap every wait at 45 s, well under the two minutes this
+  function defaults to.
+- **A crash does not fail the wait.** `Restarter` bumps the restart count to
+  its maximum and *then* schedules the last auto-restart, so "crashed with the
+  budget spent" is also what a service looks like for the eight seconds before
+  the restart that saves it. Nothing in the snapshot separates them, and
+  aborting on a service that was about to come back is the worse mistake. Only
+  a service the daemon no longer has ends a wait early.
+- **Readiness is `health`**, and the daemon computes that from the service's
+  own `readyPattern` when it declares one — a bare port probe is not allowed to
+  speak for a service that said how it announces itself.
+
+Pass a `signal` (an `AbortSignal`, or anything with `aborted`) to end a wait
+early — it is checked once per poll, so a Ctrl-C during a two-minute wait is
+acted on in well under a second. The result says `aborted: true`.
+
+An unknown service name throws `UnknownServicesError`, which carries `missing`
+and `running`. Its own type because the same call also raises transport
+failures, and telling someone to fix their service selection when their daemon
+has just died sends them looking in the wrong place.
+
+Two things it cannot know. **The daemon's own health lags.** A service stopped
+or killed a moment ago still reads `running`/`up` until the health poller
+(every 3 s) has failed `failureThreshold` probes in a row — two by default. A
+wait issued immediately after a stop will correctly report ready about a
+service that is already gone. Give the daemon a beat, or watch `status.follow`.
+
+`classify` and `selectServices` are exported too, for a consumer that wants the
+policy without the loop.
+
 ### What `./client` exports
 
 | | |
 |---|---|
 | `createClient(socketPath, opts?)` | typed handle on one daemon |
+| `waitForServices(client, opts?)`, `classify`, `selectServices`, `DEFAULT_WAIT_TIMEOUT_MS` | readiness, as devup itself defines it |
 | `createClientForProject(name, opts?)` | the same, resolving the default socket path |
 | `resolveSocket(name, override?)`, `defaultSocketPath(name)`, `assertSocketExists(path, name)` | locating a daemon |
 | `sendRpc(path, method, params?, opts?)`, `openStream(path, method, params, onFrame, onError?, onClose?)` | the raw transport, for methods newer than your copy of the client |

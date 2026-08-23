@@ -52,7 +52,6 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
 
   const phases = groupByPhase(services);
   const phaseNums = Object.keys(phases).map(Number).sort((a, b) => a - b);
-  const apiNames = services.filter(s => s.type === 'api').map(s => s.name);
   const deadline = Date.now() + cliArgs.onceTimeout * 1000;
   let colorIdx = 0;
 
@@ -70,33 +69,76 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       await mgr.start(svc, ci);
     }
 
-    // Wait for all APIs in this phase
-    const apis = phases[num]!.filter(s => s.type === 'api');
-    for (const api of apis) {
-      const ok = await waitHealthy(api, deadline);
+    // Wait for everything in this phase, webs included. Waiting only for APIs
+    // is why `--once` used to hand back control while the front end was still
+    // compiling — and `--once` exists precisely so the caller does not have to
+    // wait again on its own.
+    for (const svc of phases[num]!) {
+      const ok = await waitReady(mgr, svc, deadline);
       if (!ok) {
-        out(`✗ ${api.name} did not become healthy within ${cliArgs.onceTimeout}s`);
+        const st = mgr.state.get(svc.name);
+        out(`✗ ${svc.name} did not become ready within ${cliArgs.onceTimeout}s`);
+        if (st?.status === 'crashed') {
+          out(`    (it crashed ${st.crashes ?? 0} time${(st.crashes ?? 0) === 1 ? '' : 's'} — \`devup logs ${svc.name}\`)`);
+        } else if (svc.type === 'web' && !svc.readyPattern) {
+          // Its port is all we had to go on, and for a dev server that opens
+          // late this is the difference between a real failure and a config
+          // that never said what "ready" looks like.
+          out(`    (no readyPattern for ${svc.name} — devup could only watch its port)`);
+        } else if (svc.type === 'web' && svc.readyPattern) {
+          // The other half of that: a pattern that is right for a tool version
+          // you no longer run fails just as silently.
+          out(`    (waited for readyPattern /${svc.readyPattern}/ — check it still matches what ${svc.name} prints)`);
+        }
         await mgr.cleanup();
         await stopExternals(externals, platform, { baseCwd, env });
         return 1;
       }
-      out(`✓ ${api.name} ready`);
-      const st = mgr.state.get(api.name);
+      out(`✓ ${svc.name} ready`);
+      const st = mgr.state.get(svc.name);
       if (st) { st.status = 'running'; st.health = 'up'; }
     }
   }
 
-  const summary = `ready: ${apiNames.length} APIs in ${((cliArgs.onceTimeout * 1000 - (deadline - Date.now())) / 1000).toFixed(1)}s`;
+  const summary = `ready: ${services.length} services in ${((cliArgs.onceTimeout * 1000 - (deadline - Date.now())) / 1000).toFixed(1)}s`;
   out(summary);
   await mgr.cleanup();
   await stopExternals(externals, platform, { baseCwd, env });
   return 0;
 }
 
-async function waitHealthy(svc: ServiceConfig, deadline: number): Promise<boolean> {
+/** Wait until a service is genuinely serving.
+ *
+ *  Two signals, and which one counts depends on what the service is:
+ *
+ *  - **`readyPattern` on a web is the only honest signal.** `ng serve` and
+ *    friends open their port long before the bundle exists, so a port probe
+ *    reports ready while a browser still gets nothing — which is exactly how
+ *    `--once` came to return before the front end served. When a web declares
+ *    a pattern, that pattern is the bar; the port is ignored.
+ *  - **For an API the port answering is the service serving.** That is the bar
+ *    `bootNormal` uses, so it stays the bar here — a pattern, when there is
+ *    one, only ever lets it finish sooner.
+ *
+ *  A web with no pattern has nothing better than its port. That is worse than
+ *  the pattern and better than not waiting at all; it is also the reason
+ *  `readyPattern` is worth setting on every web in the config. */
+async function waitReady(mgr: ProcessManager, svc: ServiceConfig, deadline: number): Promise<boolean> {
+  const declaresPattern = svc.type === 'web' && !!svc.readyPattern;
   while (Date.now() < deadline) {
-    const { ok } = await checkHealth(svc.port, svc.healthCheck);
-    if (ok) return true;
+    const st = mgr.state.get(svc.name);
+    // The spawner sets health to 'up' the moment a line matches readyPattern.
+    if (st?.health === 'up') return true;
+    // The pattern gets the startup window to itself, and then the port is
+    // accepted — the same rule `HealthPoller` follows, and for the same
+    // reason: a pattern that no longer matches its tool's output must not fail
+    // a run for a front end that is serving perfectly well. The spawner's
+    // startup timer is what ends the window.
+    const patternOnly = declaresPattern && st?.status !== 'timeout';
+    if (!patternOnly) {
+      const { ok } = await checkHealth(svc.port, svc.healthCheck);
+      if (ok) return true;
+    }
     await new Promise(r => setTimeout(r, 500));
   }
   return false;

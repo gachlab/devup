@@ -31,7 +31,11 @@ export class HealthPoller {
 
   async checkAll(): Promise<void> {
     for (const [name, st] of this.state) {
-      if (!st.pid || st.status === 'idle' || st.status === 'timeout') {
+      // `timeout` used to be skipped here, which made it a state nothing came
+      // back from: a service that started slowly and then served perfectly
+      // well stayed marked down for the rest of the session. It is probed like
+      // any other now, and promoted below when it answers.
+      if (!st.pid || st.status === 'idle') {
         st.health = st.status === 'idle' ? 'idle' : 'down';
         continue;
       }
@@ -49,8 +53,26 @@ export class HealthPoller {
 
       if (result.ok) {
         this.failureCounts.delete(name);
+        // A service that declares a `readyPattern` has said how it announces
+        // itself, and its port answering is not that announcement: `ng serve`
+        // opens :4200 seconds before the bundle exists, so promoting it here
+        // marks a front end ready while a browser still gets nothing. The
+        // pattern gets the startup window to itself.
+        //
+        // Keyed on `health`, **not** on `status === 'starting'`: boot flips
+        // every web to `running` the moment it is spawned (`bootNormal`,
+        // `bootLazy`, `useBootSequence`), and the poller only starts after
+        // that — so a status-based guard never fires for the very services it
+        // was written for. `health` is still `wait` until something says
+        // otherwise, which is exactly the window meant here.
+        //
+        // The window ends at `timeout`: once the startup timer has given up,
+        // the port is accepted, because a pattern that never matches — a typo,
+        // a tool that changed its wording — must not keep a working service
+        // marked down for ever.
+        if (st.svc.readyPattern && st.health !== 'up' && st.status !== 'timeout') continue;
         st.health = deriveHealth(true, st.status);
-        if (st.health === 'up' && st.status === 'starting') st.status = 'running';
+        if (st.health === 'up' && (st.status === 'starting' || st.status === 'timeout')) st.status = 'running';
       } else {
         const count = (this.failureCounts.get(name) ?? 0) + 1;
         this.failureCounts.set(name, count);

@@ -395,6 +395,14 @@ async function bootLazy(
 
 export interface DetachedOpts extends DaemonOpts {
   out?: (line: string) => void;
+  /** Argv for the daemon child, replacing the default derivation from
+   *  `process.argv`.
+   *
+   *  The default strips `up` and the detach flags and reuses the rest, which
+   *  is right for `devup up -d` and wrong for anything else: `devup exec --
+   *  npx playwright test` would hand the child `exec -- npx playwright test`
+   *  and it would re-enter `exec` instead of becoming the daemon. */
+  childArgs?: string[];
 }
 
 /** Runs in the parent process. Validates state, spawns the daemon child
@@ -425,7 +433,7 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
   if (existsSync(errPath)) { try { unlinkSync(errPath); } catch { /* ignore */ } }
 
   // Strip the subcommand and detach flags from argv; the child reuses everything else.
-  const filteredArgs = process.argv.slice(2).filter((arg, i) => {
+  const filteredArgs = opts.childArgs ?? process.argv.slice(2).filter((arg, i) => {
     if (i === 0 && arg === 'up') return false;
     if (arg === '-d' || arg === '--detach') return false;
     return true;

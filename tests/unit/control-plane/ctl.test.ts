@@ -263,3 +263,139 @@ describe('runCtl', { skip: !isUnix }, () => {
     assert.ok(lines.some(l => l.includes('stop')));
   });
 });
+
+describe('runCtl wait', { skip: !isUnix }, () => {
+  const upSvc = (name: string, port: number) => mkState({ svc: { ...svc, name, port } });
+  const idleSvc = (name: string, port: number, phase = 0) => mkState({
+    svc: { ...svc, name, port, phase }, status: 'idle', health: 'idle', pid: null,
+  });
+
+  it('exits 0 and says how long it took when everything is ready', async () => {
+    const lines: string[] = [];
+    const states = new Map([['api', upSvc('api', 3000)], ['web', upSvc('web', 4200)]]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['wait', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.ok(lines.some(l => l.includes('ready in')), lines.join('|'));
+    });
+  });
+
+  it('exits 1 naming what never arrived, not just a count', async () => {
+    const lines: string[] = [];
+    const states = new Map([
+      ['api', upSvc('api', 3000)],
+      ['web', mkState({ svc: { ...svc, name: 'web', port: 4200 }, status: 'starting', health: 'wait' })],
+    ]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['wait', '--timeout', '1'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines.some(l => l.includes('web')), lines.join('|'));
+      assert.ok(!lines.some(l => /not ready.*api\b/.test(l) && !l.includes('web')), 'healthy api must not be blamed');
+    });
+  });
+
+  it('counts a lazy idle service as ready without starting it', async () => {
+    // Its proxy is listening on originalPort, so the stack serves. Starting it
+    // here would be a side effect nobody asked for.
+    const lines: string[] = [];
+    const started: string[] = [];
+    const states = new Map([['auth', idleSvc('auth', 13002)]]);
+    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return true; } }), async path => {
+      const code = await runCtl(['wait', '--timeout', '2'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.deepEqual(started, []);
+      assert.ok(lines.some(l => l.includes('idle')), lines.join('|'));
+    });
+  });
+
+  it('--start warms the idle ones instead', async () => {
+    const lines: string[] = [];
+    const started: string[] = [];
+    const states = new Map([['auth', idleSvc('auth', 13002)]]);
+    await withServer(noopCtx({
+      states: () => states,
+      start: async n => {
+        started.push(n);
+        // The daemon brings it up; the poll after the warm-up must see that.
+        states.set(n, upSvc(n, 13002));
+        return true;
+      },
+    }), async path => {
+      const code = await runCtl(['wait', '--start', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+      assert.deepEqual(started, ['auth']);
+    });
+  });
+
+  it('waits only for the named services', async () => {
+    const lines: string[] = [];
+    const states = new Map([
+      ['api', upSvc('api', 3000)],
+      ['broken', mkState({ svc: { ...svc, name: 'broken', port: 9999 }, status: 'timeout', health: 'down' })],
+    ]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['wait', 'api', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+    });
+  });
+
+  it('rejects a bad --timeout instead of silently using the default', async () => {
+    // Falling back to 120 s is how someone spends an afternoon wondering why
+    // their 5 s budget was ignored.
+    const lines: string[] = [];
+    await withServer(noopCtx(), async path => {
+      const code = await runCtl(['wait', '--timeout', 'soon'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines.some(l => l.includes('invalid --timeout')), lines.join('|'));
+    });
+  });
+
+  it('does not read the value of --timeout as a service name', async () => {
+    // `wait --timeout 5` must not wait for a service called "5".
+    const lines: string[] = [];
+    const states = new Map([['api', upSvc('api', 3000)]]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['wait', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+    });
+  });
+
+  it('resolves --profile from the config, and says what exists when it does not', async () => {
+    const lines: string[] = [];
+    const states = new Map([['api', upSvc('api', 3000)], ['web', mkState({ svc: { ...svc, name: 'web', port: 4200 }, status: 'starting', health: 'wait' })]]);
+    const config = { ...mkConfig(), profiles: { e2e: ['api'] } };
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['wait', '--profile', 'e2e', '--timeout', '5'], { config, socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join('|'));
+
+      lines.length = 0;
+      const bad = await runCtl(['wait', '--profile', 'nope'], { config, socketPath: path, out: l => lines.push(l) });
+      assert.equal(bad, 1);
+      assert.ok(lines.some(l => l.includes('Available: e2e')), lines.join('|'));
+    });
+  });
+
+  it('--json prints a machine-readable summary and nothing else', async () => {
+    const lines: string[] = [];
+    const states = new Map([['api', upSvc('api', 3000)]]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runCtl(['wait', '--json', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      const parsed = JSON.parse(lines.join('\n'));
+      assert.equal(parsed.ok, true);
+      assert.deepEqual(parsed.services.map((s: { name: string }) => s.name), ['api']);
+    });
+  });
+
+  it('names an unknown service rather than waiting out the clock for it', async () => {
+    const lines: string[] = [];
+    const states = new Map([['api', upSvc('api', 3000)]]);
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const started = Date.now();
+      const code = await runCtl(['wait', 'ghost', '--timeout', '30'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(Date.now() - started < 5000, 'should not have waited the full timeout');
+      assert.ok(lines.some(l => l.includes('ghost')), lines.join('|'));
+    });
+  });
+});

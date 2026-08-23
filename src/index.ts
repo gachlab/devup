@@ -18,6 +18,7 @@ import { App } from './tui/App.js';
 import { LogSink } from './process/log-sink.js';
 import { runDryRun } from './orchestrator/dry-run.js';
 import { runOnce } from './orchestrator/once.js';
+import { runExec, ownArgsFor, daemonChildArgs } from './orchestrator/exec.js';
 import type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
 
 // Re-export for config files
@@ -38,25 +39,33 @@ function readVersion(): string {
 
 async function main() {
   const raw = process.argv.slice(2);
-  // --version / --help short-circuit before any config loading
-  if (raw.includes('-v') || raw.includes('--version')) {
-    console.log(readVersion());
-    return;
-  }
-  if (raw.includes('-h') || raw.includes('--help')) {
-    console.log(USAGE);
-    return;
-  }
 
   // Subcommand dispatch (devup logs / install / status / help). All require the config
   // file to be present so we can know which services exist and where logs live.
   const subcmd = detectSubcommand(raw);
+
+  // --version / --help short-circuit before any config loading — but only over
+  // devup's *own* arguments. `devup exec -- npx playwright test --help` asks
+  // Playwright for help, not devup: scanning the whole argv printed devup's
+  // usage and exited 0 without running anything, which in CI reads as a pass.
+  const ownArgs = ownArgsFor(raw, subcmd);
+  if (ownArgs.includes('-v') || ownArgs.includes('--version')) {
+    console.log(readVersion());
+    return;
+  }
+  if (ownArgs.includes('-h') || ownArgs.includes('--help')) {
+    console.log(USAGE);
+    return;
+  }
+
   if (subcmd === 'help') {
     process.exit(runHelp(raw.slice(1)));
   }
 
   const cwd = process.cwd();
-  const cliArgs = parseCliArgs(raw);
+  // `ownArgs` above already stopped at `--` for exec: everything after it
+  // belongs to the command. See `execOwnArgs`.
+  const cliArgs = parseCliArgs(ownArgs);
 
   if (subcmd) {
     const subArgs = raw.slice(1);
@@ -72,7 +81,9 @@ async function main() {
     if (subcmd === 'ctl')     process.exit(await runCtl(subArgs, subOpts));
     if (subcmd === 'down')    process.exit(await runDown(subOpts));
     if (subcmd === 'config')  process.exit(await runConfig(subArgs, { cwd, configPath: cliArgs.configPath }));
-    // `up` falls through to the full setup pipeline so it can boot the stack like the TUI does.
+    // `up` and `exec` fall through to the full setup pipeline: both boot the
+    // stack, and exec needs the same resolved services, env and proxy the
+    // daemon child will be given.
   }
 
   // Load config
@@ -152,9 +163,13 @@ async function main() {
   // Daemon-already-running guard. Applies to all "boot the stack" flows
   // (TUI, --once, devup up -d). If a healthy daemon is up for this project,
   // the ports we'd scan belong to its services — killing them only triggers
-  // the daemon's auto-restarter and produces churn. Skip only for the daemon
-  // child itself (which IS the running daemon).
-  if (process.env.DEVUP_DAEMON_CHILD !== '1') {
+  // the daemon's auto-restarter and produces churn. Skipped for the daemon
+  // child itself (which IS the running daemon), and for `exec`, whose whole
+  // point is that an existing daemon is something to use rather than a reason
+  // to stop: it reuses it and leaves it up, and only boots one when there is
+  // none. Refusing here would leave every harness parsing this message to
+  // decide, which is what the flag exists to avoid.
+  if (process.env.DEVUP_DAEMON_CHILD !== '1' && subcmd !== 'exec') {
     const daemonStatus = isDaemonRunning(config.name);
     if (daemonStatus.pid && !daemonStatus.stale) {
       console.error(`❌ A devup daemon is already running for "${config.name}" (pid=${daemonStatus.pid}).`);
@@ -171,18 +186,34 @@ async function main() {
   // Pre-boot port conflict resolution. Skip in the daemon child (the parent
   // already cleared conflicts before spawning us). All other flows benefit:
   // TUI, `devup up -d`, `--once`.
-  if (process.env.DEVUP_DAEMON_CHILD !== '1') {
+  const ensurePortsFree = async (): Promise<boolean> => {
     const conflicts = await scanPortConflicts(services);
-    if (conflicts.length) {
-      const resolved = await resolvePortConflicts(conflicts, {
-        autoKill: cliArgs.killPortConflicts,
-        out: msg => process.stderr.write(msg + '\n'),
-        prompt: () => askYesNo('Kill these processes and continue? [y/N]: '),
-      });
-      if (!resolved) {
-        await logSink?.close();
-        process.exit(1);
-      }
+    if (!conflicts.length) return true;
+    return await resolvePortConflicts(conflicts, {
+      autoKill: cliArgs.killPortConflicts,
+      out: msg => process.stderr.write(msg + '\n'),
+      prompt: () => askYesNo('Kill these processes and continue? [y/N]: '),
+    });
+  };
+
+  // `exec` decides for itself whether to boot, so it also decides when the
+  // ports have to be free: a daemon it is reusing owns them, and clearing them
+  // would kill the very stack it is about to test against.
+  if (subcmd === 'exec') {
+    const code = await runExec({
+      argv: raw.slice(1),
+      childArgs: daemonChildArgs(raw),
+      config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts,
+      ensurePortsFree,
+    });
+    await logSink?.close();
+    process.exit(code);
+  }
+
+  if (process.env.DEVUP_DAEMON_CHILD !== '1') {
+    if (!await ensurePortsFree()) {
+      await logSink?.close();
+      process.exit(1);
     }
   }
 

@@ -23,7 +23,9 @@ export interface CliArgs {
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
-const DEFAULT_ONCE_TIMEOUT = 90;
+// 120, not 90: `--once` waits for web services too now, and a cold `ng serve`
+// is the slowest thing in a typical stack by a wide margin.
+const DEFAULT_ONCE_TIMEOUT = 120;
 
 export const USAGE = `devup — terminal UI dev stack runner
 
@@ -51,8 +53,13 @@ Reverse proxy:
 
 CI / scripting:
   --dry-run                Print the resolved boot plan and exit
-  --once                   Boot, wait for readiness, exit 0/1 (no TUI)
-  --once-timeout <s>       Max seconds to wait in --once mode. Default: 90
+  --once                   Boot, wait for every service to be ready, exit 0/1
+  --once-timeout <s>       Max seconds to wait in --once mode. Default: 120
+
+  devup exec -- <cmd>      Boot if needed, wait until ready, run <cmd>, and
+                           stop only what this invocation started. See
+                           "devup help exec".
+  devup ctl wait [svc...]  Block until services are ready. See "devup help ctl".
 
 Log files:
   --no-log-file            Disable persistent log files
@@ -72,6 +79,23 @@ Other:
   -v, --version            Show version and exit
 
 See https://github.com/gachlab/devup for the full documentation.`;
+
+/** The value of `--flag value` or `--flag=value`, or `undefined` if the flag
+ *  is absent.
+ *
+ *  Both spellings, because only handling the spaced one means `--wait-timeout=45`
+ *  falls through to the default without a word — the exact silent fallback the
+ *  strict parsing exists to prevent. An empty string is returned for a flag
+ *  with no value, so the caller can reject it rather than read the next flag
+ *  as the value. */
+export function flagValue(argv: string[], flag: string): string | undefined {
+  const eq = argv.find(a => a.startsWith(`${flag}=`));
+  if (eq !== undefined) return eq.slice(flag.length + 1);
+  const idx = argv.indexOf(flag);
+  if (idx < 0) return undefined;
+  const next = argv[idx + 1];
+  return next === undefined || next.startsWith('-') ? '' : next;
+}
 
 export function parseCliArgs(argv: string[]): CliArgs {
   const args: CliArgs = {

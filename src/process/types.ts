@@ -17,6 +17,13 @@ export interface ProcessState {
   colorIdx: number;
   /** Last N stderr lines captured before most recent crash. Null when not crashed or after clean restart. */
   crashLog: string[] | null;
+  /** How many times this service has crashed since the daemon started.
+   *
+   *  Distinct from `restarts`, which is a **budget** and gets reset to 0 by
+   *  every manual restart and every explicit start — so it cannot answer "did
+   *  anything die between these two moments?", which is what `devup exec
+   *  --fail-on-crash` has to know. This one only ever goes up. */
+  crashes?: number;
   /** Side-car watch process spawned alongside the main one (when `watchBuild` is set). */
   watchProc?: ChildProcess | null;
   /** Port the Node inspector bound to, parsed from the process's startup line.
