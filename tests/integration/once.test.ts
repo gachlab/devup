@@ -24,6 +24,7 @@ const baseCli: CliArgs = {
   skip: [], lazy: false, lazyTimeout: 10,
   proxy: false, proxyTls: true, proxyEntrypoint: 'websecure',
   dryRun: false, once: true, onceTimeout: 15, logFile: false,
+  onceJson: false, watchConfig: false, killPortConflicts: false,
 };
 
 describe('runOnce integration', { skip: !isUnix }, () => {
@@ -157,5 +158,100 @@ describe('runOnce waits for webs, not just APIs', { skip: !isUnix }, () => {
     });
     assert.equal(code, 1);
     assert.ok(lines.some(l => l.includes('no readyPattern for mute-web')), lines.join('|'));
+  });
+});
+
+describe('runOnce --json', { skip: !isUnix }, () => {
+  it('prints a summary a pipeline can read, and nothing else on stdout', async () => {
+    // The detail that makes or breaks it: one `[app-api] listening` line in
+    // the middle and the caller cannot parse the result at all.
+    const port = await findFreePort();
+    const config: DevStackConfig = {
+      name: 'OnceJson',
+      services: [{
+        name: 'dummy', cwd: '.', cmd: 'node',
+        args: ['--import', 'tsx', 'dummy-server.ts', String(port)],
+        type: 'api', port, phase: 0,
+      }],
+    };
+    const stdout: string[] = [];
+    const code = await runOnce({
+      config, services: config.services, cliArgs: { ...baseCli, onceJson: true },
+      platform: new LinuxPlatform(),
+      env: { ...process.env as Record<string, string> },
+      baseCwd: fixtures, logSink: null,
+      out: l => stdout.push(l),
+    });
+    assert.equal(code, 0, stdout.join('|'));
+
+    const report = JSON.parse(stdout.join('\n'));
+    assert.equal(report.ok, true);
+    assert.equal(report.services.length, 1);
+    assert.equal(report.services[0].name, 'dummy');
+    assert.equal(report.services[0].ready, true);
+    assert.equal(typeof report.services[0].readyAfterMs, 'number');
+    assert.ok(report.elapsedMs > 0);
+    assert.equal(report.timeoutMs, 15_000);
+  });
+
+  it('does not say "never started" about a service it started', async () => {
+    // Everything in a phase is spawned before any of it is awaited, so an
+    // install failure on the *second* service leaves the first running and
+    // unchecked. Calling that "never started" sends a pipeline past the logs
+    // of the service that may well be the culprit.
+    const port = await findFreePort();
+    const config: DevStackConfig = {
+      name: 'OnceJsonStarted',
+      services: [
+        { name: 'first', cwd: '.', cmd: 'node', args: ['--import', 'tsx', 'dummy-server.ts', String(port)], type: 'api', port, phase: 0 },
+        { name: 'uninstallable', cwd: 'no-such-directory', cmd: 'node', args: ['-e', ''], type: 'api', port: 19961, phase: 0 },
+      ],
+    };
+    const stdout: string[] = [];
+    const code = await runOnce({
+      config, services: config.services,
+      cliArgs: { ...baseCli, onceJson: true, onceTimeout: 5 },
+      platform: new LinuxPlatform(),
+      env: { ...process.env as Record<string, string> },
+      baseCwd: fixtures, logSink: null,
+      out: l => stdout.push(l),
+    });
+    assert.equal(code, 1);
+    const report = JSON.parse(stdout.join('\n'));
+    const byName = Object.fromEntries(report.services.map((s: { name: string }) => [s.name, s]));
+    assert.match(byName['uninstallable'].reason, /install failed/);
+    assert.match(byName['first'].reason, /started, but the run stopped/);
+    assert.ok(!/never started/.test(byName['first'].reason), byName['first'].reason);
+  });
+
+  it('reports every selected service, including ones that never got their turn', async () => {
+    // A service skipped because an earlier one failed is not "ready", and
+    // leaving it out of the report makes the pipeline guess.
+    const config: DevStackConfig = {
+      name: 'OnceJsonFail',
+      services: [
+        { name: 'never-listens', cwd: '.', cmd: 'node', args: ['-e', 'setTimeout(()=>{}, 60000)'], type: 'api', port: 19951, phase: 0 },
+        { name: 'never-reached', cwd: '.', cmd: 'node', args: ['-e', 'setTimeout(()=>{}, 60000)'], type: 'api', port: 19952, phase: 1 },
+      ],
+    };
+    const stdout: string[] = [];
+    const code = await runOnce({
+      config, services: config.services,
+      cliArgs: { ...baseCli, onceJson: true, onceTimeout: 2 },
+      platform: new LinuxPlatform(),
+      env: { ...process.env as Record<string, string> },
+      baseCwd: fixtures, logSink: null,
+      out: l => stdout.push(l),
+    });
+    assert.equal(code, 1);
+
+    const report = JSON.parse(stdout.join('\n'));
+    assert.equal(report.ok, false);
+    assert.equal(report.services.length, 2, 'both, not just the one that failed');
+    const byName = Object.fromEntries(report.services.map((s: { name: string }) => [s.name, s]));
+    assert.equal(byName['never-listens'].ready, false);
+    assert.match(byName['never-listens'].reason, /did not become ready/);
+    assert.equal(byName['never-reached'].ready, false);
+    assert.match(byName['never-reached'].reason, /never started/);
   });
 });

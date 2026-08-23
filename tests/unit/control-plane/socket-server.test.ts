@@ -24,7 +24,7 @@ function mkState(over: Partial<ProcessState>): ProcessState {
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
   return {
     states: () => new Map(),
-    restart: async () => {},
+    restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
     tailLogs: async () => ({ lines: [], oldestRetained: null, truncated: false }),
     watchLogs: () => () => {},
@@ -253,11 +253,14 @@ describe('socket-server', { skip: !isUnix }, () => {
     try {
       const restarts: string[] = [];
       const handle = await startSocketServer('r', noopCtx({
-        restart: async (n) => { restarts.push(n); },
+        restart: async (n) => { restarts.push(n); return { ok: true, skippedIdle: false }; },
       }), { path });
       try {
         const res = await rpcCall(path, { method: 'restart', params: { svc: 'foo' } });
-        assert.deepEqual(res.result, { ok: true });
+        // `ok` is the outcome now, as it is for `start`: a lazy service
+        // restarted through its proxy can fail to come back, and answering
+        // `true` regardless hands a client a tick over a dead service.
+        assert.deepEqual(res.result, { ok: true, skippedIdle: false });
         assert.deepEqual(restarts, ['foo']);
       } finally {
         await handle.close();

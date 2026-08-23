@@ -212,12 +212,7 @@ export async function waitForServices(client: DevupClient, opts: WaitOptions = {
   }
 }
 
-/** Start everything not already up, phase by phase.
- *
- *  Ascending phase order, parallel within a phase: the config's own ordering
- *  is the only statement anyone has made about what needs what, and warming
- *  eight lazy services one at a time is most of the reason people write their
- *  own loop instead. */
+/** Start everything not already up, phase by phase. */
 async function warmUp(
   client: DevupClient,
   snapshot: ServiceSnapshot[],
@@ -227,21 +222,57 @@ async function warmUp(
   signal?: { readonly aborted: boolean },
 ): Promise<void> {
   const want = new Set(wanted);
-  const todo = snapshot.filter(s => want.has(s.name) && s.health !== 'up');
-  const phases = [...new Set(todo.map(s => s.phase))].sort((a, b) => a - b);
+  const todo = snapshot.filter(s => want.has(s.name) && s.health !== 'up').map(s => s.name);
+  await forEachInPhaseOrder(snapshot, todo, async name => {
+    // Failures are not raised here: `start` reporting false is one more
+    // reading, and the poll that follows is the authority on whether the
+    // service ended up serving. Losing the deadline to a hung start is the
+    // risk worth guarding, so the remaining budget is the timeout.
+    try { await client.start(name, { timeoutMs: Math.max(1, deadline - now()) }); }
+    catch { /* the poll decides */ }
+  }, () => now() >= deadline || signal?.aborted === true);
+}
 
+export interface PhaseResult<T> {
+  name: string;
+  value: T | null;
+  error: Error | null;
+}
+
+/** Run `fn` over the named services in ascending config phase, concurrently
+ *  within each phase.
+ *
+ *  The phase order is the only statement anyone has made about what needs
+ *  what, so a batch that ignores it starts a phase-4 web before its phase-0
+ *  API — which is how a warm-up turns into a crash loop. Concurrency inside a
+ *  phase is the point: doing eight lazy services one at a time is most of the
+ *  reason people write their own loop instead of using this.
+ *
+ *  Never rejects. Each entry carries its own outcome, because "six started and
+ *  two did not" is the normal answer and the caller has to be able to say
+ *  which two. */
+export async function forEachInPhaseOrder<T>(
+  snapshot: ServiceSnapshot[],
+  names: string[],
+  fn: (name: string) => Promise<T>,
+  /** Checked between phases, to stop early. */
+  stop?: () => boolean,
+): Promise<Array<PhaseResult<T>>> {
+  const phaseOf = new Map(snapshot.map(s => [s.name, s.phase]));
+  const want = names.filter(n => phaseOf.has(n));
+  const phases = [...new Set(want.map(n => phaseOf.get(n)!))].sort((a, b) => a - b);
+
+  const results: Array<PhaseResult<T>> = [];
   for (const phase of phases) {
-    if (now() >= deadline || signal?.aborted) return;
-    const batch = todo.filter(s => s.phase === phase);
-    await Promise.all(batch.map(async s => {
-      // Failures are not raised here: `start` reporting false is one more
-      // reading, and the poll below is the authority on whether the service
-      // ended up serving. Losing the deadline to a hung start is the risk
-      // worth guarding, so the remaining budget is the timeout.
-      try { await client.start(s.name, { timeoutMs: Math.max(1, deadline - now()) }); }
-      catch { /* the poll decides */ }
+    if (stop?.()) break;
+    const batch = want.filter(n => phaseOf.get(n) === phase);
+    const settled = await Promise.all(batch.map(async name => {
+      try { return { name, value: await fn(name), error: null }; }
+      catch (e: any) { return { name, value: null, error: e instanceof Error ? e : new Error(String(e)) }; }
     }));
+    results.push(...settled);
   }
+  return results;
 }
 
 function sleep(ms: number): Promise<void> {

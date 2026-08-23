@@ -235,7 +235,23 @@ Added in 0.14.0.
 → { "result": { "ok": true } }
 ```
 
-Calls `ProcessManager.restart(name)` — stops the current process (kill-tree), resets the auto-restart counter to 0, and spawns it again.
+Stops the current process (kill-tree), resets the auto-restart counter to 0, and spawns it again.
+
+```json
+{ "method": "restart", "params": { "svc": "app-api" } }
+→ { "result": { "ok": true, "skippedIdle": false } }
+```
+
+`ok` is the **outcome**, as it is for `start`, not an acknowledgement.
+
+A **lazy** service goes back up through its on-demand proxy, not around it:
+spawning around it leaves the proxy's readiness flag false, so the next request
+to the public port starts a second process — for an API the `isPortBindable`
+pre-flight catches that, but a lazy web has no such guard and the two fight
+over the port until the daemon loses its handle on the one actually serving.
+A lazy service that is **idle** is left asleep and answers `skippedIdle: true`:
+there is nothing to restart, and waking it is not what a caller resetting state
+between test suites asked for. `skippedIdle` added in 0.16.0.
 
 **The call blocks until the respawn has happened.** The daemon waits ~1.5 s for
 the old process to settle before spawning, and a `preBuild` runs inside that
@@ -247,7 +263,9 @@ way, and giving up early only loses you the answer.
 Errors:
 
 - Missing `svc` param → `{ error: { code: -32603, message: "param \"svc\" must be a non-empty string" } }`
-- Unknown service → silently no-op (devup ignores restarts of unknown services); the `result: { ok: true }` does NOT prove the service exists. Best practice: call `status` first to verify.
+- Unknown service → **errors** with `unknown service: <name>`. Until 0.16.0 it
+  was a silent no-op that still answered `ok: true`, so a typo looked like a
+  success; `start` has always errored, and now the two agree.
 
 ### `stop`
 

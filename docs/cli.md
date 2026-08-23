@@ -55,8 +55,33 @@ See [Reverse proxy](./proxy.md) for the generated formats.
 | `--dry-run` | Print the resolved boot plan (phases, commands, lazy proxies, proxy YAML) and exit `0` without starting anything |
 | `--once` | Boot every service phase-by-phase without a TUI, wait for **every service** to become ready, exit `0` (all up) or `1` (timeout / install failure) |
 | `--once-timeout <seconds>` | Max seconds to wait in `--once` mode. Default: `120` |
+| `--json` | With `--once`, print a machine-readable summary instead of progress lines |
 
 `--once` is built for CI smoke tests: prove the stack boots, then teardown.
+
+With `--json` the summary goes to stdout and **nothing else does** — the
+services' own output moves to stderr, because one `[app-api] listening` line in
+the middle of the JSON and the caller cannot parse it at all, while losing that
+output entirely is how a failing CI run becomes undiagnosable:
+
+```json
+{
+  "ok": false,
+  "elapsedMs": 12345,
+  "timeoutMs": 120000,
+  "services": [
+    { "name": "app-api", "type": "api", "phase": 0, "port": 3000,
+      "ready": true, "readyAfterMs": 3200 },
+    { "name": "app-web", "type": "web", "phase": 4, "port": 4200,
+      "ready": false, "readyAfterMs": null,
+      "reason": "did not become ready within 120s" }
+  ]
+}
+```
+
+Every selected service appears, including ones that never got their turn
+because an earlier phase failed — leaving them out would make the pipeline
+guess.
 
 **What "ready" means, per service.** Until 0.16.0 `--once` waited only for
 `type: 'api'` services, so it returned while the front end was still
@@ -75,6 +100,30 @@ signal that is actually honest for each:
 
 Because the wait now covers more, the default timeout went from 90 s to 120 s.
 A cold `ng serve` is the slowest thing in a typical stack by a wide margin.
+
+### Environment
+
+| Flag | Description |
+|---|---|
+| `--env <path>` | Read this `.env` instead of `config.envFile` / `.env` |
+
+For one run against a test database without editing a versioned config file:
+
+```bash
+devup exec --env .env.e2e -- npx playwright test
+```
+
+The file must exist. `parseEnvFile` returns the base environment for a file
+that is not there, which is right for the implicit `.env` and wrong for one
+someone typed: this is a per-run override usually pointing at a test database,
+and a mistyped path that silently falls back means running the suite against
+the development one instead.
+
+**It is `--env`, not `--env-file`, and that is not a style choice.** Node claims
+`--env-file` for itself and takes it from *anywhere* in argv, script arguments
+included — so `devup --env-file .env.e2e` never reaches devup at all. With the
+file present node quietly loads it and moves on; without it, node exits
+`node: .env.e2e: not found` before a line of devup runs.
 
 ### Log files
 
@@ -149,6 +198,35 @@ files-api      3013  api   ✗ down
 ```
 
 Probes happen in parallel (it's a snapshot, not a watcher). Useful in scripts: `devup status && deploy-tests-against-local`.
+
+### `devup ctl start` / `devup ctl restart`
+
+```bash
+devup ctl start app-api                    # one
+devup ctl start app-api app-web auth-api   # several
+devup ctl start --profile e2e              # a profile
+devup ctl restart --all                    # the whole stack
+devup ctl restart --all --wait             # ...and block until they are healthy
+```
+
+Ascending config phase, concurrent within a phase. The phase order is the only
+statement anyone has made about what needs what, so a batch that ignores it
+starts a phase-4 web against a phase-0 API that is still going down; the
+concurrency inside a phase is the point, since warming eight lazy services one
+at a time is most of the reason people write their own loop instead.
+
+`restart --all` is what you want *between* test suites: it resets in-memory
+state without taking the stack down and paying a cold boot. A lazy service that
+is **idle is left asleep** — there is nothing to restart, its state is already
+fresh, and waking it is the opposite of what you asked for. One that *is*
+running goes back up through its on-demand proxy rather than around it; see
+[lazy mode](./lazy-mode.md).
+
+Exits `1` naming the ones that did not come up. Neither takes an implicit
+"everything" — say `--all` if you mean it, because restarting a whole stack
+because a name was forgotten is not a mistake worth being quiet about. A name
+the daemon does not have fails the whole batch before anything is started,
+rather than half-doing it.
 
 ### `devup ctl logs <svc> [--since <when>] [--lines <n>] [--follow]`
 

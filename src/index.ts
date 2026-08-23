@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
-import { realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
@@ -115,8 +115,23 @@ async function main() {
   // Platform
   const platform = await detectPlatform();
 
-  // Env
-  const envFile = config.envFile ? join(cwd, config.envFile) : join(cwd, '.env');
+  // Env. `--env-file` wins over the config, which wins over `.env`.
+  if (cliArgs.envFile === '') {
+    console.error('❌ --env needs a path');
+    process.exit(1);
+  }
+  const envFile = cliArgs.envFile
+    ? resolve(cwd, cliArgs.envFile)
+    : (config.envFile ? join(cwd, config.envFile) : join(cwd, '.env'));
+  // `parseEnvFile` returns the base environment for a file that is not there,
+  // which is right for the implicit `.env` and wrong for one someone typed:
+  // this is a per-run override, usually pointing at a test database, and a
+  // mistyped path that silently falls back means running the suite against the
+  // development one instead. That is not a convenience worth having.
+  if (cliArgs.envFile && !existsSync(envFile)) {
+    console.error(`❌ --env not found: ${envFile}`);
+    process.exit(1);
+  }
   const env = parseEnvFile(envFile, process.env as Record<string, string>);
   if (config.env) {
     for (const [k, v] of Object.entries(config.env)) {

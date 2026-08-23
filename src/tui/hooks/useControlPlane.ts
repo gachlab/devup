@@ -13,6 +13,7 @@ import type { LazyProxy } from '../../lazy/proxy.js';
 import { startService } from '../../process/start-service.js';
 import { debugService } from '../../process/debug-service.js';
 import { readLogWindow } from '../../process/log-reader.js';
+import { restartService } from '../../process/restart-service.js';
 
 /** Lifecycle of the Unix-socket JSON-RPC control plane. Mounts when the
  *  manager is ready; tears down on unmount.
@@ -42,7 +43,7 @@ export function useControlPlane(
       try {
         handle = await startSocketServer(projectName, {
           states: () => manager.state,
-          restart: (name) => manager.restart(name),
+          restart: (name) => restartService(manager, lazyProxies.current, name),
           stop: (name) => manager.stop(name),
           // The same reader the daemon uses. These two were copies, so a
           // feature added to one — `since`, here — silently missed the other:

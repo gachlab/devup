@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { defaultSocketPath } from './socket-path.js';
 import type {
-  DebugResult, LogsTailResult, OkResult, PingResult, ProjectInfo,
+  DebugResult, LogsTailResult, OkResult, PingResult, ProjectInfo, RestartResult,
   StatsResult, StatusResult, StreamFrame,
 } from './types.js';
 
@@ -28,7 +28,7 @@ export type {
 export { CONTRACT_VERSION } from './types.js';
 export type {
   ServiceSnapshot, ProxyInfo, StatusResult, StatsResult, ServiceStatEntry,
-  ProjectInfo, PingResult, OkResult, DebugResult, LogsTailResult, StreamFrame,
+  ProjectInfo, PingResult, OkResult, RestartResult, DebugResult, LogsTailResult, StreamFrame,
   ProcessStatus, HealthStatus,
 } from './types.js';
 
@@ -244,13 +244,24 @@ export interface DevupClient {
   start(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
   /** Restart a service.
    *
-   *  **Not a fire-and-forget.** The daemon stops the process, waits ~1.5 s for
-   *  it to settle, and spawns it again before answering — so this call blocks
-   *  for at least that, plus whatever the spawn costs (a `preBuild` can make it
-   *  much more). It does *not* wait for the service to become healthy: poll
-   *  `status` for that. An unknown name is a silent no-op that still answers
-   *  `ok: true`. */
-  restart(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
+   *  **Not a fire-and-forget.** The daemon stops the process, waits for it to
+   *  actually exit, and starts it again before answering — so this call blocks
+   *  for at least that, plus whatever the spawn costs (a `preBuild` can make
+   *  it much more).
+   *
+   *  `ok` is the outcome, as it is for `start`: `false` means the service did
+   *  not come back. It still does *not* mean healthy — for an API the daemon
+   *  waits for the port, for a web it waits for the spawn — so poll `status`
+   *  when you need more.
+   *
+   *  `skippedIdle` is `true` for a lazy service that was asleep: there was
+   *  nothing to restart, and waking it is not what a caller resetting state
+   *  between test suites asked for.
+   *
+   *  An unknown name **rejects**. It used to be a silent no-op answering
+   *  `ok: true`, which meant a typo looked like a success; changed in 0.16.0,
+   *  and `start` has always behaved this way. */
+  restart(svc: string, opts?: SendRpcOpts): Promise<RestartResult>;
   /** SIGTERM the service's process tree and suppress the auto-restart. */
   stop(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
   /** Restart a service under (or out of) the Node inspector. Omitted options
@@ -316,7 +327,7 @@ export function createClient(socketPath: string, opts: CreateClientOpts = {}): D
     info: o => call('info', {}, o) as Promise<ProjectInfo>,
     stats: o => call('stats', {}, o) as Promise<StatsResult>,
     start: (svc, o) => call('start', { svc }, o) as Promise<OkResult>,
-    restart: (svc, o) => call('restart', { svc }, o) as Promise<OkResult>,
+    restart: (svc, o) => call('restart', { svc }, o) as Promise<RestartResult>,
     stop: (svc, o) => call('stop', { svc }, o) as Promise<OkResult>,
     // Omitted request options are left out of the request rather than filled
     // in here: the daemon already has the defaults, and a second copy of them

@@ -133,3 +133,46 @@ describe('filterServices', () => {
     });
   });
 });
+
+describe('--env and --json', () => {
+  it('reads --env', () => {
+    assert.equal(parseCliArgs(['--env', '.env.e2e']).envFile, '.env.e2e');
+    assert.equal(parseCliArgs([]).envFile, undefined);
+  });
+
+  it('reads the --env=path form, which is the likely typo', () => {
+    // `--env-file=x` is the spelling node users have in their fingers, so the
+    // near-miss must not be swallowed: falling back to `.env` in silence means
+    // running the suite against the development database.
+    assert.equal(parseCliArgs(['--once', '--env=.env.e2e']).envFile, '.env.e2e');
+  });
+
+  it('does not swallow a following flag as the path', () => {
+    // `--env --json` used to set the path to "--json" and consume the flag
+    // with it, so the run both lost its JSON output and died on a file called
+    // "--json".
+    const r = parseCliArgs(['--once', '--env', '--json']);
+    assert.equal(r.envFile, '');
+    assert.equal(r.onceJson, true, 'the flag it ate must survive');
+  });
+
+  it('distinguishes a bare --env from no flag at all', () => {
+    // Both used to come out `undefined`, so a bare `--env` fell back to `.env`
+    // without a word. index.ts rejects the empty string.
+    assert.equal(parseCliArgs(['--once', '--env']).envFile, '');
+    assert.equal(parseCliArgs(['--once']).envFile, undefined);
+  });
+
+  it('is not spelled --env-file, which node takes for itself', () => {
+    // Node claims `--env-file` from anywhere in argv, script arguments
+    // included: with the file present it loads it and moves on, and with it
+    // absent it exits `node: X: not found` before devup runs at all. The
+    // obvious name is unusable, so the test says so out loud.
+    assert.equal(parseCliArgs(['--env-file', '.env.e2e']).envFile, undefined);
+  });
+
+  it('reads --json for the --once summary', () => {
+    assert.equal(parseCliArgs(['--once', '--json']).onceJson, true);
+    assert.equal(parseCliArgs(['--once']).onceJson, false);
+  });
+});

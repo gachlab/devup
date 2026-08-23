@@ -27,7 +27,7 @@ function mkState(over: Partial<ProcessState> = {}): ProcessState {
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
   return {
     states: () => new Map(),
-    restart: async () => {},
+    restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
     tailLogs: async () => ({ lines: [], oldestRetained: null, truncated: false }),
     watchLogs: () => () => {},
