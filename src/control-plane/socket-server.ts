@@ -4,6 +4,8 @@ import { existsSync, unlinkSync, chmodSync, mkdirSync, statSync } from 'node:fs'
 import { dirname } from 'node:path';
 import type { ProcessState } from '../process/types.js';
 import { defaultSocketPath } from './socket-path.js';
+import { readVersion } from '../utils/version.js';
+import { CONTRACT_VERSION } from './types.js';
 import type {
   ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
 } from './types.js';
@@ -245,67 +247,100 @@ function respond(socket: Socket, payload: object): void {
   if (socket.writable) socket.write(JSON.stringify(payload) + '\n');
 }
 
+/** The RPC methods this daemon serves.
+ *
+ *  A map rather than a `switch` so `info` can advertise the list without a
+ *  second copy of it: `unknown method` is what every client currently probes
+ *  for to discover what a daemon can do, and a hand-maintained list would go
+ *  stale the first time someone added a method and forgot it. */
+type RpcHandler = (params: Record<string, unknown>, ctx: RpcContext) => Promise<unknown> | unknown;
+
+const HANDLERS: Record<string, RpcHandler> = {
+  status: (_params, ctx) => {
+    const out: ServiceSnapshot[] = [];
+    for (const [name, st] of ctx.states()) {
+      out.push(serializeState(name, st));
+    }
+    return { services: out, proxy: ctx.getProxyInfo() };
+  },
+
+  stats: (_params, ctx) => ctx.getStats(),
+
+  info: (_params, ctx) => ({
+    ...ctx.getInfo(),
+    // Composed here rather than asked of the RpcContext: `getInfo` has two
+    // implementations (the daemon and the TUI) and they have drifted from
+    // each other before. Nothing that is the same for every daemon of a given
+    // build should have to be supplied twice.
+    version: readVersion(),
+    contract: CONTRACT_VERSION,
+    methods: METHODS,
+  }),
+
+  restart: async (params, ctx) => {
+    const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+    await ctx.restart(svc);
+    return { ok: true };
+  },
+
+  start: async (params, ctx) => {
+    const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+    // `ok` reflects the outcome, not merely that the request was accepted —
+    // otherwise a client reports success while the service sits crashed.
+    return { ok: await ctx.start(svc) };
+  },
+
+  debug: async (params, ctx) => {
+    const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+    const rawEnable = params['enable'];
+    if (rawEnable !== undefined && typeof rawEnable !== 'boolean') {
+      throw new Error('param "enable" must be a boolean');
+    }
+    const rawPort = params['port'];
+    // Discarding a bad value silently would hand a programmatic client an
+    // OS-chosen port while it believes it pinned one.
+    if (rawPort !== undefined && rawPort !== null && typeof rawPort !== 'number') {
+      throw new Error('param "port" must be a number');
+    }
+    const rawBrk = params['brk'];
+    if (rawBrk !== undefined && typeof rawBrk !== 'boolean') {
+      throw new Error('param "brk" must be a boolean');
+    }
+    return await ctx.debug(svc, rawEnable ?? true, typeof rawPort === 'number' ? rawPort : undefined, rawBrk === true);
+  },
+
+  stop: (params, ctx) => {
+    const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+    ctx.stop(svc);
+    return { ok: true };
+  },
+
+  'logs.tail': async (params, ctx) => {
+    const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+    const lines = Math.max(1, Math.min(10_000, Number(params['lines'] ?? 100)));
+    return { lines: await ctx.tailLogs(svc, lines) };
+  },
+
+  ping: () => ({ ok: true, ts: Date.now() }),
+};
+
+/** Handled in `handleClient` before `dispatch` ever sees them, so they are not
+ *  in HANDLERS — and a client asking what this daemon can do still has to be
+ *  told about them. */
+const STREAM_METHODS = ['logs.follow', 'status.follow'];
+
+/** Every method this daemon answers, streaming ones included. Advertised by
+ *  `info` so a client can ask instead of probing for `unknown method`. */
+export const METHODS: string[] = [...Object.keys(HANDLERS), ...STREAM_METHODS].sort();
+
 async function dispatch(
   method: string,
   params: Record<string, unknown>,
   ctx: RpcContext,
 ): Promise<unknown> {
-  switch (method) {
-    case 'status': {
-      const out: ServiceSnapshot[] = [];
-      for (const [name, st] of ctx.states()) {
-        out.push(serializeState(name, st));
-      }
-      return { services: out, proxy: ctx.getProxyInfo() };
-    }
-    case 'stats':
-      return await ctx.getStats();
-    case 'info':
-      return ctx.getInfo();
-    case 'restart': {
-      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-      await ctx.restart(svc);
-      return { ok: true };
-    }
-    case 'start': {
-      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-      // `ok` reflects the outcome, not merely that the request was accepted —
-      // otherwise a client reports success while the service sits crashed.
-      return { ok: await ctx.start(svc) };
-    }
-    case 'debug': {
-      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-      const rawEnable = params['enable'];
-      if (rawEnable !== undefined && typeof rawEnable !== 'boolean') {
-        throw new Error('param "enable" must be a boolean');
-      }
-      const rawPort = params['port'];
-      // Discarding a bad value silently would hand a programmatic client an
-      // OS-chosen port while it believes it pinned one.
-      if (rawPort !== undefined && rawPort !== null && typeof rawPort !== 'number') {
-        throw new Error('param "port" must be a number');
-      }
-      const rawBrk = params['brk'];
-      if (rawBrk !== undefined && typeof rawBrk !== 'boolean') {
-        throw new Error('param "brk" must be a boolean');
-      }
-      return await ctx.debug(svc, rawEnable ?? true, typeof rawPort === 'number' ? rawPort : undefined, rawBrk === true);
-    }
-    case 'stop': {
-      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-      ctx.stop(svc);
-      return { ok: true };
-    }
-    case 'logs.tail': {
-      const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
-      const lines = Math.max(1, Math.min(10_000, Number(params['lines'] ?? 100)));
-      return { lines: await ctx.tailLogs(svc, lines) };
-    }
-    case 'ping':
-      return { ok: true, ts: Date.now() };
-    default:
-      throw new Error(`unknown method: ${method}`);
-  }
+  const handler = HANDLERS[method];
+  if (!handler) throw new Error(`unknown method: ${method}`);
+  return await handler(params, ctx);
 }
 
 function stringOrThrow(v: unknown, paramName: string): string {

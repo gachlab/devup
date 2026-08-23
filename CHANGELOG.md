@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`info` says what the daemon is** (#107): its `version`, a `contract` number, and the `methods` it answers.
+
+  Every recent release changed what the control plane can do — `originalPort` in 0.12.0, `removed`/`debugPort`/`cpuPercent` in 0.14.0, `brk` in 0.15.0, `crashes` here — and no client could ask. So they sniffed: the VS Code extension decided whether to offer the debugger by looking for `debugPort` in the snapshot, and found out `--inspect-brk` was unavailable when the RPC answered `unknown method`. That turns every "requires ≥ X" into an inference and every error message into a guess.
+
+  `contract` is the field to check, not `version`: it answers "can I trust this field" directly, where the release number makes every client keep its own table of what arrived when — and those tables are what go stale. `methods` is derived from the dispatch table, so a method added without being advertised is not possible; the streaming pair, handled before dispatch, is named explicitly. All three are composed by the server rather than by the `RpcContext` behind it, so the daemon and the TUI — which implement `getInfo` separately and have drifted before — cannot disagree.
+
+  Additive: older clients ignore them, and their **absence** is the answer when what you are asking is how old a daemon is.
+
 - **`devup exec -- <cmd>`** (#106) — the mode between `--once` and `up -d`. Boots the stack if it is not already up, waits until it is ready, runs the command against it, and stops **only what it started**, whatever the command did.
 
   The three hard parts all need something a shell script does not have. *Reuse or boot*: `up -d` refuses when a daemon is already running, which is the right failure for it and leaves every harness parsing that message to decide — here an existing daemon is used and left alone, and only one this invocation started gets stopped. *Teardown on the error path*: a bash `trap` is forgotten, or it kills the stack the developer already had open. *`--fail-on-crash`*: whether a service died **while the command ran** has to be photographed at both ends, and only the daemon has the counters — without it a suite goes green while an API throws on every request.

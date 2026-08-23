@@ -100,9 +100,37 @@ export interface StatsResult {
   };
 }
 
+/** The devup release a daemon reports as `contract`.
+ *
+ *  A plain integer, bumped whenever `ServiceSnapshot` or the other wire shapes
+ *  change in a way a client can see. It exists because the package version
+ *  alone makes every client keep its own table of what arrived in which
+ *  release — `originalPort` in 0.12.0, `debugPort` in 0.14.0 — and those
+ *  tables are exactly what goes stale.
+ *
+ *  Bump it in the same commit as the shape change, and say so in the
+ *  changelog. `npm run contract:update` reminds you. */
+export const CONTRACT_VERSION = 1;
+
 export interface ProjectInfo {
   project: string;
   profiles: Record<string, string[]>;
+  /** The devup release running this daemon, or `'unknown'` if it could not
+   *  read its own manifest. */
+  version?: string;
+  /** Which revision of the wire shapes this daemon speaks — see
+   *  `CONTRACT_VERSION`. What a client actually needs to decide whether it can
+   *  trust a field, without keeping a release table of its own. */
+  contract?: number;
+  /** Every RPC method this daemon answers, streaming ones included. Ask this
+   *  instead of probing for an `unknown method` error. */
+  methods?: string[];
+
+  // Optional, unlike the snapshot fields — and deliberately so. These three
+  // exist to answer "how old is this daemon", so the answer has to survive
+  // being asked of an old one: a daemon before 0.16.0 sends none of them, and
+  // typing them as always-present would be the exact lie they are here to
+  // remove. Their absence *is* the answer.
 }
 
 export interface PingResult {

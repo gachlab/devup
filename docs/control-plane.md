@@ -112,6 +112,51 @@ Fields per service mirror `ProcessState`:
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
 - `debugPort`: port the Node inspector bound to, parsed from the process's startup line. `null` unless the service is running under `--inspect`
 
+### `info`
+
+What this daemon is, and what it can do.
+
+```json
+{ "method": "info" }
+→ { "result": {
+      "project": "Guesthub",
+      "profiles": { "e2e": ["app-api", "app-web"] },
+      "version": "0.16.0",
+      "contract": 1,
+      "methods": ["debug", "info", "logs.follow", "logs.tail", "ping",
+                  "restart", "start", "stats", "status", "status.follow", "stop"]
+   } }
+```
+
+- `project`, `profiles`: from the config the daemon booted with.
+- `version`: the devup release running it, or `"unknown"` if it could not read
+  its own manifest.
+- `contract`: which revision of the wire shapes it speaks. **This is the field
+  to check**, not `version`: it answers "can I trust this field" directly,
+  where the release number makes every client keep its own table of what
+  arrived when — `originalPort` in 0.12.0, `debugPort` in 0.14.0, `crashes` in
+  0.16.0. Those tables are exactly what goes stale.
+- `methods`: every RPC this daemon answers, streaming ones included. Ask this
+  rather than sending a request and looking for `unknown method` in the error.
+
+**The last three are absent from daemons before 0.16.0** — which is itself the
+answer when what you are asking is how old one is:
+
+```javascript
+const info = await devup.info();
+if (!info.methods?.includes('debug')) {
+  throw new Error(`this daemon cannot debug (devup ${info.version ?? 'older than 0.16.0'})`);
+}
+```
+
+`version`, `contract` and `methods` are added by the server itself rather than
+by the `RpcContext` behind it, so the daemon and the TUI — which implement
+`getInfo` separately, and have drifted apart before — cannot disagree about
+them. `methods` is derived from the dispatch table, so a method added without
+being advertised is not possible.
+
+Added in 0.16.0.
+
 ### `start`
 
 Start a stopped service. No-op when it is already running.

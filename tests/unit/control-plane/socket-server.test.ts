@@ -5,7 +5,9 @@ import { createInterface } from 'node:readline';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startSocketServer, defaultSocketPath, type RpcContext } from '../../../src/control-plane/socket-server.js';
+import { startSocketServer, defaultSocketPath, METHODS, type RpcContext } from '../../../src/control-plane/socket-server.js';
+import { CONTRACT_VERSION } from '../../../src/control-plane/types.js';
+import { readVersion } from '../../../src/utils/version.js';
 import type { ProcessState } from '../../../src/process/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 
@@ -546,5 +548,108 @@ describe('socket-server', { skip: !isUnix }, () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
+  it('carries the version, the contract and the method list', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-info-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('i', noopCtx({
+        getInfo: () => ({ project: 'Guesthub', profiles: { e2e: ['app-api'] } }),
+      }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'info' });
+        // Still everything it used to say.
+        assert.equal(res.result.project, 'Guesthub');
+        assert.deepEqual(res.result.profiles, { e2e: ['app-api'] });
+        // And what it is.
+        assert.equal(res.result.version, readVersion());
+        assert.match(res.result.version, /^\d+\.\d+\.\d+/, 'a real version, not "unknown"');
+        assert.equal(res.result.contract, CONTRACT_VERSION);
+        assert.ok(Array.isArray(res.result.methods));
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('composes those three itself, so the two getInfo implementations cannot drift', async () => {
+    // `getInfo` is written twice — once in the daemon, once in the TUI's
+    // control plane — and they have drifted before. Anything identical for
+    // every daemon of a given build is added here, not asked of either.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-info2-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('i', noopCtx({
+        getInfo: () => ({ project: 'p', profiles: {} }),   // says nothing about version
+      }), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'info' });
+        assert.ok(res.result.version, 'the server fills it in');
+        assert.ok(res.result.methods.length > 0);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('advertises every method it can actually answer, and no others', async () => {
+    // The point of building METHODS from the handler map: a method added
+    // without being advertised is what makes clients probe for `unknown
+    // method` in the first place. Every name here is called for real.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-methods-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('m', noopCtx({
+        states: () => new Map([['api', mkState({})]]),
+        tailLogs: async () => [],
+      }), { path });
+      try {
+        const advertised = (await rpcCall(path, { id: 1, method: 'info' })).result.methods as string[];
+        assert.deepEqual(advertised, METHODS);
+        for (const method of advertised) {
+          // `svc` for the ones that need it; the rest ignore it.
+          const res = await rpcCall(path, { id: 2, method, params: { svc: 'api' } });
+          assert.ok(
+            !(res.error?.message ?? '').includes('unknown method'),
+            `advertised "${method}" but the daemon does not answer it`,
+          );
+        }
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still refuses a method it does not have', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-nom-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('n', noopCtx(), { path });
+      try {
+        const res = await rpcCall(path, { id: 1, method: 'teleport' });
+        assert.match(res.error.message, /unknown method: teleport/);
+        assert.ok(!METHODS.includes('teleport'));
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes the streaming methods, which are handled before dispatch', async () => {
+    // They never reach the handler map, so they are the ones most likely to be
+    // left out of a hand-maintained list.
+    assert.ok(METHODS.includes('logs.follow'));
+    assert.ok(METHODS.includes('status.follow'));
   });
 });
