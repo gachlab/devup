@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { detectSubcommand, runHelp, runLogs, runStatus, misplacedSubcommand } from '../../../src/orchestrator/subcommands.js';
+import { detectSubcommand, runHelp, runLogs, runStatus, misplacedSubcommand, positionalArgs } from '../../../src/orchestrator/subcommands.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
 
 function mkConfig(over: Partial<DevStackConfig> = {}): DevStackConfig {
@@ -143,5 +143,41 @@ describe('misplacedSubcommand', () => {
   it('says nothing about a plain TUI invocation', () => {
     assert.equal(misplacedSubcommand(['--no-lazy', '--proxy']), null);
     assert.equal(misplacedSubcommand([]), null);
+  });
+});
+
+describe('positionalArgs', () => {
+  it('skips a flag and the value it takes', () => {
+    // One bug, over and over: a flag's value read as a positional. It has been
+    // `--profile status` taken for the status command, `--config ./x.ts api`
+    // taken for a service, and `--instance e2e api` taken for one — which
+    // broke every ctl command against a named instance at once.
+    assert.deepEqual(positionalArgs(['start', '--instance', 'e2e', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['start', '--config', './devup.config.ts', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['logs', '--since', '5m', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['debug', '--port', '9230', 'api'], 1), ['api']);
+  });
+
+  it('is unbothered by a value-taking flag with no value', () => {
+    assert.deepEqual(positionalArgs(['wait', '--timeout', '--json', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['start', 'api', '--profile'], 1), ['api']);
+  });
+
+  it('drops bare flags', () => {
+    assert.deepEqual(positionalArgs(['start', '--all', '--json', 'api'], 1), ['api']);
+    assert.deepEqual(positionalArgs(['debug', '--off', 'api'], 1), ['api']);
+  });
+
+  it('keeps every positional, in order', () => {
+    assert.deepEqual(positionalArgs(['start', 'a', 'b', 'c'], 1), ['a', 'b', 'c']);
+  });
+
+  it('stops at --, so exec\'s command is never scanned', () => {
+    assert.deepEqual(positionalArgs(['exec', '--instance', 'e2e', '--', 'npm', 'run', 'x'], 1), []);
+  });
+
+  it('honours the start index', () => {
+    assert.deepEqual(positionalArgs(['ctl', 'start', 'api'], 1), ['start', 'api']);
+    assert.deepEqual(positionalArgs(['ctl', 'start', 'api'], 2), ['api']);
   });
 });

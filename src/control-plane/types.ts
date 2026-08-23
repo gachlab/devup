@@ -127,6 +127,13 @@ export interface ProjectInfo {
    *  indistinguishable over the control plane — and telling them apart is the
    *  entire point of having them. Sent since 0.16.0. */
   instance?: string;
+  /** The daemon's own process id.
+   *
+   *  Not decoration: in lazy mode the on-demand proxy listens on the
+   *  *configured* port from inside this process, so when a port conflict names
+   *  a holder, this is the pid it names — no service of ours will match it.
+   *  Sent since 0.16.0. */
+  pid?: number;
   profiles: Record<string, string[]>;
   /** The devup release running this daemon, or `'unknown'` if it could not
    *  read its own manifest. */

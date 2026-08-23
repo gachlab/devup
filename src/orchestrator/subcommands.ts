@@ -29,13 +29,38 @@ export function detectSubcommand(argv: string[]): string | null {
   return first && KNOWN.has(first) ? first : null;
 }
 
-/** Flags that take a separate value, so the value is not mistaken for a
- *  subcommand: `--profile status` names a profile, not the `status` command. */
+/** Every flag that takes a *separate* value.
+ *
+ *  One list, because there is one bug here and it keeps coming back: a value
+ *  read as a positional argument. `--profile status` named a profile and was
+ *  taken for the `status` command; `--config ./devup.config.ts api` had the
+ *  path taken for a service name; `--instance e2e api` had `e2e` taken for
+ *  one — which broke every `ctl` command against a named instance at once.
+ *  Anything that reads positionals goes through `positionalArgs`. */
 const VALUE_FLAGS = new Set([
   '--config', '--only', '--skip', '--services', '--profile', '--timeout',
   '--proxy-host', '--proxy-conf', '--proxy-entrypoint', '--once-timeout',
   '--log-dir', '--env', '--instance', '--lines', '--since', '--wait-timeout',
+  '--port',
 ]);
+
+/** The positional arguments in `argv`, skipping flags and the values they
+ *  take. Stops at `--`, so `exec`'s command is never scanned. */
+export function positionalArgs(argv: string[], from = 0): string[] {
+  const out: string[] = [];
+  for (let i = from; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === '--') break;
+    // The next token is skipped whether or not it looks like a value. Being
+    // choosier reads better and changes nothing: this function returns only
+    // positionals, so eating a flag is invisible either way, and eating a
+    // would-be positional is what `--lines api` deserves.
+    if (VALUE_FLAGS.has(a)) { i++; continue; }
+    if (a.startsWith('-')) continue;
+    out.push(a);
+  }
+  return out;
+}
 
 /** A subcommand that was written *after* the flags, which devup does not
  *  accept — and used to fail silently by rendering the TUI instead.
@@ -81,7 +106,7 @@ function sanitize(name: string): string {
 export async function runLogs(argv: string[], opts: SubOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => console.log(l));
   const follow = argv.includes('--follow') || argv.includes('-f');
-  const svcArg = argv.find(a => !a.startsWith('-'));
+  const svcArg = positionalArgs(argv)[0];
   if (!svcArg) {
     out('usage: devup logs <service> [--follow]');
     return 1;
@@ -248,20 +273,10 @@ export function resolveTargets(
   config: Pick<DevStackConfig, 'profiles'>,
   opts: { defaultAll: boolean; verb: string },
 ): { names: string[] | null; error?: string } {
-  // Positional names, minus flags and the value a spaced flag takes.
-  //
-  // devup's globals are in here too, not just ctl's own: `runCtl` gets the
-  // whole argv, and `index.ts` really does honour `--config` and `--log-dir`
-  // for ctl. Without them, `devup ctl start --config ./devup.config.ts api`
-  // reads the path as a service name and starts nothing.
-  const takesValue = new Set(['--timeout', '--profile', '--config', '--log-dir', '--env', '--lines', '--since']);
-  const names: string[] = [];
-  for (let i = 1; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (takesValue.has(a) && !argv[i + 1]?.startsWith('-')) { i++; continue; }
-    if (a.startsWith('-')) continue;
-    names.push(a);
-  }
+  // devup's globals count too, not just ctl's own: `runCtl` gets the whole
+  // argv, and index.ts really does honour `--config`, `--log-dir` and
+  // `--instance` for ctl.
+  const names = positionalArgs(argv, 1);
 
   const profile = flagValue(argv, '--profile');
   if (profile !== undefined) {
@@ -403,17 +418,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     }
 
     if (method === 'logs') {
-      // Skip the value `--since` and `--lines` take, or `ctl logs --since 5m`
-      // would read "5m" as the service name.
-      const takesValue = new Set(['--since', '--lines']);
-      let svc: string | undefined;
-      for (let i = 1; i < argv.length; i++) {
-        const a = argv[i]!;
-        if (takesValue.has(a) && !argv[i + 1]?.startsWith('-')) { i++; continue; }
-        if (a.startsWith('-')) continue;
-        svc = a;
-        break;
-      }
+      const svc = positionalArgs(argv, 1)[0];
       if (!svc) { out('usage: devup ctl logs <service> [--since <when>] [--lines <n>] [--follow]'); return 1; }
 
       const rawSince = flagValue(argv, '--since');
@@ -500,15 +505,8 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
 
     if (method === 'debug') {
       // `ctl debug --off api` must not send svc="--off", and `--port 9230 api`
-      // must not send svc="9230" — so skip flags *and* the value --port takes.
-      let svc: string | undefined;
-      for (let i = 1; i < argv.length; i++) {
-        const a = argv[i]!;
-        if (a === '--port') { i++; continue; }
-        if (a.startsWith('-')) continue;
-        svc = a;
-        break;
-      }
+      // must not send svc="9230" — `--port` is in VALUE_FLAGS for that.
+      const svc = positionalArgs(argv, 1)[0];
       if (!svc) { out('usage: devup ctl debug <service> [--off] [--port <n>] [--brk]'); return 1; }
       const enable = !argv.includes('--off');
       // Stops the service before its first line, for debugging the startup
@@ -594,7 +592,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     }
 
     if (method === 'stop') {
-      const svc = argv[1];
+      const svc = positionalArgs(argv, 1)[0];
       if (!svc) { out('usage: devup ctl stop <service>'); return 1; }
       await sendRpc(socketPath, 'stop', { svc });
       out(`✓ stop sent to ${svc}`);

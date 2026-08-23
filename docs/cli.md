@@ -137,18 +137,30 @@ consuming app, not in devup. Two instances therefore cannot serve the same
 ports at once.
 
 devup does not pretend otherwise. When the ports collide it says which instance
-has them, having asked that instance's control plane which of its services
-holds the port:
+has them — asked, not guessed: it opens every other devup socket and asks what
+that daemon is and which pids it owns. Two ways a port can be ours and both are
+checked: a **service** holds it, or the **daemon itself** does, which is the
+lazy case and the default (the on-demand proxy listens on the configured port
+from inside the daemon process).
 
 ```
 ⚠ Port conflicts detected on the following services:
 
   :3000   app-api    pid=41234  process=node
 
-That is another devup instance: "Guesthub".
+That is another devup instance: "Guesthub (instance "e2e")".
 Instances have separate sockets and logs but the *same* ports, so only one can serve at a time.
-Stop it with `devup down`, or give this one different ports in its config.
+Stop it with `devup down --instance e2e`, or give this one different ports in its config.
+
+Not offering to kill them: they belong to a running devup,
+whose auto-restarter would bring them straight back — the ports would be taken again,
+this boot would fail to bind anyway, and the churn is what the already-running guard exists to prevent.
+Stop it first: `devup down --instance e2e`.
 ```
+
+`--kill-port-conflicts` is refused here on purpose: it is for stray processes,
+not for a live devup. Killing another instance's services hands them straight
+to *its* restarter.
 
 Give the second instance its own config with its own ports — `--config
 e2e.config.ts` — and the two run together.

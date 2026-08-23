@@ -29,7 +29,7 @@ export function qualifyInstance(projectName: string, instance?: string): string 
  *  is one whose socket you cannot find. The point of the flag is to know which
  *  daemon you are talking to. */
 export function validateInstance(instance: string): string | null {
-  if (!instance) return 'instance name cannot be empty';
+  if (!instance) return '--instance needs a name';
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(instance)) {
     return `invalid instance name: "${instance}" — letters, digits, dot, dash and underscore only, starting with a letter or digit`;
   }

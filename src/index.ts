@@ -8,11 +8,11 @@ import { homedir } from 'node:os';
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
 import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
-import { qualifyInstance, validateInstance, instanceSuffix } from './config/instance.js';
+import { qualifyInstance, validateInstance } from './config/instance.js';
 import { detectSubcommand, misplacedSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
 import { scanPortConflicts, resolvePortConflicts, type BlamedInstance } from './process/port-conflicts.js';
-import { attributePort } from './orchestrator/instances.js';
+import { attributePort, type DaemonIdentity } from './orchestrator/instances.js';
 import { defaultSocketPath, sendRpc } from './control-plane/client.js';
 import { detectPlatform } from './platform/detect.js';
 import { detectProxyProvider } from './proxy-config/detect.js';
@@ -231,17 +231,20 @@ async function main() {
     // Asked rather than guessed: the holder is a service, and its daemon can
     // say so. Resolved before the prompt, since the answer belongs in the list.
     const blame = new Map<number, BlamedInstance | null>();
+    const selfSocket = defaultSocketPath(instanceName);
+    const probe = {
+      info: async (path: string) => await sendRpc(path, 'info', {}, { timeoutMs: 1500 }) as DaemonIdentity,
+      status: async (path: string) => await sendRpc(path, 'status', {}, { timeoutMs: 1500 }) as { services: Array<{ pid: number | null }> },
+    };
     for (const c of conflicts) {
       const pid = c.holder?.pid ?? null;
       if (pid === null || blame.has(pid)) continue;
-      const found = await attributePort(pid, instanceName, {
-        socketPathFor: defaultSocketPath,
-        status: async path => await sendRpc(path, 'status', {}, { timeoutMs: 1500 }) as { services: Array<{ pid: number | null }> },
-      });
-      const suffix = found ? instanceSuffix(found.name, config.name) : undefined;
+      const found = await attributePort(pid, selfSocket, probe);
       blame.set(pid, found ? {
-        name: found.name,
-        stopCommand: `devup down${suffix ? ` --instance ${suffix}` : ''}`,
+        name: found.identity.instance
+          ? `${found.identity.project} (instance "${found.identity.instance}")`
+          : found.identity.project,
+        stopCommand: found.stopCommand,
       } : null);
     }
     return await resolvePortConflicts(conflicts, {

@@ -3,114 +3,102 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { listRunningInstances, attributePort } from '../../../src/orchestrator/instances.js';
+import { listInstanceSockets, attributePort, type AttributeProbe } from '../../../src/orchestrator/instances.js';
 
-function withPidDir(files: Record<string, string>, fn: (dir: string) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), 'devup-inst-'));
-  try {
-    for (const [name, contents] of Object.entries(files)) writeFileSync(join(dir, name), contents);
-    fn(dir);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-}
-
-describe('listRunningInstances', () => {
-  it('reads the live ones and skips the dead', () => {
-    withPidDir({
-      'Guesthub.pid': String(process.pid),        // us: certainly alive
-      'Guesthub-e2e.pid': '2147483647',           // a pid nothing can be using
-      'notes.txt': 'ignored',
-    }, dir => {
-      const found = listRunningInstances(dir);
-      assert.deepEqual(found.map(i => i.name), ['Guesthub']);
-      assert.equal(found[0]!.pid, process.pid);
-    });
+describe('listInstanceSockets', () => {
+  it('finds the socket files and ignores everything else', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-sockls-'));
+    try {
+      for (const f of ['sock-Proj.sock', 'sock-Proj-e2e.sock', 'Proj.pid', 'notes.txt', 'sock-x.txt']) {
+        writeFileSync(join(dir, f), '');
+      }
+      const found = listInstanceSockets(dir).map(p => p.split('/').pop());
+      assert.deepEqual(found.sort(), ['sock-Proj-e2e.sock', 'sock-Proj.sock']);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it('survives junk without failing a boot', () => {
-    // Nothing here is allowed to break a run; it only makes a message better.
-    withPidDir({ 'a.pid': 'not-a-number', 'b.pid': '', 'c.pid': '   ' }, dir => {
-      assert.deepEqual(listRunningInstances(dir), []);
-    });
-    assert.deepEqual(listRunningInstances(join(tmpdir(), 'devup-does-not-exist-at-all')), []);
+  it('survives a missing directory without failing a boot', () => {
+    assert.deepEqual(listInstanceSockets(join(tmpdir(), 'devup-nope-at-all')), []);
   });
 });
 
 describe('attributePort', () => {
-  const running = [
-    { name: 'Guesthub', pid: 100 },
-    { name: 'Guesthub-e2e', pid: 200 },
-    { name: 'Guesthub-ci', pid: 300 },
-  ];
-  const socketPathFor = (n: string) => `/sock/${n}`;
+  const SELF = '/d/sock-Proj.sock';
+  const E2E = '/d/sock-Proj-e2e.sock';
+  const CI = '/d/sock-Proj-ci.sock';
 
-  it('asks each instance whose service holds the port', async () => {
-    // The holder pid belongs to a *service*, never to the daemon that spawned
-    // it, so there is nothing to match against a pid file — but every daemon
-    // already answers `status` with its services' pids.
+  function probe(over: Partial<AttributeProbe> = {}): AttributeProbe {
+    return {
+      info: async path => ({ project: 'Proj', instance: path === E2E ? 'e2e' : 'ci', pid: path === E2E ? 200 : 300 }),
+      status: async () => ({ services: [] }),
+      ...over,
+    };
+  }
+
+  it('matches the daemon itself, because a lazy proxy holds the port in-process', () => {
+    // Lazy is the default, and the on-demand proxy listens on the *configured*
+    // port from inside the daemon — so no service pid will ever match.
+    return attributePort(200, SELF, probe(), [SELF, E2E, CI]).then(found => {
+      assert.equal(found?.identity.instance, 'e2e');
+      assert.equal(found?.stopCommand, 'devup down --instance e2e');
+    });
+  });
+
+  it('matches one of its services for an always-on port', async () => {
+    const found = await attributePort(555, SELF, probe({
+      status: async path => ({ services: path === CI ? [{ pid: 555 }] : [] }),
+    }), [SELF, E2E, CI]);
+    assert.equal(found?.identity.instance, 'ci');
+  });
+
+  it('builds the stop command from what the daemon says, not from a file name', () => {
+    // Cutting a suffix off a qualified name misreads any project whose own
+    // name has a dash, and the pid-file name is sanitised besides.
+    return attributePort(200, SELF, probe({
+      info: async () => ({ project: 'my-app', pid: 200 }),
+    }), [SELF, E2E]).then(found => {
+      assert.equal(found?.stopCommand, 'devup down', 'the default instance takes no flag');
+    });
+  });
+
+  it('never asks the instance doing the asking', async () => {
     const asked: string[] = [];
-    const found = await attributePort(31337, 'Guesthub', {
-      running,
-      socketPathFor,
-      status: async path => {
-        asked.push(path);
-        return { services: path.endsWith('Guesthub-ci') ? [{ pid: 31337 }] : [{ pid: 999 }] };
-      },
-    });
-    assert.equal(found?.name, 'Guesthub-ci');
-    assert.ok(!asked.includes('/sock/Guesthub'), 'never asks the instance doing the asking');
+    await attributePort(999, SELF, probe({ info: async p => { asked.push(p); return { project: 'Proj', pid: 1 }; } }), [SELF, E2E]);
+    assert.ok(!asked.includes(SELF));
   });
 
-  it('names the right one even with several running', async () => {
-    // The heuristic alone declines to guess between several, which is exactly
-    // the ordinary case once a second instance exists.
-    const found = await attributePort(555, 'Guesthub-ci', {
-      running,
-      socketPathFor,
-      status: async path => ({ services: path.endsWith('e2e') ? [{ pid: 555 }] : [] }),
-    });
-    assert.equal(found?.name, 'Guesthub-e2e');
-  });
-
-  it('falls back to the only other instance when nothing answers', async () => {
-    // A daemon too old to have a control plane, or one still booting, should
-    // not turn a good hint into no hint.
-    const found = await attributePort(31337, 'Guesthub', {
-      running: [{ name: 'Guesthub', pid: 100 }, { name: 'Guesthub-e2e', pid: 200 }],
-      socketPathFor,
-      status: async () => { throw new Error('not answering'); },
-    });
-    assert.equal(found?.name, 'Guesthub-e2e');
-  });
-
-  it('says nothing rather than picking one of several that will not answer', async () => {
-    const found = await attributePort(31337, 'Guesthub', {
-      running, socketPathFor, status: async () => { throw new Error('nope'); },
-    });
+  it('says nothing when every daemon answered and none claimed it', async () => {
+    // A stray `node server.js` on a devup port is not another instance, and
+    // saying it is sends someone to stop a daemon that is innocent.
+    const found = await attributePort(31337, SELF, probe(), [SELF, E2E]);
     assert.equal(found, null);
   });
 
-  it('never blames the instance asking', async () => {
-    const found = await attributePort(31337, 'Guesthub', {
-      running: [{ name: 'Guesthub', pid: 100 }],
-      socketPathFor,
-      status: async () => ({ services: [{ pid: 31337 }] }),
-    });
-    assert.equal(found, null);
+  it('falls back to the only other instance when it could not be asked', async () => {
+    // Too old for a control plane, or still booting: a good hint beats none.
+    const found = await attributePort(31337, SELF, probe({
+      info: async () => { throw new Error('not answering'); },
+    }), [SELF, E2E]);
+    assert.equal(found, null, 'and with nothing known about it, nothing to say');
+  });
+
+  it('uses the fallback only when something was unreachable', async () => {
+    // One reachable that denies it, one that cannot be asked: the reachable
+    // one is the only thing we know, and something *was* unreachable.
+    const found = await attributePort(31337, SELF, probe({
+      info: async path => { if (path === CI) throw new Error('down'); return { project: 'Proj', instance: 'e2e', pid: 200 }; },
+    }), [SELF, E2E, CI]);
+    assert.equal(found, null, 'two others and no claim: guessing between them would be worse');
   });
 
   it('says nothing when no other instance is running', async () => {
-    assert.equal(await attributePort(31337, 'Guesthub', { running: [] }), null);
-    assert.equal(await attributePort(null, 'Guesthub', { running: [] }), null);
+    assert.equal(await attributePort(1, SELF, probe(), [SELF]), null);
+    assert.equal(await attributePort(null, SELF, probe(), []), null);
   });
 
-  it('does not ask when there is no holder pid to match', async () => {
-    let asked = 0;
-    const found = await attributePort(null, 'Guesthub', {
-      running: [{ name: 'Guesthub', pid: 1 }, { name: 'Guesthub-e2e', pid: 2 }],
-      socketPathFor,
-      status: async () => { asked++; return { services: [] }; },
-    });
-    assert.equal(asked, 0, 'nothing to compare against');
-    assert.equal(found?.name, 'Guesthub-e2e', 'but the single-other fallback still applies');
+  it('does not ask for status when there is no holder pid', async () => {
+    let statuses = 0;
+    await attributePort(null, SELF, probe({ status: async () => { statuses++; return { services: [] }; } }), [SELF, E2E]);
+    assert.equal(statuses, 0);
   });
 });

@@ -179,7 +179,17 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
       case '--no-log-file':      args.logFile = false; break;
       case '--log-dir':          args.logDir = next; i++; break;
-      case '--instance':         args.instance = next; i++; break;
+      // Same shape as `--env`, and for a sharper reason: a bare
+      // `--instance` — value forgotten, or eaten by an empty shell variable —
+      // used to fall through to the default stack, so `devup down --instance`
+      // stopped the daemon you were working in. index.ts rejects the empty
+      // string.
+      case '--instance': {
+        const named = next !== undefined && !next.startsWith('-');
+        args.instance = named ? next : '';
+        if (named) i++;
+        break;
+      }
       // Empty string, not `undefined`, when there is no value: a bare `--env`
       // has to be distinguishable from no flag at all, or it falls back to
       // `.env` in silence — which for a per-run override pointing at a test

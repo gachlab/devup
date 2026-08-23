@@ -164,6 +164,21 @@ export async function resolvePortConflicts(
     out('');
   }
 
+  // Refused, not warned. Killing another instance's services hands them
+  // straight to *its* auto-restarter, which respawns them seconds later — so
+  // the ports are taken again, this boot fails to bind anyway, and the churn
+  // is exactly what the "a daemon is already running" guard exists to prevent.
+  // `--kill-port-conflicts` is for stray processes, not for a live devup.
+  if (blamed) {
+    out(autoKill
+      ? 'Not killing them despite --kill-port-conflicts: they belong to a running devup,'
+      : 'Not offering to kill them: they belong to a running devup,');
+    out('whose auto-restarter would bring them straight back — the ports would be taken again,');
+    out('this boot would fail to bind anyway, and the churn is what the already-running guard exists to prevent.');
+    out(`Stop it first: \`${blamed.stopCommand}\`.`);
+    return false;
+  }
+
   if (autoKill) {
     return await killAll(conflicts, out);
   }

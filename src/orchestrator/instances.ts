@@ -1,78 +1,114 @@
-/** Which other devup instances are running, from the pid files in ~/.devup.
+/** Which other devup instances are running, and which of them holds a port.
  *
  *  Exists for one message. Instances share their project's ports on purpose —
  *  shifting them would have to reach the services themselves — so two cannot
  *  serve at once, and the way that shows up is a port conflict. "some process
- *  has your port" sends someone hunting; "the `dev` instance of this project
- *  has it, pid 1234" is the whole answer. */
-import { readdirSync, readFileSync } from 'node:fs';
+ *  has your port" sends someone hunting; "the `e2e` instance has it, stop it
+ *  with `devup down --instance e2e`" is the whole answer.
+ *
+ *  Built on the **socket files**, not the pid files, and that is not
+ *  arbitrary: the two are named by different sanitisers — the pid one trims
+ *  leading underscores and the socket one does not, so `@gachlab/web` has
+ *  `gachlab_web.pid` next to `sock-_gachlab_web.sock`. Deriving one from the
+ *  other silently misses every scoped project name. A socket file *is* a
+ *  socket path, and the daemon behind it can be asked what it is, so no name
+ *  is ever reconstructed. */
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-export interface RunningInstance {
-  /** The qualified name the pid file is keyed by, e.g. `Guesthub-e2e`. */
-  name: string;
-  pid: number;
+export interface DaemonIdentity {
+  /** The project as configured, not a sanitised file name. */
+  project: string;
+  /** From `--instance`, absent for the default stack. */
+  instance?: string;
+  /** The daemon's own pid, when it reports one. */
+  pid?: number;
 }
 
-function pidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
-/** Every live devup daemon on this machine, by the name its pid file carries.
+/** Every devup control-plane socket on this machine.
  *
- *  Best effort by design: a missing directory, an unreadable file or a pid
- *  that has since exited all just mean "not that one". Nothing here is allowed
- *  to fail a boot — it only makes a message better. */
-export function listRunningInstances(dir = join(homedir(), '.devup')): RunningInstance[] {
-  let entries: string[];
-  try { entries = readdirSync(dir); } catch { return []; }
-
-  const out: RunningInstance[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith('.pid')) continue;
-    try {
-      const pid = Number(readFileSync(join(dir, entry), 'utf8').trim());
-      if (!Number.isFinite(pid) || !pid || !pidAlive(pid)) continue;
-      out.push({ name: entry.slice(0, -'.pid'.length), pid });
-    } catch { /* not this one */ }
+ *  Best effort by design: a missing directory or an unreadable entry just
+ *  means "not that one". Nothing here may fail a boot — it only makes a
+ *  message better. */
+export function listInstanceSockets(dir = join(homedir(), '.devup')): string[] {
+  try {
+    return readdirSync(dir)
+      .filter(f => f.startsWith('sock-') && f.endsWith('.sock'))
+      .map(f => join(dir, f));
+  } catch {
+    return [];
   }
-  return out;
 }
 
-/** The instance whose service holds a port, if one of ours does.
+export interface AttributeProbe {
+  info(socketPath: string): Promise<DaemonIdentity>;
+  status(socketPath: string): Promise<{ services: Array<{ pid: number | null }> }>;
+}
+
+export interface Attribution {
+  identity: DaemonIdentity;
+  /** The exact command that stops it. */
+  stopCommand: string;
+}
+
+/** Which running instance holds `holderPid`, asked rather than guessed.
  *
- *  Asked, not guessed. The holder pid belongs to a *service*, never to the
- *  daemon that spawned it, so there is nothing to match against a pid file —
- *  but every daemon already answers `status` with its services' pids, so the
- *  exact answer is one RPC away per instance. This only runs on a path that
- *  has already failed, so the cost is a message worth having.
+ *  Two ways it can be ours, and both are checked:
  *
- *  Falls back to naming the only other instance when nothing answers: a
- *  daemon too old to have a control plane, or one still booting, should not
- *  turn a good hint into no hint. With several running and none answering it
- *  says nothing rather than picking one. */
+ *  - **The daemon itself**, when the service is lazy — its on-demand proxy
+ *    listens on the configured port from inside the daemon process, and lazy
+ *    is the default. No service pid will ever match in that case.
+ *  - **One of its services**, otherwise.
+ *
+ *  Returns null rather than guessing when nothing matches *and* every daemon
+ *  answered: a stray `node server.js` on a devup port is not another instance,
+ *  and saying it is sends someone to stop a daemon that is innocent. The
+ *  single-other fallback applies only when a daemon could not be reached at
+ *  all — too old for a control plane, or still booting — where a good hint
+ *  beats none. */
 export async function attributePort(
   holderPid: number | null,
-  self: string,
-  opts: {
-    running?: RunningInstance[];
-    socketPathFor?: (name: string) => string;
-    status?: (socketPath: string) => Promise<{ services: Array<{ pid: number | null }> }>;
-  } = {},
-): Promise<RunningInstance | null> {
-  const running = opts.running ?? listRunningInstances();
-  const others = running.filter(i => i.name !== self);
+  selfSocketPath: string,
+  probe: AttributeProbe,
+  sockets: string[] = listInstanceSockets(),
+): Promise<Attribution | null> {
+  const others = sockets.filter(p => p !== selfSocketPath);
   if (!others.length) return null;
 
-  if (holderPid !== null && opts.socketPathFor && opts.status) {
-    for (const instance of others) {
+  let unreachable = 0;
+  let onlyReachable: DaemonIdentity | null = null;
+  for (const socketPath of others) {
+    let identity: DaemonIdentity;
+    try {
+      identity = await probe.info(socketPath);
+    } catch {
+      unreachable++;
+      continue;
+    }
+    onlyReachable ??= identity;
+
+    if (holderPid !== null && identity.pid === holderPid) return attribute(identity);
+    if (holderPid !== null) {
       try {
-        const { services } = await opts.status(opts.socketPathFor(instance.name));
-        if (services.some(s => s.pid === holderPid)) return instance;
-      } catch { /* not answering — try the next, then fall back */ }
+        const { services } = await probe.status(socketPath);
+        if (services.some(s => s.pid === holderPid)) return attribute(identity);
+      } catch { /* it answered `info`; a failed `status` is not a match */ }
     }
   }
 
-  return others.length === 1 ? others[0]! : null;
+  // Nobody claimed it. Only guess when someone could not be asked.
+  if (unreachable === 0) return null;
+  if (others.length === 1 && onlyReachable) return attribute(onlyReachable);
+  return null;
+}
+
+function attribute(identity: DaemonIdentity): Attribution {
+  return {
+    identity,
+    // Built from what the daemon says it is, never from its file name: the
+    // suffix cannot be cut off a qualified name without misreading a project
+    // whose own name has a dash.
+    stopCommand: `devup down${identity.instance ? ` --instance ${identity.instance}` : ''}`,
+  };
 }
