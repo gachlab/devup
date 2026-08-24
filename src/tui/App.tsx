@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
 import type { Platform } from '../platform/types.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
@@ -71,8 +71,21 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     onToggleProxy: () => {},
   });
 
-  const proxyCtx = proxyProvider && proxyOpts ? { provider: proxyProvider, opts: proxyOpts } : null;
-  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, platform, proxyCtx, config.profiles ?? {}, cliArgs.instance);
+  // Both memoised because they are `useControlPlane` effect deps, and a fresh
+  // object per render tears the socket server down and rebuilds it. `setLogs`
+  // renders once per log line, so a chatty stack rebuilt it hundreds of times a
+  // second — measured at 615 restarts in ten seconds — and every streaming
+  // client had its connection destroyed each time, since `close()` calls
+  // `destroy()` on all of them.
+  //
+  // `config.profiles ?? {}` is the one that bites in practice: with no
+  // `profiles` in the config — the common case — the `{}` is new every render.
+  const proxyCtx = useMemo(
+    () => (proxyProvider && proxyOpts ? { provider: proxyProvider, opts: proxyOpts } : null),
+    [proxyProvider, proxyOpts],
+  );
+  const profiles = useMemo(() => config.profiles ?? {}, [config.profiles]);
+  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, platform, proxyCtx, profiles, cliArgs.instance);
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
