@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { defaultSocketPath } from './socket-path.js';
 import type {
-  DebugResult, LogsTailResult, OkResult, PingResult, ProjectInfo, RestartResult,
+  DebugResult, LogsFollowAck, LogsTailResult, OkResult, PingResult, ProjectInfo, RestartResult,
   StatsResult, StatusResult, StreamFrame,
 } from './types.js';
 
@@ -28,7 +28,7 @@ export type {
 export { CONTRACT_VERSION } from './types.js';
 export type {
   ServiceSnapshot, ProxyInfo, StatusResult, StatsResult, ServiceStatEntry,
-  ProjectInfo, PingResult, OkResult, RestartResult, DebugResult, LogsTailResult, StreamFrame,
+  ProjectInfo, PingResult, OkResult, RestartResult, DebugResult, LogsTailResult, LogsFollowAck, StreamFrame,
   ProcessStatus, HealthStatus,
 } from './types.js';
 
@@ -130,6 +130,11 @@ export function openStream(
    *  consumer goes quietly stale across a daemon restart with nothing to react
    *  to. Not called for a stream you aborted yourself. */
   onClose?: () => void,
+  /** The ack's `result`, before any frame. `logs.follow` uses it to report what
+   *  the replayed window turned out to be. Additive: added in 0.17.0 as a
+   *  seventh positional rather than by reshaping the signature, since
+   *  `openStream` has been public API since 0.16.0. */
+  onAck?: (result: unknown) => void,
 ): () => void {
   const c = createConnection(socketPath);
   const rl = createInterface({ input: c });
@@ -159,7 +164,7 @@ export function openStream(
   c.write(JSON.stringify({ id: 1, method, params }) + '\n');
 
   rl.on('line', l => {
-    let msg: { error?: { message?: string }; event?: string };
+    let msg: { error?: { message?: string }; event?: string; result?: unknown };
     try {
       msg = JSON.parse(l);
     } catch {
@@ -176,14 +181,18 @@ export function openStream(
     if (!ackDone) {
       ackDone = true;
       if (msg.error) { onErr(new Error(msg.error.message ?? String(msg.error))); c.destroy(); }
+      else onAck?.((msg as { result?: unknown }).result);
       return;
     }
-    // An error can also arrive *after* the ack. `handleFollow` acks
-    // `logs.follow` before it reads the log file, so a failure in that read
-    // answers with an error frame and never registers the watcher: the stream
-    // is dead. Dropping the frame for want of an `event` key leaves the
-    // consumer waiting on a socket that will never speak again — the exact
-    // silence `onError` and `onClose` exist to end.
+    // An error can also arrive *after* the ack, and dropping it for want of an
+    // `event` key would leave the consumer waiting on a socket that will never
+    // speak again — the exact silence `onError` and `onClose` exist to end.
+    //
+    // Since 0.17.0 `handleFollow` reads the log *before* acking, so a failing
+    // read answers with an error instead of an ack and lands in the branch
+    // above. This one still matters: anything the daemon reports after the ack
+    // arrives here, and older daemons answer the log-read failure exactly this
+    // way.
     if (msg.error) { onErr(new Error(msg.error.message ?? String(msg.error))); c.destroy(); return; }
     // Deliberately outside the try: a throw from onFrame is a bug in the
     // consumer, not a malformed frame, and swallowing it hides the failure —
@@ -295,7 +304,7 @@ export interface DevupClient {
   followLogs(
     svc: string | null,
     onFrame: (frame: StreamFrame) => void,
-    opts?: { tail?: number } & StreamOpts,
+    opts?: { tail?: number; since?: number; onAck?: (ack: LogsFollowAck) => void } & StreamOpts,
   ): () => void;
   /** Any method, including ones newer than this client. The escape hatch for
    *  everything the named methods do not cover. */
@@ -340,7 +349,8 @@ export function createClient(socketPath: string, opts: CreateClientOpts = {}): D
     // `svc: null` is sent, not dropped: it is how a caller asks for every
     // service, and the daemon reads a missing key the same way.
     followLogs: (svc, onFrame, o = {}) =>
-      openStream(socketPath, 'logs.follow', { svc, tail: o.tail }, onFrame, o.onError, o.onClose),
+      openStream(socketPath, 'logs.follow', { svc, tail: o.tail, since: o.since }, onFrame,
+        o.onError, o.onClose, o.onAck ? (r => o.onAck!(r as LogsFollowAck)) : undefined),
   };
 }
 

@@ -107,6 +107,15 @@ Fields per service mirror `ProcessState`:
 - `crashes`: how many times the service has crashed since the daemon started.
   Only ever goes up, which is what makes it usable as a window signal — this is
   what `devup exec --fail-on-crash` compares. Added in 0.16.0
+- `restartPendingIn`: milliseconds until the queued auto-restart fires, `null`
+  when none is queued. **Relative, not a timestamp**, so no client has to
+  subtract against a clock that is not the daemon's.
+
+  This is what separates a service that has spent its restart budget from one
+  that is seconds away from coming back: `Restarter` raises `restarts` to the
+  maximum *before* scheduling the final attempt, so `status` and `restarts`
+  together cannot tell them apart. A wait that gives up on the wrong one aborts
+  a run that was about to succeed. Added in 0.17.0
 - `pid`: OS pid, `null` if not currently running
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
@@ -546,9 +555,19 @@ it does next. `tail` still caps the replay — at 1 000 here, not 10 000, since
 this is a backlog rather than a query — and must be a non-negative integer,
 `0` meaning "no replay, just the live stream".
 
-The ack carries no `truncated` or `oldestRetained`: this is a stream, not a
-result. `devup ctl logs --since … --follow` asks `logs.tail` separately for
-those and reports them before the stream starts.
+**The ack carries the window** when a service was named and a replay asked for:
+
+```json
+{ "method": "logs.follow", "params": { "svc": "app-api", "tail": 200, "since": 1755800000000 } }
+→ { "result": { "ok": true, "oldestRetained": 1755800012000, "truncated": false } }
+```
+
+Same two answers as `logs.tail`, and for the same reason — a follow that could
+not say whether its window lost its beginning made every caller ask the daemon a
+second time. Both fields are **absent** when no replay was requested (`tail: 0`,
+or no `svc`): there is no window to describe, and inventing one would have a
+client believe it lost data it never asked for. A daemon older than 0.17.0 acks
+with a bare `{ ok: true }`. Added in 0.17.0.
 
 **The replay is per service.** `tail` only applies when you name one: the
 all-services stream sends no history at all and starts from the next line

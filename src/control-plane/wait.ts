@@ -11,13 +11,19 @@
  *    every wait at the startup timeout — 45 s by default, well under the two
  *    minutes a cold front end can need. It only means the startup timer gave
  *    up first.
- *  - There is deliberately **no** fail-fast on a crash. `Restarter` bumps
- *    `restarts` to its maximum and *then* schedules the last auto-restart, so
- *    "crashed and out of budget" is also what a service looks like for the
- *    eight seconds before the restart that saves it. Nothing in the snapshot
- *    tells the two apart — see issue on exposing a pending restart — and a
- *    wait that aborts on a service which was about to come back is worse than
- *    one that waits out its own clock.
+ *  - A crash fails the wait exactly when **no restart is queued**. Not "and the
+ *    budget is spent": either the restarter scheduled something, and
+ *    `restartPendingIn` says so, or it did not — because it gave up, or because
+ *    it was never asked. `Spawner.recordCrashedState` is the second case, and
+ *    it is common: a port already taken, a failed `preBuild`, a missing watch
+ *    path. Those never reach the restarter at all, so `restarts` stays low and
+ *    a budget-based rule would wait out the whole clock on a service nothing
+ *    was ever going to start.
+ *
+ *    The field's **absence** is a third answer. A daemon before 0.17.0 does not
+ *    send it, and `undefined` there means "cannot tell", not "nothing queued" —
+ *    reading it as the latter fails a wait against every published devup the
+ *    moment a service crashes.
  *  - Readiness is `health`, and the daemon computes that from the service's
  *    own `readyPattern` when it declares one — see `HealthPoller.checkAll`,
  *    which deliberately does not let a bare port probe speak for a service
@@ -89,11 +95,28 @@ export interface WaitOptions {
 export function classify(svc: ServiceSnapshot, requireUp: boolean): { readiness: Readiness; reason?: string } {
   if (svc.health === 'up') return { readiness: 'ready' };
   if (svc.status === 'crashed') {
-    // Not `failed`: the auto-restarter may still have it. See the note above
-    // on why the snapshot cannot tell a spent budget from a pending restart.
+    const crashCount = `crashed ${svc.crashes} time${svc.crashes === 1 ? '' : 's'}`;
+    // Absent, not null: a daemon older than 0.17.0 does not report this at all,
+    // and treating "cannot tell" as "nothing queued" would fail a wait against
+    // every published devup the moment a service crashed.
+    //
+    // `Object.hasOwn` rather than `in`: the type declares the field required,
+    // so `in` narrows `svc` to `never` in this branch — and the whole point is
+    // that the runtime value can disagree with the type.
+    if (!Object.hasOwn(svc, 'restartPendingIn')) {
+      return { readiness: 'waiting', reason: `${crashCount} — see \`devup ctl logs ${svc.name}\`` };
+    }
+    if (svc.restartPendingIn != null) {
+      return {
+        readiness: 'waiting',
+        reason: `${crashCount}, restarting in ${Math.round(svc.restartPendingIn / 1000)}s`,
+      };
+    }
+    // Crashed and nothing queued: whether the restarter gave up or was never
+    // asked, nobody is going to start it.
     return {
-      readiness: 'waiting',
-      reason: `crashed (${svc.crashes} time${svc.crashes === 1 ? '' : 's'} so far) — see \`devup ctl logs ${svc.name}\``,
+      readiness: 'failed',
+      reason: `${crashCount} and no restart queued — see \`devup ctl logs ${svc.name}\``,
     };
   }
   if (svc.status === 'timeout') {

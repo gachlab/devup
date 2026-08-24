@@ -63,16 +63,40 @@ export class Restarter {
     // the daemon would then be running a process no longer in the config.
     const timer = setTimeout(() => {
       this.pending.delete(svc.name);
-      void this.spawner.start(svc, colorIdx, true);
+      // Cleared *after* the spawn, not before it. `start` is async and does not
+      // publish `starting` for a while — it awaits `isPortBindable` for an API,
+      // and an entire `preBuild` before that — so clearing it up front leaves a
+      // window reading `crashed` + budget spent + nothing queued, which is
+      // precisely the state a waiter now treats as terminal. A `devup exec`
+      // polling every 500 ms would abort during the very restart that saves it.
+      void this.spawner.start(svc, colorIdx, true).finally(() => this.clearPending(svc.name));
     }, delay);
     this.pending.set(svc.name, timer);
+    // Published so a client can tell "out of budget" from "about to come back".
+    state.restartPendingUntil = Date.now() + delay;
+    this.events.onStateChange(svc.name, state);
   }
 
   /** Cancel a queued auto-restart. Safe to call for a service with none. */
   cancel(name: string): void {
+    this.clearPending(name);
     const timer = this.pending.get(name);
     if (!timer) return;
     clearTimeout(timer);
     this.pending.delete(name);
+  }
+
+  /** Stop advertising a queued restart, and say so.
+   *
+   *  The emit matters as much as the clear: a `status.follow` consumer holds
+   *  the last frame it was pushed, so without it the TUI and the VS Code
+   *  extension keep showing a countdown that never resolves. `start` can also
+   *  return without replacing the state object at all — the "already running,
+   *  leaving it alone" path — and then nothing else would ever clear it. */
+  private clearPending(name: string): void {
+    const st = this.state.get(name);
+    if (!st || st.restartPendingUntil == null) return;
+    st.restartPendingUntil = null;
+    this.events.onStateChange(name, st);
   }
 }

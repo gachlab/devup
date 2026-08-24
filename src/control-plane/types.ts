@@ -50,6 +50,20 @@ export interface ServiceSnapshot {
    *  ever goes up, which is what makes it usable as a window signal — see
    *  `devup exec --fail-on-crash`. Sent since 0.16.0. */
   crashes: number;
+  /** Milliseconds until the queued auto-restart fires, or `null` when none is
+   *  queued.
+   *
+   *  Relative, not an absolute timestamp: a client comparing the daemon's clock
+   *  against its own gets the answer wrong by whatever they disagree on, and
+   *  every consumer would have to do that subtraction.
+   *
+   *  This is what separates a service that has spent its restart budget from
+   *  one that is eight seconds away from coming back — `Restarter` raises
+   *  `restarts` to the maximum *before* scheduling the final attempt, so
+   *  `status`/`restarts` alone cannot tell them apart, and a wait that gives up
+   *  on the wrong one aborts a run that was about to succeed. Sent since
+   *  0.17.0. */
+  restartPendingIn: number | null;
   /** OS pid, `null` when not currently running. Note that a **stopped or
    *  crashed service keeps a dead pid** in the daemon's own state; this field
    *  is nulled on the idle transitions only. Use `status`/`health` for
@@ -113,12 +127,10 @@ export interface StatsResult {
  *  the field list against the number so a snapshot change cannot ship without
  *  moving it.
  *
- *  It stays `1` across everything added in 0.16.0 — the client export, `info`,
- *  `crashes`, the `logs.tail` window — because **nothing has ever published a
- *  numbered contract**. A daemon older than 0.16.0 sends no `contract` at all,
- *  so `1` unambiguously means "the shape 0.16.0 settled on"; splitting it into
- *  1 and 2 mid-development would only invent a version nobody can be running. */
-export const CONTRACT_VERSION = 1;
+ *  `1` is the shape 0.16.0 settled on. `2` adds `restartPendingIn` to the
+ *  snapshot and the window fields to the `logs.follow` ack — 0.16.0 is
+ *  published, so this one is a real bump rather than an invented version. */
+export const CONTRACT_VERSION = 2;
 
 export interface ProjectInfo {
   project: string;
@@ -202,6 +214,19 @@ export interface LogsTailResult {
   // `res.oldestRetained > since` against an older daemon gets `false` and
   // concludes its window is whole; `!res.truncated` reads as "nothing was
   // dropped". Where absence lies quietly, the type has to force the branch.
+}
+
+/** The ack a `logs.follow` answers with, before the frames start.
+ *
+ *  Carries the same two window answers as `logs.tail`, when a service was
+ *  named and a replay was asked for: a follow that could not say whether its
+ *  window lost its beginning made every caller ask twice. Sent since 0.17.0. */
+export interface LogsFollowAck {
+  ok: boolean;
+  /** See `LogsTailResult.oldestRetained`. Absent when no replay was requested. */
+  oldestRetained?: number | null;
+  /** See `LogsTailResult.truncated`. Absent when no replay was requested. */
+  truncated?: boolean;
 }
 
 /** A pushed frame from `status.follow` / `logs.follow`. */

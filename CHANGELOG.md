@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`restartPendingIn` in the status snapshot** (#112) — milliseconds until the queued auto-restart fires, `null` when none is. Relative rather than a timestamp, so no client subtracts against a clock that is not the daemon's.
+
+  It closes a hole `ctl wait`, `devup exec` and `--once` had to work around: `Restarter` raises `restarts` to `MAX_RESTARTS` and *then* schedules the last attempt, so "crashed and out of budget" is also what a service looks like for the eight seconds before the restart that saves it. With no way to tell those apart, 0.16.0 shipped **no** crash fail-fast at all rather than risk aborting a run that was about to recover.
+
+  With the field, the rule is simply **crashed and nothing queued**. Not "and the budget is spent": `Spawner.recordCrashedState` — a port already taken, a failed `preBuild`, a missing watch path — never reaches the restarter at all, so those keep a low restart count while nothing is ever going to start them, and a budget-based rule waited out the whole clock on exactly the failures worth reporting fast. A wait against a daemon too old to send the field keeps waiting, since absence there means "cannot tell", not "nothing queued".
+
+- **The `logs.follow` ack carries the window** (#115): `oldestRetained` and `truncated`, the same two answers `logs.tail` gives. A follow that could not report them made `devup ctl logs --since … --follow` ask the daemon a second time purely to find out, reading the same file twice. Absent when no replay was requested, since there is no window to describe.
+
+### Changed
+- **`CONTRACT_VERSION` is `2`.** The snapshot gained `restartPendingIn` and the `logs.follow` ack gained its window fields. Unlike the 0.16.0 additions, this is a real bump: contract 1 is published, so clients can be holding it.
+
 ### Fixed
 - **The TUI no longer rebuilds its control plane on every render** (#79). Two `useControlPlane` effect deps were object literals rebuilt each render — `proxyCtx`, and `config.profiles ?? {}`, which is the one that bites in practice since a config without `profiles` gets a fresh `{}` every time. `setLogs` renders once per log line, so a chatty stack rebuilt the whole Unix socket server hundreds of times a second: **615 restarts in ten seconds** for 153 log lines, against 1 after the fix.
 

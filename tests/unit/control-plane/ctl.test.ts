@@ -407,6 +407,41 @@ describe('runCtl wait', { skip: !isUnix }, () => {
   });
 });
 
+describe('runCtl logs --follow against an odd ack', { skip: !isUnix }, () => {
+  it('survives a daemon that acks without a result', async () => {
+    // `openStream` hands `msg.result` straight through, so an ack with no
+    // `result` key gives `undefined` — and a throw inside the readline 'line'
+    // listener takes the whole process down, which `openStream`'s own comments
+    // call out as the trade it makes.
+    const { createServer } = await import('node:net');
+    const dir = mkdtempSync(join(tmpdir(), 'devup-oddack-'));
+    const path = join(dir, 's.sock');
+    const open = new Set<import('node:net').Socket>();
+    const server = createServer(sock => {
+      open.add(sock);
+      sock.once('data', () => {
+        sock.write(JSON.stringify({ id: 1 }) + '\n');                       // ack, no result
+        sock.write(JSON.stringify({ id: 1, event: 'log', data: 'a line' }) + '\n');
+      });
+    });
+    try {
+      await new Promise<void>(r => server.listen(path, r));
+      const lines: string[] = [];
+      const run = runCtl(['logs', 'api', '--since', '5m', '--follow'],
+        { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      await new Promise(r => setTimeout(r, 250));
+      // Still alive, and it printed the frame rather than dying on the ack.
+      assert.ok(lines.includes('a line'), lines.join('|'));
+      process.emit('SIGINT');
+      assert.equal(await run, 0);
+    } finally {
+      for (const sock of open) sock.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('runCtl logs --since', { skip: !isUnix }, () => {
   it('passes a duration through as an epoch timestamp', async () => {
     const asked: Array<{ svc: string; lines: number; since?: number }> = [];
