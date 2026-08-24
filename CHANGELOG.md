@@ -5,7 +5,10 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.17.0] — 2026-08-24
+
+Lo que 0.16.0 dejó a medias, y un bug de la TUI que llevaba abierto desde julio
+y resultó estar tirando por tierra media funcionalidad nueva.
 
 ### Added
 - **`restartPendingIn` in the status snapshot** (#112) — milliseconds until the queued auto-restart fires, `null` when none is. Relative rather than a timestamp, so no client subtracts against a clock that is not the daemon's.
