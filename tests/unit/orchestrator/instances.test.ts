@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { listInstanceSockets, attributePort, type AttributeProbe } from '../../../src/orchestrator/instances.js';
 
@@ -12,7 +12,13 @@ describe('listInstanceSockets', () => {
       for (const f of ['sock-Proj.sock', 'sock-Proj-e2e.sock', 'Proj.pid', 'notes.txt', 'sock-x.txt']) {
         writeFileSync(join(dir, f), '');
       }
-      const found = listInstanceSockets(dir).map(p => p.split('/').pop());
+      // `basename`, not `split('/')`: on Windows `join` builds the path with
+      // backslashes, so splitting on a forward slash returns the whole path and
+      // the assertion fails there and only there. The function under test is
+      // fine — it uses `join` — but the test was writing POSIX by hand.
+      // Wrapped, not point-free: `map` passes the index as `basename`'s
+      // `suffix` argument, which throws.
+      const found = listInstanceSockets(dir).map(p => basename(p));
       assert.deepEqual(found.sort(), ['sock-Proj-e2e.sock', 'sock-Proj.sock']);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
