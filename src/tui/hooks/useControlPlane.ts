@@ -41,13 +41,14 @@ export function useControlPlane(
 
   useEffect(() => {
     if (!manager) return;
+    let cancelled = false;
     let handle: SocketServerHandle | null = null;
     (async () => {
       try {
         // Qualified here rather than by the caller, so `getInfo` below can still
         // report the project as configured: the qualified name is a path key,
         // not a project anybody has heard of.
-        handle = await startSocketServer(qualifyInstance(projectName, instance), {
+        const started = await startSocketServer(qualifyInstance(projectName, instance), {
           states: () => manager.state,
           restart: (name) => restartService(manager, lazyProxies.current, name),
           stop: (name) => manager.stop(name),
@@ -120,12 +121,17 @@ export function useControlPlane(
             return { project: projectName, ...(instance ? { instance } : {}), profiles };
           },
         }, { onLog: msg => pushLog('devup', msg, 12) });
-        handleRef.current = handle;
+        // Torn down while `listen()` was still in flight: the cleanup below has
+        // already run and saw a null handle, so close it here or the server
+        // leaks, holding the socket path against the next one.
+        if (cancelled) { void started.close(); return; }
+        handle = started;
+        handleRef.current = started;
       } catch (e: any) {
-        pushLog('devup', `⚠ control plane disabled: ${e.message}`, 5);
+        if (!cancelled) pushLog('devup', `⚠ control plane disabled: ${e.message}`, 5);
       }
     })();
-    return () => { void handle?.close(); handleRef.current = null; };
+    return () => { cancelled = true; void handle?.close(); handleRef.current = null; };
   }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, lazyProxies, platform, proxy, profiles, instance]);
   return handleRef;
 }

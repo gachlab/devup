@@ -5,6 +5,13 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **The TUI no longer rebuilds its control plane on every render** (#79). Two `useControlPlane` effect deps were object literals rebuilt each render — `proxyCtx`, and `config.profiles ?? {}`, which is the one that bites in practice since a config without `profiles` gets a fresh `{}` every time. `setLogs` renders once per log line, so a chatty stack rebuilt the whole Unix socket server hundreds of times a second: **615 restarts in ten seconds** for 153 log lines, against 1 after the fix.
+
+  It matters more since 0.16.0 than it did when it was reported: `close()` calls `destroy()` on every active client, so `ctl wait`, `devup exec`, `ctl logs --follow` and the VS Code extension all had their connection torn down on each log line. Also fixed: a control plane whose `listen()` was still in flight when the effect was cleaned up leaked its server and held the socket path.
+
 ## [0.16.0] — 2026-08-23
 
 Todo lo que le faltaba al daemon para servir de base a una suite de e2e: un
