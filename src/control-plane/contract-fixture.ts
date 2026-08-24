@@ -61,6 +61,11 @@ export function buildContractSnapshot(): Record<string, unknown> {
       // along the way, which is precisely why the two are separate fields.
       serializeState('app-web', mkState(web, {
         status: 'crashed', health: 'down', errors: 2, restarts: 3, crashes: 5,
+        // Out of budget *and* with an attempt queued: the state that made a
+        // fail-fast on `restarts` alone abort runs that were about to recover.
+        // Pinned as a number so a client generating a type learns the field
+        // carries one.
+        restartPendingUntil: 1755800008000,
         crashLog: ['Error: listen EADDRINUSE: address already in use :::4201', '    at Server.setupListenHandle'],
       })),
     ],

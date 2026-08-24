@@ -240,9 +240,12 @@ interface CtlOpts {
   socketPath?: string;
 }
 
-/** What `logs.tail` answers. The two window fields are optional because a
- *  daemon older than 0.16.0 sends neither — see `LogsTailResult`. */
-type LogsTailShape = { lines: string[]; oldestRetained?: number | null; truncated?: boolean };
+/** What `logs.tail` and the `logs.follow` ack both say about a window. The
+ *  fields are optional because a daemon older than 0.16.0 sends neither, and
+ *  one older than 0.17.0 does not put them on the ack at all. */
+type WindowInfo = { oldestRetained?: number | null; truncated?: boolean };
+/** A `logs.tail` result: a window, plus the lines. */
+type LogsTailShape = WindowInfo & { lines: string[] };
 
 type ServiceRow = {
   name: string; status: string; health: string;
@@ -447,7 +450,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       /** The two things a window can fail to be, said the same way in both
        *  branches — a notice that only appears without `--follow` is a notice
        *  someone will not see when they most need it. */
-      const reportWindow = (res: LogsTailShape) => {
+      const reportWindow = (res: WindowInfo) => {
         // A fact, not a verdict. `oldestRetained` is when the log *starts*,
         // which on a stack booted a minute ago is simply when the service
         // first wrote — nothing was rotated. devup cannot tell "rotated away"
@@ -474,26 +477,24 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       }
 
       // Both flags reach the stream: the replay is a window too, so
-      // `--since 5m --follow` shows the window and then keeps going. Parsing
-      // them and dropping them was the quiet wrong answer.
+      // `--since 5m --follow` shows the window and then keeps going.
       //
       // The replay stays server-side — doing it here would leave a gap between
       // reading and subscribing, and a follow that drops lines is worse than
-      // one that says less. So the notices come from a separate one-line probe
-      // whose lines are thrown away: the daemon answers the same questions
-      // about the same window either way.
+      // one that says less. The window notices ride on the ack, so the daemon
+      // is asked once rather than twice.
       const replayCap = Math.min(lines, MAX_FOLLOW_TAIL);
-      if (since !== undefined) {
-        try {
-          const probe = await sendRpc(socketPath, 'logs.tail', { svc, lines: replayCap, since }) as LogsTailShape;
-          reportWindow(probe);
-        } catch { /* the stream itself is what matters; a failed probe is not worth failing over */ }
-      }
       return await new Promise<number>(resolve => {
         const abort = openStream(socketPath, 'logs.follow', { svc, tail: replayCap, since }, frame => {
           out(frame.data as string);
         }, err => { out(`error: ${err.message}`); resolve(1); },
-        () => { out('devup went away'); resolve(1); });
+        () => { out('devup went away'); resolve(1); },
+        ack => {
+          // Printed before the replayed lines, which is where a notice about
+          // that replay belongs. Older daemons send a bare `{ ok: true }` and
+          // this says nothing, which is the honest answer for them.
+          if (since !== undefined) reportWindow(ack as WindowInfo);
+        });
         process.once('SIGINT', () => { abort(); resolve(0); });
       });
     }

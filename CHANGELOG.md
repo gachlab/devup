@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`restartPendingIn` in the status snapshot** (#112) — milliseconds until the queued auto-restart fires, `null` when none is. Relative rather than a timestamp, so no client subtracts against a clock that is not the daemon's.
+
+  It closes a hole `ctl wait`, `devup exec` and `--once` had to work around: `Restarter` raises `restarts` to `MAX_RESTARTS` and *then* schedules the last attempt, so "crashed and out of budget" is also what a service looks like for the eight seconds before the restart that saves it. With no way to tell those apart, 0.16.0 shipped **no** crash fail-fast at all rather than risk aborting a run that was about to recover. Now a wait gives up only on crashed **and** out of budget **and** nothing queued — and says `restarting in 8s` while there is.
+
+- **The `logs.follow` ack carries the window** (#115): `oldestRetained` and `truncated`, the same two answers `logs.tail` gives. A follow that could not report them made `devup ctl logs --since … --follow` ask the daemon a second time purely to find out, reading the same file twice. Absent when no replay was requested, since there is no window to describe.
+
+### Changed
+- **`CONTRACT_VERSION` is `2`.** The snapshot gained `restartPendingIn` and the `logs.follow` ack gained its window fields. Unlike the 0.16.0 additions, this is a real bump: contract 1 is published, so clients can be holding it.
+
 ### Fixed
 - **The TUI no longer rebuilds its control plane on every render** (#79). Two `useControlPlane` effect deps were object literals rebuilt each render — `proxyCtx`, and `config.profiles ?? {}`, which is the one that bites in practice since a config without `profiles` gets a fresh `{}` every time. `setLogs` renders once per log line, so a chatty stack rebuilt the whole Unix socket server hundreds of times a second: **615 restarts in ten seconds** for 153 log lines, against 1 after the fix.
 

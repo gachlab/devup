@@ -17,6 +17,14 @@ export interface ProcessState {
   colorIdx: number;
   /** Last N stderr lines captured before most recent crash. Null when not crashed or after clean restart. */
   crashLog: string[] | null;
+  /** Epoch ms when the queued auto-restart is due, or null when none is.
+   *
+   *  The reason it exists: `Restarter` bumps `restarts` to `MAX_RESTARTS` and
+   *  *then* schedules the last attempt, so "crashed and out of budget" is also
+   *  what a service looks like for the eight seconds before the restart that
+   *  saves it. Nothing else tells the two apart, and a wait that gives up on
+   *  the wrong one aborts a run that was about to succeed. */
+  restartPendingUntil?: number | null;
   /** How many times this service has crashed since the daemon started.
    *
    *  Distinct from `restarts`, which is a **budget** and gets reset to 0 by

@@ -23,6 +23,11 @@ const SHAPE_BY_CONTRACT: Record<number, string[]> = {
     'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'pid', 'startedAt',
     'crashLog', 'debugPort',
   ],
+  2: [
+    'name', 'status', 'health', 'port', 'originalPort', 'type', 'phase',
+    'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'restartPendingIn',
+    'pid', 'startedAt', 'crashLog', 'debugPort',
+  ],
 };
 
 /** Golden test for the `status` wire shape.
@@ -125,6 +130,13 @@ describe('control-plane contract', () => {
     for (const k of ['active', 'provider', 'domain', 'tls', 'routes']) {
       assert.ok(k in golden.proxy, `proxy.${k} missing — ProxyInfo drift would go unnoticed`);
     }
+  });
+
+  it('pins restartPendingIn as a number, not only as null', () => {
+    // The field exists to separate "out of budget" from "about to come back",
+    // so a fixture where it is always null teaches a client the wrong half.
+    const queued = golden.services.filter((s: { restartPendingIn: unknown }) => typeof s.restartPendingIn === 'number');
+    assert.ok(queued.length > 0, 'no entry has a restart queued');
   });
 
   it('pins crashes as a number that has actually moved', () => {

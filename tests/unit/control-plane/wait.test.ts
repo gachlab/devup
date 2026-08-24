@@ -13,6 +13,7 @@ function svc(over: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
   return {
     name: 'app-api', status: 'running', health: 'up', port: 3000, originalPort: 3000,
     type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0, crashes: 0,
+    restartPendingIn: null,
     pid: 100, startedAt: 1755800000000, crashLog: null, debugPort: null,
     ...over,
   };
@@ -71,15 +72,27 @@ describe('classify', () => {
     assert.match(r.reason!, /4201/);
   });
 
-  it('keeps waiting on a crash even at the restart limit, and says how many', () => {
-    // Tempting to fail fast here, and wrong: `Restarter.scheduleAutoRestart`
-    // bumps `restarts` to the maximum and *then* schedules the last restart,
-    // so "crashed with the budget spent" is also what a service looks like for
-    // the eight seconds before the restart that saves it. Nothing in the
-    // snapshot tells the two apart.
-    const r = classify(svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 4, pid: null, startedAt: null }), false);
+  it('keeps waiting at the restart limit while an attempt is still queued', () => {
+    // `Restarter.scheduleAutoRestart` bumps `restarts` to the maximum and
+    // *then* schedules the last attempt, so "crashed with the budget spent" is
+    // also what a service looks like for the eight seconds before the restart
+    // that saves it. `restartPendingIn` is what separates them.
+    const r = classify(svc({
+      status: 'crashed', health: 'down', restarts: 3, crashes: 4,
+      restartPendingIn: 8000, pid: null, startedAt: null,
+    }), false);
     assert.equal(r.readiness, 'waiting');
     assert.match(r.reason!, /4 times/, 'the count is `crashes`, not the restart budget');
+    assert.match(r.reason!, /restarting in 8s/);
+  });
+
+  it('gives up once the budget is spent and nothing is queued', () => {
+    const r = classify(svc({
+      status: 'crashed', health: 'down', restarts: 3, crashes: 4,
+      restartPendingIn: null, pid: null, startedAt: null,
+    }), false);
+    assert.equal(r.readiness, 'failed');
+    assert.match(r.reason!, /will not be restarted again/);
   });
 
   it('keeps waiting on a crash that still has budget left', () => {
@@ -145,18 +158,32 @@ describe('waitForServices', () => {
     assert.equal(typeof res.services[0]!.readyAfterMs, 'number');
   });
 
-  it('waits out a crash loop rather than calling it early', async () => {
-    const dead = svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 3, pid: null, startedAt: null });
+  it('waits out a crash loop while the restarter still has it', async () => {
+    const dead = svc({
+      status: 'crashed', health: 'down', restarts: 3, crashes: 3,
+      restartPendingIn: 8000, pid: null, startedAt: null,
+    });
     const client = fakeClient([[dead]]);
     const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 60 });
     assert.equal(res.ok, false);
-    assert.equal(res.failedFast, false, 'the restarter may still have it');
-    assert.deepEqual(res.notReady.map(s => s.name), ['app-api']);
+    assert.equal(res.failedFast, false, 'an attempt is queued, so it may still come back');
+  });
+
+  it('gives up without burning the clock once nothing can bring it back', async () => {
+    const dead = svc({
+      status: 'crashed', health: 'down', restarts: 3, crashes: 3,
+      restartPendingIn: null, pid: null, startedAt: null,
+    });
+    const client = fakeClient([[dead]]);
+    const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 30_000 });
+    assert.equal(res.ok, false);
+    assert.equal(res.failedFast, true);
+    assert.ok(res.elapsedMs < 1000, `should not have waited 30s, waited ${res.elapsedMs}ms`);
   });
 
   it('lets a crashed service that comes back count as ready', async () => {
     const client = fakeClient([
-      [svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 3, pid: null, startedAt: null })],
+      [svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 3, restartPendingIn: 2000, pid: null, startedAt: null })],
       [svc()],
     ]);
     const res = await waitForServices(client, { intervalMs: 5, timeoutMs: 2000 });

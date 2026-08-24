@@ -182,11 +182,25 @@ async function handleFollow(
     }
     const since = typeof rawSince === 'number' ? rawSince : undefined;
 
-    respond(socket, { id: req.id, result: { ok: true } });
-
-    // Replay recent history before going live.
+    // The replay is read *before* the ack, so the ack can carry what the
+    // window turned out to be — `oldestRetained` and `truncated`, the same two
+    // `logs.tail` answers. Without them a follow could not say whether the
+    // window lost its beginning, and `devup ctl logs --since … --follow` had
+    // to ask the daemon a second time just to find out.
+    let replay: { lines: string[]; oldestRetained: number | null; truncated: boolean } | null = null;
     if (svcName && tail > 0) {
-      const { lines } = await ctx.tailLogs(svcName, { lines: tail, since });
+      replay = await ctx.tailLogs(svcName, { lines: tail, since });
+    }
+    respond(socket, {
+      id: req.id,
+      result: {
+        ok: true,
+        ...(replay ? { oldestRetained: replay.oldestRetained, truncated: replay.truncated } : {}),
+      },
+    });
+
+    if (replay) {
+      const { lines } = replay;
       for (const l of lines) {
         // `svc` on the replay too: a client routing by frame.svc would drop or
         // misattribute the whole tail otherwise.
@@ -255,6 +269,10 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
     errors: st.errors,
     restarts: st.restarts,
     crashes: st.crashes ?? 0,
+    // Relative on the wire; see the field's note.
+    restartPendingIn: st.restartPendingUntil != null
+      ? Math.max(0, st.restartPendingUntil - Date.now())
+      : null,
     pid: st.pid,
     startedAt: st.startedAt,
     crashLog: st.crashLog ?? null,

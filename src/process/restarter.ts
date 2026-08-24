@@ -63,13 +63,20 @@ export class Restarter {
     // the daemon would then be running a process no longer in the config.
     const timer = setTimeout(() => {
       this.pending.delete(svc.name);
+      const current = this.state.get(svc.name);
+      if (current) current.restartPendingUntil = null;
       void this.spawner.start(svc, colorIdx, true);
     }, delay);
     this.pending.set(svc.name, timer);
+    // Published so a client can tell "out of budget" from "about to come back".
+    state.restartPendingUntil = Date.now() + delay;
+    this.events.onStateChange(svc.name, state);
   }
 
   /** Cancel a queued auto-restart. Safe to call for a service with none. */
   cancel(name: string): void {
+    const st = this.state.get(name);
+    if (st) st.restartPendingUntil = null;
     const timer = this.pending.get(name);
     if (!timer) return;
     clearTimeout(timer);

@@ -222,6 +222,78 @@ describe('socket-server', { skip: !isUnix }, () => {
     }
   });
 
+  it('reports a queued auto-restart as remaining milliseconds', async () => {
+    // Relative, not absolute: a client comparing the daemon's clock against
+    // its own is wrong by whatever they disagree on, and every consumer would
+    // have to do that subtraction.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-pending-'));
+    const path = join(dir, 's.sock');
+    try {
+      const states = new Map([
+        ['queued', mkState({ svc: { ...svc, name: 'queued' }, status: 'crashed', restartPendingUntil: Date.now() + 8_000 })],
+        ['done', mkState({ svc: { ...svc, name: 'done' }, status: 'crashed', restartPendingUntil: null })],
+      ]);
+      const handle = await startSocketServer('p', noopCtx({ states: () => states }), { path });
+      try {
+        const res = await rpcCall(path, { method: 'status' });
+        const byName = Object.fromEntries(res.result.services.map((s: any) => [s.name, s]));
+        assert.ok(byName.queued.restartPendingIn > 6_000 && byName.queued.restartPendingIn <= 8_000,
+          `expected ~8000ms, got ${byName.queued.restartPendingIn}`);
+        assert.equal(byName.done.restartPendingIn, null);
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('never reports a negative wait for an overdue restart', async () => {
+    // The timer can be late; a negative number would read as nonsense.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-overdue-'));
+    const path = join(dir, 's.sock');
+    try {
+      const states = new Map([['api', mkState({ status: 'crashed', restartPendingUntil: Date.now() - 5_000 })]]);
+      const handle = await startSocketServer('o', noopCtx({ states: () => states }), { path });
+      try {
+        const res = await rpcCall(path, { method: 'status' });
+        assert.equal(res.result.services[0].restartPendingIn, 0);
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('logs.follow ack says the replayed window lost its beginning', async () => {
+    // Without this the CLI had to ask `logs.tail` a second time purely to find
+    // out, reading the same file twice per `--since ... --follow`.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-ackwin-'));
+    const path = join(dir, 's.sock');
+    try {
+      const handle = await startSocketServer('a', noopCtx({
+        tailLogs: async () => ({ lines: ['x'], oldestRetained: 1755800000000, truncated: true }),
+      }), { path });
+      try {
+        const frames = await rpcStream(path, { id: 1, method: 'logs.follow', params: { svc: 'api', tail: 5, since: 1755000000000 } }, 1, 1500);
+        assert.equal(frames[0]?.result?.oldestRetained, 1755800000000);
+        assert.equal(frames[0]?.result?.truncated, true);
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('omits the window fields when no replay was asked for', async () => {
+    // `tail: 0` means "just the live stream"; there is no window to describe,
+    // and inventing one would have a client believe it lost data it never
+    // asked for.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-nowin-'));
+    const path = join(dir, 's.sock');
+    try {
+      let read = false;
+      const handle = await startSocketServer('n', noopCtx({
+        tailLogs: async () => { read = true; return { lines: [], oldestRetained: null, truncated: false }; },
+      }), { path });
+      try {
+        const frames = await rpcStream(path, { id: 1, method: 'logs.follow', params: { svc: 'api', tail: 0 } }, 1, 1500);
+        assert.deepEqual(frames[0]?.result, { ok: true });
+        assert.equal(read, false, 'and the log is not read at all');
+      } finally { await handle.close(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('status returns a snapshot of every service', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
@@ -367,7 +439,10 @@ describe('socket-server', { skip: !isUnix }, () => {
 
         const frames = await framesP;
         assert.equal(frames.length, 4);
-        assert.deepEqual(frames[0], { id: 7, result: { ok: true } });
+        // The ack carries what the replayed window turned out to be, so a
+        // follow can say whether it lost its beginning without the caller
+        // asking the daemon a second time.
+        assert.deepEqual(frames[0], { id: 7, result: { ok: true, oldestRetained: null, truncated: false } });
         assert.equal(frames[1].event, 'log');
         assert.equal(frames[1].data, 'history-1');
         assert.equal(frames[2].data, 'history-2');
@@ -777,7 +852,9 @@ describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
           // dispatched one would answer `unknown method` instead.
           const frames = await rpcStream(path, { id: 1, method, params: { svc: 'api' } }, 1, 1500);
           assert.equal(frames[0]?.error, undefined, `${method} was not routed as a stream`);
-          assert.deepEqual(frames[0]?.result, { ok: true });
+          // `status.follow` acks bare; `logs.follow` adds the window fields
+          // when it replayed one, so only `ok` is common to both.
+          assert.equal(frames[0]?.result?.ok, true);
         }
       } finally {
         await handle.close();

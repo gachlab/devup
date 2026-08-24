@@ -11,19 +11,21 @@
  *    every wait at the startup timeout — 45 s by default, well under the two
  *    minutes a cold front end can need. It only means the startup timer gave
  *    up first.
- *  - There is deliberately **no** fail-fast on a crash. `Restarter` bumps
- *    `restarts` to its maximum and *then* schedules the last auto-restart, so
- *    "crashed and out of budget" is also what a service looks like for the
- *    eight seconds before the restart that saves it. Nothing in the snapshot
- *    tells the two apart — see issue on exposing a pending restart — and a
- *    wait that aborts on a service which was about to come back is worse than
- *    one that waits out its own clock.
+ *  - A crash fails the wait only once **nothing can bring it back**: crashed,
+ *    out of restart budget, and with no attempt queued. All three, because
+ *    `Restarter` raises `restarts` to the maximum *before* scheduling the last
+ *    attempt — so the first two alone also describe a service that is eight
+ *    seconds from recovering, and aborting there kills a run that was about to
+ *    succeed.
  *  - Readiness is `health`, and the daemon computes that from the service's
  *    own `readyPattern` when it declares one — see `HealthPoller.checkAll`,
  *    which deliberately does not let a bare port probe speak for a service
  *    that said how it announces itself. */
 import type { DevupClient } from './client.js';
 import type { ServiceSnapshot, ProcessStatus, HealthStatus } from './types.js';
+// One number, from the daemon's own definition of it — copying it here would
+// be a second source of truth for how many times a service gets to crash.
+import { MAX_RESTARTS } from '../process/internals.js';
 
 /** How long `waitForServices` waits when the caller says nothing. Generous on
  *  purpose: a cold `ng serve` is the slowest thing in a typical stack. */
@@ -89,11 +91,25 @@ export interface WaitOptions {
 export function classify(svc: ServiceSnapshot, requireUp: boolean): { readiness: Readiness; reason?: string } {
   if (svc.health === 'up') return { readiness: 'ready' };
   if (svc.status === 'crashed') {
-    // Not `failed`: the auto-restarter may still have it. See the note above
-    // on why the snapshot cannot tell a spent budget from a pending restart.
+    const crashCount = `crashed ${svc.crashes} time${svc.crashes === 1 ? '' : 's'}`;
+    // Still queued, so it is on its way back — whatever the budget says.
+    if (svc.restartPendingIn != null) {
+      return {
+        readiness: 'waiting',
+        reason: `${crashCount}, restarting in ${Math.round(svc.restartPendingIn / 1000)}s`,
+      };
+    }
+    // Out of budget with nothing queued: the restarter is done with it, so
+    // nothing can change and waiting out the clock only wastes the clock.
+    if (svc.restarts >= MAX_RESTARTS) {
+      return {
+        readiness: 'failed',
+        reason: `${crashCount} and will not be restarted again — see \`devup ctl logs ${svc.name}\``,
+      };
+    }
     return {
       readiness: 'waiting',
-      reason: `crashed (${svc.crashes} time${svc.crashes === 1 ? '' : 's'} so far) — see \`devup ctl logs ${svc.name}\``,
+      reason: `${crashCount} — see \`devup ctl logs ${svc.name}\``,
     };
   }
   if (svc.status === 'timeout') {
