@@ -86,17 +86,38 @@ describe('classify', () => {
     assert.match(r.reason!, /restarting in 8s/);
   });
 
-  it('gives up once the budget is spent and nothing is queued', () => {
-    const r = classify(svc({
-      status: 'crashed', health: 'down', restarts: 3, crashes: 4,
-      restartPendingIn: null, pid: null, startedAt: null,
-    }), false);
-    assert.equal(r.readiness, 'failed');
-    assert.match(r.reason!, /will not be restarted again/);
+  it('gives up once nothing is queued, whatever the budget says', () => {
+    // Not "and the budget is spent": `Spawner.recordCrashedState` — a port
+    // already taken, a failed preBuild, a missing watch path — never reaches
+    // the restarter at all, so `restarts` stays low and nothing is ever going
+    // to start it. A budget-based rule waited out the whole clock on those.
+    for (const restarts of [0, 1, 3]) {
+      const r = classify(svc({
+        status: 'crashed', health: 'down', restarts, crashes: restarts + 1,
+        restartPendingIn: null, pid: null, startedAt: null,
+      }), false);
+      assert.equal(r.readiness, 'failed', `restarts=${restarts}`);
+      assert.match(r.reason!, /no restart queued/);
+    }
   });
 
-  it('keeps waiting on a crash that still has budget left', () => {
-    const r = classify(svc({ status: 'crashed', health: 'down', restarts: 1, crashes: 1, pid: null, startedAt: null }), false);
+  it('keeps waiting when the daemon is too old to say', () => {
+    // A devup before 0.17.0 sends no `restartPendingIn` at all, and
+    // `undefined` there means "cannot tell", not "nothing queued". Reading it
+    // as the latter fails a wait against every published version the moment a
+    // service crashes.
+    const old = svc({ status: 'crashed', health: 'down', restarts: 3, crashes: 4, pid: null, startedAt: null });
+    delete (old as Partial<typeof old>).restartPendingIn;
+    const r = classify(old, false);
+    assert.equal(r.readiness, 'waiting');
+    assert.match(r.reason!, /4 times/);
+  });
+
+  it('keeps waiting while a restart is queued, whatever the budget says', () => {
+    const r = classify(svc({
+      status: 'crashed', health: 'down', restarts: 1, crashes: 1,
+      restartPendingIn: 2000, pid: null, startedAt: null,
+    }), false);
     assert.equal(r.readiness, 'waiting');
     assert.match(r.reason!, /1 time\b/, 'singular, and from `crashes`');
   });
@@ -171,7 +192,7 @@ describe('waitForServices', () => {
 
   it('gives up without burning the clock once nothing can bring it back', async () => {
     const dead = svc({
-      status: 'crashed', health: 'down', restarts: 3, crashes: 3,
+      status: 'crashed', health: 'down', restarts: 0, crashes: 1,
       restartPendingIn: null, pid: null, startedAt: null,
     });
     const client = fakeClient([[dead]]);

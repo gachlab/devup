@@ -49,6 +49,7 @@ const RESULT_SHAPES = {
   ProjectInfo: true,
   StatsResult: true,
   LogsTailResult: true,
+  LogsFollowAck: true,
 } as const;
 
 describe('control-plane contract', () => {
@@ -89,7 +90,7 @@ describe('control-plane contract', () => {
     // said nothing, because it only knew about the snapshot. Listing the
     // shapes here is what makes "bump it in the same commit" checkable.
     const covered = Object.keys(RESULT_SHAPES).sort();
-    assert.deepEqual(covered, ['LogsTailResult', 'ProjectInfo', 'ServiceSnapshot', 'StatsResult'],
+    assert.deepEqual(covered, ['LogsFollowAck', 'LogsTailResult', 'ProjectInfo', 'ServiceSnapshot', 'StatsResult'],
       'a wire shape was added or removed without saying which contract covers it');
   });
 
@@ -133,10 +134,15 @@ describe('control-plane contract', () => {
   });
 
   it('pins restartPendingIn as a number, not only as null', () => {
-    // The field exists to separate "out of budget" from "about to come back",
-    // so a fixture where it is always null teaches a client the wrong half.
-    const queued = golden.services.filter((s: { restartPendingIn: unknown }) => typeof s.restartPendingIn === 'number');
-    assert.ok(queued.length > 0, 'no entry has a restart queued');
+    // A fixture where it is always null teaches a client the wrong half of the
+    // field. The pinned value is `0` — the overdue edge — and deliberately so:
+    // `serializeState` clamps against `Date.now()`, so any *future* timestamp
+    // in the fixture would make the golden file change by the second. `0` is
+    // the only number this can reproducibly hold; that a live pending restart
+    // serialises to its real remaining milliseconds is pinned by the
+    // socket-server test instead.
+    const numeric = golden.services.filter((s: { restartPendingIn: unknown }) => typeof s.restartPendingIn === 'number');
+    assert.ok(numeric.length > 0, 'no entry pins it as a number at all');
   });
 
   it('pins crashes as a number that has actually moved', () => {

@@ -450,7 +450,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       /** The two things a window can fail to be, said the same way in both
        *  branches — a notice that only appears without `--follow` is a notice
        *  someone will not see when they most need it. */
-      const reportWindow = (res: WindowInfo) => {
+      const reportWindow = (res: WindowInfo, cap: number) => {
         // A fact, not a verdict. `oldestRetained` is when the log *starts*,
         // which on a stack booted a minute ago is simply when the service
         // first wrote — nothing was rotated. devup cannot tell "rotated away"
@@ -465,14 +465,17 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
         // window looks like. And what was dropped is the *oldest* of the
         // window, so "there may be more" would point the wrong way.
         if (res.truncated) {
-          out(`(more than ${lines} lines matched — the oldest were dropped; raise --lines to see them)`);
+          // The cap that actually applied: the follow replay is clamped lower
+          // than `--lines`, so reporting the number asked for would name a
+          // count that never happened and advise a flag that cannot help.
+          out(`(more than ${cap} lines matched — the oldest were dropped${cap < lines ? ' (the follow replay caps at ' + cap + ')' : '; raise --lines to see them'})`);
         }
       };
 
       if (!follow) {
         const res = await sendRpc(socketPath, 'logs.tail', { svc, lines, since }) as LogsTailShape;
         for (const l of res.lines) out(l);
-        reportWindow(res);
+        reportWindow(res, lines);
         return 0;
       }
 
@@ -493,7 +496,11 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
           // Printed before the replayed lines, which is where a notice about
           // that replay belongs. Older daemons send a bare `{ ok: true }` and
           // this says nothing, which is the honest answer for them.
-          if (since !== undefined) reportWindow(ack as WindowInfo);
+          // `?? {}` because the ack is whatever the daemon sent: one without a
+          // `result` key yields `undefined` here, and a throw inside the frame
+          // listener takes the host process down — the hazard `openStream`
+          // guards against two lines earlier.
+          if (since !== undefined) reportWindow((ack ?? {}) as WindowInfo, replayCap);
         });
         process.once('SIGINT', () => { abort(); resolve(0); });
       });

@@ -184,12 +184,15 @@ export function openStream(
       else onAck?.((msg as { result?: unknown }).result);
       return;
     }
-    // An error can also arrive *after* the ack. `handleFollow` acks
-    // `logs.follow` before it reads the log file, so a failure in that read
-    // answers with an error frame and never registers the watcher: the stream
-    // is dead. Dropping the frame for want of an `event` key leaves the
-    // consumer waiting on a socket that will never speak again — the exact
-    // silence `onError` and `onClose` exist to end.
+    // An error can also arrive *after* the ack, and dropping it for want of an
+    // `event` key would leave the consumer waiting on a socket that will never
+    // speak again — the exact silence `onError` and `onClose` exist to end.
+    //
+    // Since 0.17.0 `handleFollow` reads the log *before* acking, so a failing
+    // read answers with an error instead of an ack and lands in the branch
+    // above. This one still matters: anything the daemon reports after the ack
+    // arrives here, and older daemons answer the log-read failure exactly this
+    // way.
     if (msg.error) { onErr(new Error(msg.error.message ?? String(msg.error))); c.destroy(); return; }
     // Deliberately outside the try: a throw from onFrame is a bug in the
     // consumer, not a malformed frame, and swallowing it hides the failure —

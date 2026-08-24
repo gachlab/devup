@@ -11,21 +11,25 @@
  *    every wait at the startup timeout — 45 s by default, well under the two
  *    minutes a cold front end can need. It only means the startup timer gave
  *    up first.
- *  - A crash fails the wait only once **nothing can bring it back**: crashed,
- *    out of restart budget, and with no attempt queued. All three, because
- *    `Restarter` raises `restarts` to the maximum *before* scheduling the last
- *    attempt — so the first two alone also describe a service that is eight
- *    seconds from recovering, and aborting there kills a run that was about to
- *    succeed.
+ *  - A crash fails the wait exactly when **no restart is queued**. Not "and the
+ *    budget is spent": either the restarter scheduled something, and
+ *    `restartPendingIn` says so, or it did not — because it gave up, or because
+ *    it was never asked. `Spawner.recordCrashedState` is the second case, and
+ *    it is common: a port already taken, a failed `preBuild`, a missing watch
+ *    path. Those never reach the restarter at all, so `restarts` stays low and
+ *    a budget-based rule would wait out the whole clock on a service nothing
+ *    was ever going to start.
+ *
+ *    The field's **absence** is a third answer. A daemon before 0.17.0 does not
+ *    send it, and `undefined` there means "cannot tell", not "nothing queued" —
+ *    reading it as the latter fails a wait against every published devup the
+ *    moment a service crashes.
  *  - Readiness is `health`, and the daemon computes that from the service's
  *    own `readyPattern` when it declares one — see `HealthPoller.checkAll`,
  *    which deliberately does not let a bare port probe speak for a service
  *    that said how it announces itself. */
 import type { DevupClient } from './client.js';
 import type { ServiceSnapshot, ProcessStatus, HealthStatus } from './types.js';
-// One number, from the daemon's own definition of it — copying it here would
-// be a second source of truth for how many times a service gets to crash.
-import { MAX_RESTARTS } from '../process/internals.js';
 
 /** How long `waitForServices` waits when the caller says nothing. Generous on
  *  purpose: a cold `ng serve` is the slowest thing in a typical stack. */
@@ -92,24 +96,27 @@ export function classify(svc: ServiceSnapshot, requireUp: boolean): { readiness:
   if (svc.health === 'up') return { readiness: 'ready' };
   if (svc.status === 'crashed') {
     const crashCount = `crashed ${svc.crashes} time${svc.crashes === 1 ? '' : 's'}`;
-    // Still queued, so it is on its way back — whatever the budget says.
+    // Absent, not null: a daemon older than 0.17.0 does not report this at all,
+    // and treating "cannot tell" as "nothing queued" would fail a wait against
+    // every published devup the moment a service crashed.
+    //
+    // `Object.hasOwn` rather than `in`: the type declares the field required,
+    // so `in` narrows `svc` to `never` in this branch — and the whole point is
+    // that the runtime value can disagree with the type.
+    if (!Object.hasOwn(svc, 'restartPendingIn')) {
+      return { readiness: 'waiting', reason: `${crashCount} — see \`devup ctl logs ${svc.name}\`` };
+    }
     if (svc.restartPendingIn != null) {
       return {
         readiness: 'waiting',
         reason: `${crashCount}, restarting in ${Math.round(svc.restartPendingIn / 1000)}s`,
       };
     }
-    // Out of budget with nothing queued: the restarter is done with it, so
-    // nothing can change and waiting out the clock only wastes the clock.
-    if (svc.restarts >= MAX_RESTARTS) {
-      return {
-        readiness: 'failed',
-        reason: `${crashCount} and will not be restarted again — see \`devup ctl logs ${svc.name}\``,
-      };
-    }
+    // Crashed and nothing queued: whether the restarter gave up or was never
+    // asked, nobody is going to start it.
     return {
-      readiness: 'waiting',
-      reason: `${crashCount} — see \`devup ctl logs ${svc.name}\``,
+      readiness: 'failed',
+      reason: `${crashCount} and no restart queued — see \`devup ctl logs ${svc.name}\``,
     };
   }
   if (svc.status === 'timeout') {

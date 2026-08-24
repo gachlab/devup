@@ -15,15 +15,18 @@ function mkState(over: Partial<ProcessState> = {}): ProcessState {
   };
 }
 
-function mkRestarter(state: Map<string, ProcessState>) {
+function mkRestarter(state: Map<string, ProcessState>, startImpl?: (s: ServiceConfig) => Promise<void>) {
   const started: string[] = [];
-  const events: ProcessManagerEvents = { onLog: () => {}, onStateChange: () => {} };
+  const changes: string[] = [];
+  const events: ProcessManagerEvents = { onLog: () => {}, onStateChange: (n) => changes.push(n) };
   const restarter = new Restarter({
     state, events,
-    spawner: { start: async (s: ServiceConfig) => { started.push(s.name); } } as never,
+    spawner: {
+      start: async (s: ServiceConfig) => { started.push(s.name); if (startImpl) await startImpl(s); },
+    } as never,
     lifecycle: { stop: () => {} } as never,
   });
-  return { restarter, started };
+  return { restarter, started, changes };
 }
 
 describe('Restarter publishes when the next attempt is due', () => {
@@ -58,14 +61,42 @@ describe('Restarter publishes when the next attempt is due', () => {
     assert.equal(st.restartPendingUntil, null);
   });
 
-  it('clears it when the attempt actually fires', async () => {
+  it('keeps advertising it until the spawn is actually done', async () => {
+    // Cleared before the spawn, it left a window reading crashed + nothing
+    // queued — which a waiter treats as terminal. `start` is async and slow:
+    // an API awaits `isPortBindable`, and a `preBuild` runs before that.
     const st = mkState();
-    const { restarter, started } = mkRestarter(new Map([['api', st]]));
+    let releaseSpawn!: () => void;
+    const slowSpawn = new Promise<void>(r => { releaseSpawn = r; });
+    const { restarter, started } = mkRestarter(new Map([['api', st]]), () => slowSpawn);
     restarter.scheduleAutoRestart(svc, st, 0);
 
     await new Promise(r => setTimeout(r, BACKOFF_BASE_MS + 120));
-    assert.deepEqual(started, ['api'], 'the restart should have run');
-    assert.equal(st.restartPendingUntil, null, 'and stopped advertising a pending one');
+    assert.deepEqual(started, ['api'], 'the restart should have begun');
+    assert.ok(st.restartPendingUntil != null, 'still spawning — a waiter must not call this dead');
+
+    releaseSpawn();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(st.restartPendingUntil, null, 'and only then stops advertising it');
+  });
+
+  it('tells clients when it stops advertising one', async () => {
+    // A `status.follow` consumer holds the last frame it was pushed, so
+    // clearing without emitting leaves the TUI and the extension showing a
+    // countdown that never resolves.
+    const st = mkState();
+    const { restarter, changes } = mkRestarter(new Map([['api', st]]));
+    restarter.scheduleAutoRestart(svc, st, 0);
+    changes.length = 0;
+    restarter.cancel('api');
+    assert.deepEqual(changes, ['api']);
+  });
+
+  it('says nothing when there was nothing to clear', async () => {
+    const st = mkState();
+    const { restarter, changes } = mkRestarter(new Map([['api', st]]));
+    restarter.cancel('api');
+    assert.deepEqual(changes, [], 'no spurious frame for a service with no restart queued');
   });
 
   it('publishes nothing once the budget is spent — which is the terminal state', () => {
@@ -83,14 +114,7 @@ describe('Restarter publishes when the next attempt is due', () => {
 
   it('tells clients about it, or a follower never sees the change', () => {
     const st = mkState();
-    const changes: string[] = [];
-    const state = new Map([['api', st]]);
-    const restarter = new Restarter({
-      state,
-      events: { onLog: () => {}, onStateChange: (n) => changes.push(n) },
-      spawner: { start: async () => {} } as never,
-      lifecycle: { stop: () => {} } as never,
-    });
+    const { restarter, changes } = mkRestarter(new Map([['api', st]]));
     restarter.scheduleAutoRestart(svc, st, 0);
     assert.deepEqual(changes, ['api']);
     restarter.cancel('api');
