@@ -270,7 +270,7 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
     // service there. The configured port — where the on-demand proxy listens,
     // and what clients are actually pointed at — survives as originalPort.
     // Always-on services are never rewritten, so the two coincide.
-    originalPort: (st.svc as { originalPort?: number }).originalPort ?? st.svc.port,
+    originalPort: st.svc.originalPort ?? st.svc.port,
     type: st.svc.type,
     phase: st.svc.phase,
     cmd: st.svc.cmd,

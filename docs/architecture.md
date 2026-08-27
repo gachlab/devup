@@ -24,8 +24,29 @@ src/
     diff.ts                  diffServices (used by --watch-config)
   process/
     types.ts                 ProcessState, ProcessStatus, HealthStatus
-    manager.ts               ProcessManager: spawn, restart, kill-tree, polling
-    health.ts                checkPort (TCP), checkHttp, checkHealth dispatcher
+    manager.ts               ProcessManager: facade over the four below
+    spawner.ts               spawn, port guard, stdio wiring, close handling
+    restarter.ts             the auto-restart budget and its queued timers
+    health-poller.ts         one probe round across state
+    lifecycle.ts             stop, kill-tree, watchBuild teardown, cleanup
+    liveness.ts              isRunning / waitForExit — never trust `pid`
+    boot.ts                  bootStack: phases + lazy registration, shared by
+                             the daemon and the TUI
+    start-service.ts         start / restart / debug, shared by both hosts
+    restart-service.ts       …
+    debug-service.ts         …
+    health.ts                checkPort (TCP), isPortBindable, checkHealth
+    log-reader.ts            readLogWindow (--lines / --since)
+    port-conflicts.ts        scan, blame, kill
+    external.ts              ExternalService start/stop
+  remote/                    remote environments (--remote)
+    classifier.ts            local/remote split, selection parsing
+    proxy.ts                 the HTTP/WS reverse proxy and its health probe
+    headers.ts               the header transforms, pure
+    target.ts                where a service's traffic goes
+    boot.ts                  registering remote services and their proxies
+    switch.ts                moving one between local and an environment
+    toggle.ts                which way the TUI's one-key toggle goes
     installer.ts             needsInstall, writeInstallStamp
     log-sink.ts              LogSink: persistent per-service log files
     external.ts              startExternals / stopExternals (Mongo, Redis, ...)
@@ -58,14 +79,19 @@ src/
       useProcessManager.ts   wraps ProcessManager + logs/stats state
       useKeyBindings.ts      key handler + state
       useProxySync.ts        writes the proxy file every 3 s
-  utils.ts                   parseEnvFile, fmtUptime, compileSearchPattern,
-                             detectLogLevel, redactSecrets, nextRamBannerVisibility,
-                             buildProcessArgs, buildProcessEnv, calcCpuPercent,
-                             sortServiceNames, groupByPhase, needsInstall stamps
+  utils.ts                   a re-export façade (17 lines) over utils/
+  utils/
+    stats.ts                 sortServiceNames, calcCpuPercent, the stats and
+                             proxy-info builders both hosts share
+    redact.ts                redactSecrets, redactUrl
+    env.ts                   parseEnvFile
+    format.ts, search.ts, colors.ts, phases.ts, broadcaster.ts,
+    process-args.ts, system-load.ts, version.ts, install-stamp.ts
 
 tests/
   unit/        mirrors src/
-  integration/ process-lifecycle, lazy-proxy, once, installer
+  integration/ process-lifecycle, lazy-proxy, remote-proxy, remote-switch,
+               remote-boot, once, once-remote, exec, installer, daemon
   fixtures/    minimal-config.json, dummy-server.ts, dummy-crash.ts
 ```
 
@@ -105,13 +131,16 @@ Boot useEffect:
   normal mode         → start every service in phase order
 ```
 
-Each phase awaits `Promise.all(waitForPort(...))` over the APIs in that phase before moving on. Webs are not awaited.
+Each phase awaits `Promise.all(waitForPort(...))` over the APIs in that phase before moving on. Webs are not awaited — they have no port-independent readiness signal at this level, and nothing downstream needs one to be up.
+
+`--once` is the exception, deliberately: it waits for webs too, because a caller of `--once` must not have to wait again and a front end still compiling is not ready. That is why it keeps its own loop rather than sharing `bootStack` — see the note in `once.ts`.
 
 ### A service spawn
 
 ```
 ProcessManager.start(svc, colorIdx)
-  1. checkPort(svc.port)        skip if occupied (and not isRestart)
+  1. isPortBindable(svc.port)   both families; skip if occupied (and not isRestart)
+                                — unless our own process still holds it and is draining
   2. runPreBuild()              if svc.preBuild — sh -c, waits for exit
                                 non-zero → recordCrashedState, return
   3. extractWatchPaths(args)    pre-flight: verify --watch-path targets exist
@@ -170,7 +199,7 @@ startSocketServer(projectName, ctx)
   net.createServer on ~/.devup/sock-<project>.sock
   chmod 0600
   per connection: readline → dispatch(method, params, ctx)
-    ping / status / restart / stop / logs.tail
+    ping, info, status, status.follow, stats, start, restart, stop, debug, remote, logs.tail, logs.follow
   → JSON response over the same socket
 ```
 
@@ -211,7 +240,7 @@ The validator pattern (errors block, warnings advisory) is the right place to la
 
 ## Coding conventions
 
-- TypeScript strict mode. `noImplicitAny`, `strictNullChecks`. Prefer explicit return types on exported functions.
+- TypeScript strict mode (`strict: true`). Every invariant here is null-carrying — `proc`, `pid`, `remote`, `crashLog` — so this is the compiler doing the work hazard 2 is about. Prefer explicit return types on exported functions.
 - No emojis in code/docs unless the user asked for them. The exception: log output uses 🚀 🔨 ⚡ ⚠ ❌ ✓ to make scanning fast.
 - Comments explain **why**, not what. The function name should already say what.
 - One feature = one commit, in the milestone release branch. Bump + CHANGELOG = the last commit of the branch.
@@ -233,10 +262,10 @@ If publish fails: look at the workflow log, fix in a separate `ci/...` branch, m
 - **`src/process/manager.ts`** — ProcessManager class. Hardest file to navigate; spawn lifecycle lives here.
 - **`src/tui/App.tsx`** — top-level Ink component; orchestrates everything for the TUI mode. Lots of useEffects (boot, control plane, hot reload, tips, paused/scrolled coupling).
 - **`src/config/validator.ts`** — errors + warnings. Add new shape checks here.
-- **`src/utils.ts`** — junk drawer for pure helpers. Watch its growth; split into focused files when a section exceeds ~80 lines.
+- **`src/utils/`** — the pure helpers, one file per area. `utils.ts` at the root is only a re-export façade, kept so existing imports do not have to move.
 
 ## Where it could be better
 
 - **`App.tsx` has too many useEffects** (boot, control plane, hot reload, paused-coupling, tips, resize). Could be split into smaller hooks. Hasn't bothered enough to warrant the refactor yet.
-- **`ProcessManager` is a god-class**. Manages spawn, restart, watch-build, pre-flight, polling, kill-tree, cleanup. A future split into `Spawner` / `Restarter` / `HealthPoller` would be defensible.
+- **`ProcessManager` is a facade, and the shared state map is the part that still needs a decision.** The split into `Spawner` / `Restarter` / `HealthPoller` / `Lifecycle` shipped; `manager.ts` is ~130 lines that compose them. What the split did not settle is **who may write what** to the `state` map they share: the boot paths, the lazy proxy's idle stop and the remote modules all write fields directly, and the rule that such a write must be announced (`notifyStateChange`) is a convention, not a type. A lazy service that idled out went unannounced for exactly this reason, and only the streaming clients could see it — the snapshot was right either way.
 - **Tests of TUI components rely on `ink-testing-library` and check substring matches in `lastFrame()`** — brittle if Ink changes its output. Acceptable for now because Ink's output is stable.

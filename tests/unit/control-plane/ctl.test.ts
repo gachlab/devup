@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startSocketServer, type RpcContext } from '../../../src/control-plane/socket-server.js';
-import { runCtl, resolveTargets } from '../../../src/orchestrator/subcommands.js';
+import { runCtl, resolveTargets, runStatus } from '../../../src/orchestrator/subcommands.js';
 import type { ProcessState } from '../../../src/process/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
@@ -904,7 +904,7 @@ describe('runCtl status prints the port you can connect to', { skip: !isUnix }, 
       status: 'idle', health: 'idle', pid: null,
     })]]);
     // As the orchestrator holds a lazy service: the rewrite already happened.
-    (states.get('auth')!.svc as { originalPort?: number }).originalPort = 3002;
+    states.get('auth')!.svc.originalPort = 3002;
 
     const lines: string[] = [];
     await withServer(noopCtx({ states: () => states }), async path => {
@@ -913,5 +913,41 @@ describe('runCtl status prints the port you can connect to', { skip: !isUnix }, 
     const said = lines.join(' ');
     assert.match(said, /:3002/);
     assert.ok(!/:13002/.test(said), `printed the internal port: ${said}`);
+  });
+});
+
+describe('devup status', { skip: !isUnix }, () => {
+  const svcAt = (name: string, port: number) =>
+    mkState({ svc: { ...svc, name, port }, status: 'idle', health: 'idle', pid: null });
+
+  it('asks the daemon when there is one, instead of poking ports', async () => {
+    // A lazy service's configured port is held by its on-demand proxy, so a
+    // poll there says `✓ up` for a service that is asleep. The daemon knows
+    // the difference; the port cannot.
+    const states = new Map([['auth', svcAt('auth', 13002)]]);
+    states.get('auth')!.svc.originalPort = 3002;
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runStatus({
+        config: mkConfig(), baseCwd: process.cwd(), env: {}, socketPath: path,
+        out: l => lines.push(l),
+      });
+      assert.equal(code, 0);
+    });
+    const said = lines.join(' ');
+    assert.match(said, /idle/, `no daemon answer: ${said}`);
+    assert.ok(!/polling ports/.test(said), 'it fell back to the poll with a daemon up');
+  });
+
+  it('says what the poll cannot tell you when there is no daemon', async () => {
+    // The fallback is fine; presenting it as the same answer is not.
+    const lines: string[] = [];
+    const code = await runStatus({
+      config: mkConfig(), baseCwd: process.cwd(), env: {},
+      socketPath: '/tmp/devup-definitely-not-here.sock',
+      out: l => lines.push(l),
+    });
+    assert.equal(code, 0);
+    assert.match(lines.join(' '), /polling ports/);
   });
 });

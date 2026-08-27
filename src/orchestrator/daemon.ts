@@ -9,7 +9,7 @@ import { LogSink } from '../process/log-sink.js';
 import { calcCpuPercent } from '../utils.js';
 import { Broadcaster } from '../utils/broadcaster.js';
 import { systemLoad } from '../utils/system-load.js';
-import { seedServiceStats } from '../utils/stats.js';
+import { buildProxyInfo, computeServiceStats, seedServiceStats } from '../utils/stats.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy } from '../lazy/classifier.js';
@@ -235,14 +235,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         const { services, pids, pidToName } = seedServiceStats(mgr.state);
         const cores = cpus().length;
         const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
-        for (const [pid, data] of raw) {
-          const name = pidToName.get(pid);
-          if (!name) continue;
-          const prev = prevCpuMap.get(name) ?? { time: Date.now(), cpu: 0 };
-          const cpu = calcCpuPercent(data.cpuSeconds, prev.cpu, prev.time);
-          prevCpuMap.set(name, { time: Date.now(), cpu: data.cpuSeconds });
-          services[name] = { cpu: Math.round(cpu * 10) / 10, memMB: Math.round((data.rss / 1024) * 10) / 10 };
-        }
+        computeServiceStats(services, raw, pidToName, prevCpuMap, calcCpuPercent);
         return {
           services,
           system: {
@@ -253,16 +246,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
           },
         };
       },
-      getProxyInfo() {
-        if (!proxyProvider || !proxyOpts || !cliArgs.proxy) return null;
-        return {
-          active: true,
-          provider: proxyProvider.name,
-          domain: proxyOpts.domain,
-          tls: proxyOpts.tls,
-          routes: proxyOpts.routes,
-        };
-      },
+      getProxyInfo: () => buildProxyInfo(proxyProvider, proxyOpts, !!cliArgs.proxy),
       getInfo() {
         // The project as configured, plus which instance we are — `projectName`
         // above is the qualified path key and would read as a project name that
@@ -280,7 +264,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       const sync = () => {
         const svcStates = new Map<string, ServiceState>();
         for (const [n, st] of mgr.state) {
-          svcStates.set(n, { port: st.svc.port, health: st.health, realPort: (st.svc as { realPort?: number }).realPort });
+          svcStates.set(n, { port: st.svc.port, health: st.health, realPort: st.svc.realPort });
         }
         const content = proxyProvider.generate(svcStates, proxyOpts);
         if (content === lastContent) return;

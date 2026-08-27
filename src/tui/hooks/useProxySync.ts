@@ -18,7 +18,7 @@ export function useProxySync(
     const sync = () => {
       const svcStates = new Map<string, ServiceState>();
       for (const [name, st] of statesRef.current) {
-        svcStates.set(name, { port: st.svc.port, health: st.health, realPort: (st.svc as any).realPort });
+        svcStates.set(name, { port: st.svc.port, health: st.health, realPort: st.svc.realPort });
       }
       const content = provider.generate(svcStates, opts);
       if (content === lastContentRef.current) return;

@@ -85,6 +85,8 @@ export function misplacedSubcommand(argv: string[]): string | null {
 
 interface SubOpts {
   config: DevStackConfig;
+  /** Override for the control-plane socket, for tests. */
+  socketPath?: string;
   /** The project name qualified by `--instance` — what every path is keyed by.
    *  Defaults to the project name, for callers with no instance. */
   instanceName?: string;
@@ -212,9 +214,40 @@ function installOne(cwd: string, env: Record<string, string>): Promise<boolean> 
 
 // ── devup status ──
 
+/** `devup status` — the daemon's answer when there is one, a port poll when
+ *  there is not.
+ *
+ *  The poll alone was the whole command, and it lies about the two cases devup
+ *  is most about. A **lazy** service's configured port is held by its
+ *  on-demand proxy, so probing it reports `✓ up` for a service that is asleep;
+ *  a **remote** one's port is held by devup's own reverse proxy, so it reports
+ *  `✓ up` whether or not the environment answers — the exact failure
+ *  `health-poller.ts` refuses to commit ("a check there says the proxy is
+ *  listening and never that the environment is reachable"). It also ignored
+ *  `--profile` and reported on services the run never selected.
+ *
+ *  The roadmap listed this as reading live state via the socket "or by polling
+ *  health endpoints"; only the fallback shipped. */
 export async function runStatus(opts: SubOpts): Promise<number> {
   const out = opts.out ?? ((l: string) => console.log(l));
+  const socketPath = resolveSocket(opts.instanceName ?? opts.config.name, opts.socketPath);
+
+  if (existsSync(socketPath)) {
+    try {
+      const res = await sendRpc(socketPath, 'status', {}, { timeoutMs: 3000 }) as { services: ServiceSnapshot[] };
+      out(`${opts.config.icon ?? '📦'} ${opts.config.name} — ${res.services.length} services`);
+      out('');
+      fmtStatus(res.services, out);
+      return 0;
+    } catch {
+      // Fall through: a socket file can outlive its daemon, and a stale one
+      // must not turn `status` into an error when the poll still has an answer.
+    }
+  }
+
   out(`${opts.config.icon ?? '📦'} ${opts.config.name} — ${opts.config.services.length} services`);
+  out('  (no daemon — polling ports, which cannot tell a sleeping lazy service');
+  out('   or a remote one from a healthy process)');
   out('');
 
   const maxLen = Math.max(...opts.config.services.map(s => s.name.length), 12);

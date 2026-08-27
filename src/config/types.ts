@@ -33,6 +33,16 @@ export interface ServiceConfig {
    *  first line so the startup path can be debugged too. Only applies when
    *  `cmd` is `node`. */
   debug?: boolean | number | DebugOptions;
+  /** Where the **process** listens once lazy mode has moved it, and the
+   *  configured port it was moved from. Written by `rewriteServicePort`; absent
+   *  on a service that was never rewritten.
+   *
+   *  Declared here rather than left to a widened return type, because that
+   *  type was erased at every boundary and each reader cast it back — three
+   *  casts, one of them `as any`. The type system was hiding hazard 3, which
+   *  is the one hazard entirely about these two numbers not being the same. */
+  realPort?: number;
+  originalPort?: number;
 }
 
 export interface DebugOptions {

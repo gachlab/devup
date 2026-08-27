@@ -5,6 +5,29 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.2] — 2026-08-27
+
+Los doce hallazgos de una revisión de arquitectura contra los propios
+documentos del repo (#132). Dos eran bugs vivos.
+
+### Fixed
+- **Un servicio lazy dormido no se lo decía a `status.follow`.** La escritura del idle ocurre fuera del manager y no emitía, y el `continue` del health poller saltaba el emit del final del bucle. `ctl status` acertaba porque relee el mapa; el stream mostraba el servicio como `running/up` el resto de la sesión — o sea la extensión de VS Code. De paso, ese mismo `if` usaba `!st.pid` como test de vida, el anti-patrón que el hazard §2 prohíbe, en el módulo del que más habla.
+- **El hot reload spawneaba un servicio lazy sobre su propio puerto.** Editar sus `args` con `--watch-config` llamaba a `start(..., isRestart=true)`, que salta el guard de `isPortBindable`, así que el proceso arrancaba en el puerto público donde escucha su proxy: moría con EADDRINUSE y acababa `crashed`. Va por `restartService`, que ya es dueño del proxy.
+- **`devup status` no preguntaba al daemon.** Sondeaba puertos, así que decía `✓ up` de un lazy dormido y de un remoto con el ambiente caído — el puerto lo tiene el proxy de devup en los dos casos. Ahora usa el socket, y el sondeo queda como fallback que dice lo que no puede distinguir.
+- **`--remote` se clasificaba en cuatro sitios y no en el que escanea puertos.** Con la forma general los puertos de los remotos no se escaneaban; con la explícita sí. Se resuelve una vez.
+- **El proxy lazy no tenía handler de `error`**: un EADDRINUSE ahí era una excepción no capturada que se llevaba el daemon o el TUI. El remoto lo tiene desde 0.18.0.
+- **El TUI reportaba `active: true` con el proxy apagado.** La tecla `p` apagaba la escritura del archivo mientras `info` y `status` seguían diciendo que estaba encendido.
+- **`ctl status` imprimía el puerto interno** de un servicio lazy — al que un usuario no puede conectarse — porque el tipo de fila escrito a mano nunca declaró `originalPort`.
+
+### Changed
+- **`strict: true`.** Cero errores; `architecture.md` afirmaba que estaba encendido desde antes.
+- **`tests/` entra al typecheck**, con 36 fakes desactualizados arreglados. CI corre los dos proyectos.
+- **Una sola declaración por forma del cable.** `RestartOutcome`, `DebugResult` y `SwitchResult` son alias del tipo del cable, y las dos copias de `subcommands.ts` se fueron. `RpcContext.restart` declaraba su propia forma sin `skippedRemote`, el campo por el que se subió el contrato a 4.
+- **El fixture del contrato se construye desde `rewriteServicePort`**, no de literales: antes cambiar `LAZY_PORT_OFFSET` no rompía la única prueba que existe para atrapar deriva del cable. `RESULT_SHAPES` pasa de cinco formas a nueve.
+- **Un solo boot** para el daemon y el TUI, que eran ~90 líneas casi idénticas por duplicado. `--once` mantiene el suyo, y el porqué está escrito.
+- **`ServiceConfig` declara `realPort` y `originalPort`**, así que se van tres casts — uno de ellos `as any`. El sistema de tipos estaba escondiendo el hazard 3.
+- **Once líneas de documentación que mentían sobre el código**, y dos hazards del `CLAUDE.md` actualizados con lo que cambió.
+
 ## [0.19.1] — 2026-08-27
 
 ### Fixed

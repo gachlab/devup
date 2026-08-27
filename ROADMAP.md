@@ -6,7 +6,7 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 Last released: **[0.19.1](https://github.com/gachlab/devup/releases/tag/0.19.1)** (2026-08-27) — with `--remote`, an empty local selection is a legitimate configuration and is no longer rejected.
 
-Full history is in [CHANGELOG.md](CHANGELOG.md); this file is only for what is *not* built yet.
+Full history is in [CHANGELOG.md](CHANGELOG.md). This file is meant to hold what is *not* built yet — most of what is below is now `done`, kept because the reasoning behind each item is still the record of why it exists.
 
 The VS Code extension lives in its own repo: **[gachlab/devup-vscode](https://github.com/gachlab/devup-vscode)** (0.11.0 on the Marketplace). It consumes this package's control plane and has its own release cadence.
 
@@ -22,7 +22,9 @@ For each item:
 
 ## Vision and non-goals
 
-devup is a **developer-experience tool for local monorepo orchestration**: phased boot, lazy on-demand starts, live TUI, reverse-proxy config generation. It is not a production process supervisor. Items in the *Production mode* track are open questions about whether to invade that territory or keep the scope tight.
+devup is a **developer-experience tool for local monorepo orchestration**: phased boot, lazy on-demand starts, live TUI, reverse-proxy config generation, a local control plane (daemon mode, `devup exec`, `--instance`), and **remote environments** — serving a service that is not running locally by forwarding its port to QA, which is a full HTTP/WebSocket reverse proxy with header rewriting and cookie localization.
+
+That last one is worth naming explicitly against the non-goals below: it makes devup a proxy in the request path of a shared environment, which is more than "config generation". It stays in scope because it is still *local developer experience* — nothing devup does here runs on a server, serves a user, or outlives the session. It is not a production process supervisor. Items in the *Production mode* track are open questions about whether to invade that territory or keep the scope tight.
 
 ---
 
@@ -131,7 +133,7 @@ Reuse `LogSink` and the orchestrator without launching the TUI:
 
 - `devup logs <svc>` — tail the persisted log file (`~/.devup/logs/<proj>/<svc>.log`).
 - `devup logs --follow <svc>` — `tail -f` semantics.
-- `devup status` — read live state (via the unix socket from item #24, or by polling health endpoints if devup is running).
+- `devup status` — read live state through the unix socket, falling back to a port poll when no daemon is up. Only the fallback shipped at first, which meant it reported `✓ up` for a sleeping lazy service and for a remote one whose environment was down — the port is held by devup's own proxy in both cases. It asks the daemon since 0.19.2.
 - `devup install` — run `npm install` in parallel across every service without booting anything. Useful right after `git clone` or branch switches.
 
 ### 15. Fuzzy filter in `ServiceList`

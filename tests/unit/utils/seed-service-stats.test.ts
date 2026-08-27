@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { seedServiceStats } from '../../../src/utils/stats.js';
+import { buildProxyInfo, computeServiceStats, seedServiceStats } from '../../../src/utils/stats.js';
 
 type S = { pid: number | null; remote?: unknown };
 const states = (entries: Array<[string, S]>) => new Map<string, S>(entries);
@@ -45,5 +45,51 @@ describe('seedServiceStats', () => {
     ]));
     assert.deepEqual(services, {});
     assert.deepEqual(pids, []);
+  });
+});
+
+describe('buildProxyInfo', () => {
+  const provider = { name: 'traefik' };
+  const opts = { domain: 'guesthub.remote', tls: false, routes: { 'app-web': '' } };
+
+  it('reports the active proxy', () => {
+    const info = buildProxyInfo(provider, opts, true);
+    assert.equal(info?.active, true);
+    assert.equal(info?.provider, 'traefik');
+    assert.deepEqual(info?.routes, { 'app-web': '' });
+  });
+
+  it('is null when the caller says it is off', () => {
+    // The divergence this replaces: the daemon gated on `--proxy` while the
+    // TUI reported `active: true` regardless of its own `p` toggle, so turning
+    // proxy-file writing off left `info` and `status` still claiming it was on.
+    assert.equal(buildProxyInfo(provider, opts, false), null);
+  });
+
+  it('is null when there is no proxy configured at all', () => {
+    assert.equal(buildProxyInfo(null, opts, true), null);
+    assert.equal(buildProxyInfo(provider, null, true), null);
+  });
+});
+
+describe('computeServiceStats', () => {
+  it('fills in the sampled services and leaves the rest at zero', () => {
+    const services = { 'app-api': { cpu: 0, memMB: 0 }, 'web': { cpu: 0, memMB: 0 } };
+    const raw = new Map([[4242, { cpuSeconds: 2, rss: 204800 }]]);
+    const prev = new Map([['app-api', { time: Date.now() - 1000, cpu: 1 }]]);
+    const out = computeServiceStats(services, raw, new Map([[4242, 'app-api']]), prev,
+      (total, p) => (total - p) * 100);
+
+    assert.equal(out['app-api']!.memMB, 200);
+    assert.ok(out['app-api']!.cpu > 0);
+    assert.deepEqual(out['web'], { cpu: 0, memMB: 0 });
+  });
+
+  it('ignores a pid it has no name for', () => {
+    // A sample can outlive the service it belonged to.
+    const services = { 'app-api': { cpu: 0, memMB: 0 } };
+    const out = computeServiceStats(services, new Map([[999, { cpuSeconds: 5, rss: 1024 }]]),
+      new Map(), new Map(), () => 50);
+    assert.deepEqual(out, { 'app-api': { cpu: 0, memMB: 0 } });
   });
 });

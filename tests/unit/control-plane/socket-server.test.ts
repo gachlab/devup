@@ -132,7 +132,7 @@ describe('socket-server', { skip: !isUnix }, () => {
       // already moved `port` to port + LAZY_PORT_OFFSET and kept the configured
       // one. Without originalPort a client cannot tell 13002 from a service
       // genuinely configured on 13002.
-      const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 } as ServiceConfig;
+      const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 };
       const states = new Map([
         ['auth', mkState({ svc: lazySvc })],
         ['api', mkState({})],

@@ -25,7 +25,7 @@ const alwaysOn: ServiceConfig = {
 const lazy = rewriteServicePort({
   name: 'authorization-api', cwd: 'authorization/api', cmd: 'node',
   args: ['app.js'], type: 'api', port: 3002, phase: 1,
-}) as ServiceConfig;
+});
 
 const web: ServiceConfig = {
   name: 'app-web', cwd: 'app/web', cmd: 'npx',

@@ -191,10 +191,11 @@ What this daemon is, and what it can do.
 → { "result": {
       "project": "Guesthub",
       "profiles": { "e2e": ["app-api", "app-web"] },
-      "version": "0.16.0",
-      "contract": 1,
-      "methods": ["debug", "info", "logs.follow", "logs.tail", "ping",
-                  "restart", "start", "stats", "status", "status.follow", "stop"]
+      "version": "0.19.1",
+      "contract": 4,
+      "methods": ["debug", "info", "logs.follow", "logs.tail", "ping", "remote",
+                  "restart", "start", "stats", "status", "status.follow", "stop"],
+      "pid": 39692
    } }
 ```
 
@@ -208,6 +209,10 @@ What this daemon is, and what it can do.
   0.16.0. Those tables are exactly what goes stale.
 - `methods`: every RPC this daemon answers, streaming ones included. Ask this
   rather than sending a request and looking for `unknown method` in the error.
+- `pid`: the daemon's own process id. Not decoration: in lazy mode the
+  on-demand proxy listens on the configured port from inside this process, so
+  when a port conflict names a holder, this is the pid it names — no service of
+  ours will match it. Sent since 0.16.0.
 
 **The last three are absent from daemons before 0.16.0** — which is itself the
 answer when what you are asking is how old one is.

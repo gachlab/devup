@@ -118,7 +118,7 @@ describe('control-plane client', { skip: !isUnix }, () => {
   it('status() returns both ports typed, without the caller casting', async () => {
     // The point of the export: a consumer reads originalPort off a typed
     // object instead of re-declaring the snapshot shape by hand.
-    const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 } as ServiceConfig;
+    const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 };
     const states = new Map([
       ['auth', mkState({ svc: lazySvc, status: 'idle', health: 'idle' })],
       ['api', mkState({ pid: 4242 })],
