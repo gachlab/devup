@@ -19,7 +19,11 @@ jobs:
           node-version: 22
       - run: npm ci
       - name: Type check
-        run: npx tsc --noEmit
+        # `tests/` too, not just `src/`. A stale mock or an interface that
+        # gained a method used to fail only at runtime, and only if some test
+        # happened to exercise it — CLAUDE.md rule 5. There were 36 of them
+        # waiting when this was turned on.
+        run: npm run typecheck
       - name: Build
         run: npm run build
       - name: Unit tests

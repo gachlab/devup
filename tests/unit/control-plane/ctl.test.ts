@@ -23,7 +23,11 @@ function mkConfig(name = 'test'): DevStackConfig {
   return { name, services: [svc] };
 }
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
-  return {
+  // `Object.assign`, not `{ ...base, ...over }`: spreading a Partial makes every
+  // member optional, so a base missing a method still type-checks — which is
+  // exactly how a fake comes to lag the interface (CLAUDE.md rule 5). This way
+  // the base is checked as a complete RpcContext.
+  const base: RpcContext = {
     states: () => new Map(),
     restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
@@ -35,12 +39,13 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
+    debug: async () => ({ debug: false, port: null, ok: true }),
     setRemote: async (_n, envName) => ({
       ok: true,
       remote: envName === null ? null : { envName, target: `https://api.${envName}.test`, readOnly: false },
     }),
-    ...over,
   };
+  return Object.assign(base, over);
 }
 
 async function withServer(ctx: RpcContext, fn: (socketPath: string) => Promise<void>): Promise<void> {
@@ -135,10 +140,13 @@ describe('runCtl', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
     const path = join(dir, 's.sock');
     try {
-      let removedCb: ((name: string) => void) | null = null;
+      // A no-op default rather than `| null`: TypeScript narrows a `let` that is
+      // only visibly assigned `null` down to `null`, and the assignment that
+      // matters happens inside the subscribe callback, which it cannot see.
+      let removedCb: (name: string) => void = () => {};
       const handle = await startSocketServer('t', noopCtx({
         states: () => new Map([['api', mkState()]]),
-        watchRemoved: (cb) => { removedCb = cb; return () => { removedCb = null; }; },
+        watchRemoved: (cb) => { removedCb = cb; return () => { removedCb = () => {}; }; },
       }), { path });
       const lines: string[] = [];
       try {
@@ -147,7 +155,7 @@ describe('runCtl', { skip: !isUnix }, () => {
         // swallow — the CLI then printed nothing and kept listing the service.
         const run = runCtl(['status', '--follow'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
         await new Promise(r => setTimeout(r, 80));
-        removedCb?.('legacy');
+        removedCb('legacy');
         await new Promise(r => setTimeout(r, 80));
         process.emit('SIGINT');
         await run;

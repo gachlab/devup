@@ -7,11 +7,15 @@ import type { ServiceConfig } from '../../../src/config/types.js';
 const baseSvc: ServiceConfig = { name: 'x', cwd: '.', cmd: 'node', args: [], type: 'api', port: 3000, phase: 0 };
 
 function mkState(over: Partial<ProcessState>): ProcessState {
-  return {
+  // `Object.assign`, not a Partial spread: spreading a Partial makes every
+  // member optional, so a fixture that lags the type still compiles — which
+  // is how a fake comes to lag the interface (CLAUDE.md rule 5).
+  const base: ProcessState = {
     svc: baseSvc, proc: null, pid: null, status: 'running', health: 'up',
     errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
-    ...over,
+    crashLog: null,
   };
+  return Object.assign(base, over);
 }
 
 function mkEvents(): ProcessManagerEvents & { changes: Array<[string, string, string]> } {

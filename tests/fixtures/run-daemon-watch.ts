@@ -13,7 +13,7 @@ const cliArgs: CliArgs = {
   skip: [], lazy: false, lazyTimeout: 10,
   proxy: false, proxyTls: true, proxyEntrypoint: 'websecure',
   dryRun: false, once: false, onceTimeout: 30, logFile: true,
-  watchConfig: true,
+  watchConfig: true, onceJson: false, killPortConflicts: false,
   configPath,
 };
 

@@ -4,7 +4,7 @@ import { TraefikProvider } from '../../../src/proxy-config/traefik.js';
 import type { ServiceState, ProxyOpts } from '../../../src/proxy-config/types.js';
 
 const opts: ProxyOpts = {
-  provider: 'traefik', domain: 'guesthub.remote', host: '127.0.0.1',
+  domain: 'guesthub.remote', host: '127.0.0.1',
   confPath: '/tmp/x.yml', tls: false, entrypoint: 'web',
   routes: { 'check-in-api': 'check-in-api' },
 };

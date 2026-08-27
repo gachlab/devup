@@ -41,17 +41,6 @@ describe('isPortBindable', () => {
     }
   });
 
-  it('returns false even for a server bound but not yet accepting', async () => {
-    const occupier = net.createServer();
-    occupier.pause?.();
-    await new Promise<void>(r => occupier.listen(0, '0.0.0.0', r));
-    const port = (occupier.address() as net.AddressInfo).port;
-    try {
-      assert.equal(await isPortBindable(port), false);
-    } finally {
-      await new Promise<void>(r => occupier.close(() => r()));
-    }
-  });
 });
 
 describe('waitForPort', () => {

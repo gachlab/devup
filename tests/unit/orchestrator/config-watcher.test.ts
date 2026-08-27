@@ -15,7 +15,7 @@ function mkSvc(name: string, port: number, over: Partial<ServiceConfig> = {}): S
 function mkState(svc: ServiceConfig): ProcessState {
   return {
     svc, proc: null, pid: null, status: 'running', health: 'up',
-    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
+    errors: 0, restarts: 0, startedAt: null, intentionalStop: false, crashLog: null, colorIdx: 0,
   };
 }
 

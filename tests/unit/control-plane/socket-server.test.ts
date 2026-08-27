@@ -22,7 +22,11 @@ function mkState(over: Partial<ProcessState>): ProcessState {
   };
 }
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
-  return {
+  // `Object.assign`, not `{ ...base, ...over }`: spreading a Partial makes every
+  // member optional, so a base missing a method still type-checks — which is
+  // exactly how a fake comes to lag the interface (CLAUDE.md rule 5). This way
+  // the base is checked as a complete RpcContext.
+  const base: RpcContext = {
     states: () => new Map(),
     restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
@@ -45,8 +49,8 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
       ok: true,
       remote: envName === null ? null : { envName, target: `https://x.${envName}.test`, readOnly: false },
     }),
-    ...over,
   };
+  return Object.assign(base, over);
 }
 
 function rpcCall(socketPath: string, payload: object): Promise<any> {
@@ -427,12 +431,15 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      let liveCallback: ((svc: string, line: string) => void) | null = null;
+      // A no-op default rather than `| null`: TypeScript narrows a `let` that is
+      // only visibly assigned `null` down to `null`, and the assignment that
+      // matters happens inside the subscribe callback, which it cannot see.
+      let liveCallback: (svc: string, line: string) => void = () => {};
       const handle = await startSocketServer('lf', noopCtx({
         tailLogs: async () => ({ lines: ['history-1', 'history-2'], oldestRetained: null, truncated: false }),
         watchLogs: (_svc, cb) => {
           liveCallback = cb;
-          return () => { liveCallback = null; };
+          return () => { liveCallback = () => {}; };
         },
       }), { path });
       try {
@@ -441,7 +448,7 @@ describe('socket-server', { skip: !isUnix }, () => {
 
         // Give server a moment to set up the subscription before emitting live.
         await new Promise(r => setTimeout(r, 30));
-        liveCallback?.('api', 'live-line');
+        liveCallback('api', 'live-line');
 
         const frames = await framesP;
         assert.equal(frames.length, 4);
@@ -465,20 +472,23 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      let removedCallback: ((name: string) => void) | null = null;
+      // A no-op default rather than `| null`: TypeScript narrows a `let` that is
+      // only visibly assigned `null` down to `null`, and the assignment that
+      // matters happens inside the subscribe callback, which it cannot see.
+      let removedCallback: (name: string) => void = () => {};
       const initial = new Map([['api', mkState({ status: 'running' })]]);
       const handle = await startSocketServer('sf', noopCtx({
         states: () => initial,
         watchRemoved: (cb) => {
           removedCallback = cb;
-          return () => { removedCallback = null; };
+          return () => { removedCallback = () => {}; };
         },
       }), { path });
       try {
         // ack + snapshot + removal = 3
         const framesP = rpcStream(path, { id: 4, method: 'status.follow' }, 3);
         await new Promise(r => setTimeout(r, 30));
-        removedCallback?.('api');
+        removedCallback('api');
 
         const frames = await framesP;
         assert.equal(frames[2].event, 'removed');
@@ -515,13 +525,16 @@ describe('socket-server', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
     const path = join(dir, 's.sock');
     try {
-      let stateCallback: ((name: string, state: ProcessState) => void) | null = null;
+      // A no-op default rather than `| null`: TypeScript narrows a `let` that is
+      // only visibly assigned `null` down to `null`, and the assignment that
+      // matters happens inside the subscribe callback, which it cannot see.
+      let stateCallback: (name: string, state: ProcessState) => void = () => {};
       const initial = new Map([['api', mkState({ status: 'running' })]]);
       const handle = await startSocketServer('sf', noopCtx({
         states: () => initial,
         watchStatus: (cb) => {
           stateCallback = cb;
-          return () => { stateCallback = null; };
+          return () => { stateCallback = () => {}; };
         },
       }), { path });
       try {
@@ -529,7 +542,7 @@ describe('socket-server', { skip: !isUnix }, () => {
         const framesP = rpcStream(path, { id: 3, method: 'status.follow' }, 3);
 
         await new Promise(r => setTimeout(r, 30));
-        stateCallback?.('api', mkState({ status: 'crashed' }));
+        stateCallback('api', mkState({ status: 'crashed' }));
 
         const frames = await framesP;
         assert.equal(frames.length, 3);

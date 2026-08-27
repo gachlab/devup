@@ -12,7 +12,7 @@ const baseCwd = dirname(configPath);
 const cliArgs: CliArgs = {
   skip: [], lazy: false, lazyTimeout: 10,
   proxy: false, proxyTls: true, proxyEntrypoint: 'websecure',
-  dryRun: false, once: false, onceTimeout: 30, logFile: true,
+  dryRun: false, once: false, onceTimeout: 30, logFile: true, onceJson: false, watchConfig: false, killPortConflicts: false,
 };
 
 const config = await loadConfig(configPath);

@@ -28,7 +28,7 @@ describe('LazyProxy.ensureStarted', () => {
   it('runs the on-demand start and reports the service reachable', { timeout: 15000 }, async () => {
     const [listenPort, targetPort] = await findFreePorts();
     let starts = 0;
-    let target: net.Server | null = null;
+    let target: net.Server | undefined;
 
     const proxy = createLazyProxy({
       listenPort, targetPort, timeoutMin: 0,
@@ -57,7 +57,7 @@ describe('LazyProxy.ensureStarted', () => {
     // or two clients racing — must not spawn the service twice.
     const [listenPort, targetPort] = await findFreePorts();
     let starts = 0;
-    let target: net.Server | null = null;
+    let target: net.Server | undefined;
 
     const proxy = createLazyProxy({
       listenPort, targetPort, timeoutMin: 0,
@@ -105,7 +105,7 @@ describe('LazyProxy.ensureStarted after an external stop', () => {
     // silent no-op: the CLI prints a tick over a service that stays down.
     const [listenPort, targetPort] = await findFreePorts();
     let starts = 0;
-    let target: net.Server | null = null;
+    let target: net.Server | undefined;
     let pretendAlive = true;
 
     const proxy = createLazyProxy({
@@ -124,7 +124,7 @@ describe('LazyProxy.ensureStarted after an external stop', () => {
 
       // Killed from outside. isAlive() still says yes — that is the trap.
       await new Promise<void>(r => target!.close(() => r()));
-      target = null;
+      target = undefined;
       assert.equal(pretendAlive, true, 'the stale belief is the point of this test');
 
       assert.equal(await proxy.ensureStarted(), true);
