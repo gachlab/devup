@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import type { Duplex } from 'node:stream';
 import type { EnvironmentConfig } from '../config/types.js';
 import { redactUrl } from '../utils/redact.js';
 import {
@@ -60,7 +61,23 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
   };
 
   const inFlight = new Set<http.ClientRequest>();
+  const upgraded = new Set<Duplex>();
   let probeTimer: ReturnType<typeof setInterval> | null = null;
+
+  function upstreamOptions(over: https.RequestOptions): https.RequestOptions {
+    return {
+      protocol: targetUrl.protocol,
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+      // Only meaningful over https; ignored by the http module.
+      rejectUnauthorized: env.tlsVerify !== false,
+      // The certificate is issued for the environment's hostname, and `host`
+      // is rewritten to it — but SNI comes from the connection, not the
+      // header, so it has to be said again here.
+      servername: targetUrl.hostname,
+      ...over,
+    };
+  }
 
   function forward(req: http.IncomingMessage, res: http.ServerResponse): void {
     const startedAt = Date.now();
@@ -74,20 +91,11 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       return;
     }
 
-    const upstream = agent.request({
-      protocol: targetUrl.protocol,
-      hostname: targetUrl.hostname,
-      port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+    const upstream = agent.request(upstreamOptions({
       method: req.method,
       path,
       headers: buildUpstreamHeaders(req.headers, ctx),
-      // Only meaningful over https; ignored by the http module.
-      rejectUnauthorized: env.tlsVerify !== false,
-      // The certificate is issued for the environment's hostname, and `host`
-      // was just rewritten to it — but SNI comes from the connection, not the
-      // header, so it has to be said again here.
-      servername: targetUrl.hostname,
-    } as https.RequestOptions);
+    }));
 
     inFlight.add(upstream);
     upstream.setTimeout(timeoutMs, () => {
@@ -116,7 +124,65 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
     req.pipe(upstream);
   }
 
+  /** A protocol switch — a WebSocket, and in practice the HMR channel of Vite
+   *  or `ng serve`, which is what makes it possible to serve a *web* service
+   *  from an environment at all.
+   *
+   *  Nothing here can go through `forward`: an upgrade has no response body to
+   *  pipe, the 101 has to be written to the raw socket, and the two headers
+   *  that are hop-by-hop everywhere else are the ones carrying the request. */
+  function upgrade(req: http.IncomingMessage, client: Duplex, head: Buffer): void {
+    const path = req.url ?? '/';
+    const upstream = agent.request(upstreamOptions({
+      method: req.method,
+      path,
+      headers: buildUpstreamHeaders(req.headers, ctx, { upgrade: true }),
+    }));
+    inFlight.add(upstream);
+    client.on('error', () => upstream.destroy());
+
+    upstream.on('upgrade', (upRes, upSocket, upHead) => {
+      inFlight.delete(upstream);
+      upgraded.add(client);
+      upgraded.add(upSocket);
+      const headers = Object.entries(upRes.headers)
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`);
+      client.write(`HTTP/1.1 101 Switching Protocols\r\n${headers.join('\r\n')}\r\n\r\n`);
+      // Bytes each side had already read past the handshake. Dropping them
+      // loses the first frame, which on an HMR channel is the one that says
+      // the connection is alive.
+      if (upHead?.length) upSocket.unshift(upHead);
+      if (head?.length) client.unshift(head);
+      upSocket.on('error', () => client.destroy());
+      const forget = () => { upgraded.delete(client); upgraded.delete(upSocket); };
+      client.on('close', forget);
+      upSocket.on('close', forget);
+      upSocket.pipe(client).pipe(upSocket);
+      onLog?.(`🔌 ${path} → 101 (upgraded)`);
+    });
+
+    // The upstream answered normally: it does not speak this protocol, or the
+    // path is wrong. There is no response to relay onto a socket that is
+    // waiting for a 101, so say so and close rather than hanging.
+    upstream.on('response', up => {
+      inFlight.delete(upstream);
+      up.resume();
+      onLog?.(`⚠ ${path} → ${up.statusCode} (upgrade refused)`);
+      client.end(`HTTP/1.1 ${up.statusCode ?? 502} Upgrade Refused\r\n\r\n`);
+    });
+
+    upstream.on('error', (err: Error) => {
+      inFlight.delete(upstream);
+      onUpstreamError?.(err);
+      onLog?.(`❌ ${path} → ${err.message}`);
+      client.destroy();
+    });
+
+    upstream.end();
+  }
+
   const server = http.createServer(forward);
+  server.on('upgrade', upgrade);
   server.listen(listenPort, '0.0.0.0');
 
   /** Reachability, not correctness: an environment answering 401 to an
@@ -125,16 +191,11 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
   function probe(): Promise<boolean> {
     const hc = env.healthCheck ?? {};
     return new Promise(resolve => {
-      const req = agent.request({
-        protocol: targetUrl.protocol,
-        hostname: targetUrl.hostname,
-        port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+      const req = agent.request(upstreamOptions({
         method: 'GET',
         path: hc.path ?? '/',
         headers: { host: targetUrl.host, ...(env.origin ? { origin: env.origin } : {}) },
-        rejectUnauthorized: env.tlsVerify !== false,
-        servername: targetUrl.hostname,
-      } as https.RequestOptions, up => {
+      }), up => {
         up.resume();
         resolve(matchesExpectation(up.statusCode, hc.expect));
       });
@@ -163,6 +224,11 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       probeTimer = null;
       for (const req of inFlight) req.destroy();
       inFlight.clear();
+      // An upgraded connection is no longer a request: it is two sockets
+      // piped together, and `server.close()` does not touch it. Left alone
+      // they hold the event loop open for as long as the far end stays quiet.
+      for (const socket of upgraded) socket.destroy();
+      upgraded.clear();
       server.close();
     },
   };

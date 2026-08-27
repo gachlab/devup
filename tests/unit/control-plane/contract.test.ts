@@ -28,6 +28,11 @@ const SHAPE_BY_CONTRACT: Record<number, string[]> = {
     'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'restartPendingIn',
     'pid', 'startedAt', 'crashLog', 'debugPort',
   ],
+  3: [
+    'name', 'status', 'health', 'port', 'originalPort', 'type', 'phase',
+    'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'restartPendingIn',
+    'pid', 'startedAt', 'crashLog', 'debugPort', 'remote',
+  ],
 };
 
 /** Golden test for the `status` wire shape.
@@ -110,11 +115,33 @@ describe('control-plane contract', () => {
   it('only pins states the daemon can actually produce', () => {
     for (const s of golden.services) {
       // Both idle transitions null `pid` and `startedAt` together. A fixture
-      // showing a timestamp on a stopped service would teach clients that
+      // showing a timestamp on a stopped *process* would teach clients that
       // `startedAt != null` means running.
-      if (s.pid === null) {
+      //
+      // A remote service is the one place where the pair legitimately comes
+      // apart: there is no process, so `pid` is null and stays null, while
+      // `startedAt` answers a question that still has an answer — since when
+      // devup has been serving that port. Narrowed rather than deleted,
+      // because for everything else the rule is exactly right.
+      if (s.pid === null && s.remote === null) {
         assert.equal(s.startedAt, null, `${s.name}: startedAt must be null when pid is`);
       }
+    }
+  });
+
+  it('pins remote as an object, not only as null', () => {
+    // A client generating a type from a fixture of nulls learns the field
+    // exists and nothing about what it carries.
+    const remotes = golden.services.filter((s: { remote: unknown }) => s.remote !== null);
+    assert.ok(remotes.length > 0, 'no entry exercises a remote service');
+    for (const s of remotes) {
+      assert.equal(typeof s.remote.envName, 'string');
+      assert.equal(typeof s.remote.target, 'string');
+      assert.equal(typeof s.remote.readOnly, 'boolean');
+      // The combination a client has to be able to read: running, and nothing
+      // local to attach to or sample.
+      assert.equal(s.status, 'running');
+      assert.equal(s.pid, null);
     }
   });
 

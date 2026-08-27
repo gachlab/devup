@@ -29,21 +29,52 @@ export function isCrashLooped(st: ProcessState): boolean {
   return st.status === 'crashed' && st.restarts >= MAX_RESTARTS;
 }
 
+/** How a remote service reads in the status column.
+ *
+ *  It replaces `running`, which would be true and useless: what matters about
+ *  this row is that the process is not here and that a request typed against
+ *  its port lands in a shared environment. `ro` marks the ones that refuse
+ *  writes — the quiet case, and the rare one, since `readOnly` is off by
+ *  default. */
+export function remoteLabel(remote: { envName: string; readOnly: boolean }): string {
+  const suffix = remote.readOnly ? ' ro' : '';
+  return `→${remote.envName}${suffix}`.slice(0, 8);
+}
+
 function Row({ name, st, stat, ml, verbose }: { name: string; st: ProcessState; stat?: ServiceStats; ml: number; verbose?: boolean }) {
   const looped = isCrashLooped(st);
+  const remote = st.remote;
+  // A different glyph, but the health colour is kept: whether the environment
+  // answers is still the question the dot exists to answer, and a marker that
+  // discarded it would trade one fact for another instead of adding one.
   const indicator = looped
     ? <Text color="red" bold>✖</Text>
-    : <Text color={(H[st.health] ?? H['down']!).color}>{(H[st.health] ?? H['down']!).c}</Text>;
+    : remote
+      ? <Text color={(H[st.health] ?? H['down']!).color}>◈</Text>
+      : <Text color={(H[st.health] ?? H['down']!).color}>{(H[st.health] ?? H['down']!).c}</Text>;
   const color = tagColors[st.colorIdx % tagColors.length]!;
-  const sc = looped ? 'red' : st.status === 'running' ? 'green' : st.status === 'starting' ? 'yellow' : st.status === 'idle' ? 'blue' : 'red';
-  const statusLabel = looped ? 'looping' : st.status;
+  const sc = looped ? 'red' : remote ? 'magenta' : st.status === 'running' ? 'green' : st.status === 'starting' ? 'yellow' : st.status === 'idle' ? 'blue' : 'red';
+  const statusLabel = looped ? 'looping' : remote ? remoteLabel(remote) : st.status;
   const up = st.startedAt ? fmtUptime(Date.now() - st.startedAt) : '-';
 
   if (!verbose) {
     return (
       <Text>
-        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped || (!!remote && !remote.readOnly)}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
       </Text>
+    );
+  }
+
+  // A remote service has no command to resolve and no extraEnv to redact —
+  // what verbose has to show is where its traffic actually goes.
+  if (remote) {
+    return (
+      <Box flexDirection="column">
+        <Text>
+          {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={!remote.readOnly}>{statusLabel.padEnd(8)}</Text> {'-'.padStart(6)} {'-'.padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+        </Text>
+        <Text dimColor>   → {remote.target}{remote.readOnly ? ' (read-only)' : ''}</Text>
+      </Box>
     );
   }
 
@@ -119,6 +150,11 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
     : '';
   const scrolled = effectiveOffset > 0;
   const loopedCount = [...states.values()].filter(isCrashLooped).length;
+  // Standing, not transient. `readOnly` is off by default, so for as long as
+  // these rows are on screen a request typed against one of their ports
+  // changes data somebody else is looking at.
+  const writableRemotes = [...states.values()].filter(s => s.remote && !s.remote.readOnly);
+  const remoteEnvs = [...new Set(writableRemotes.map(s => s.remote!.envName))];
 
   // RAM pressure banner with hysteresis (80% on, 75% off).
   const ramPct = (parseFloat(usedGB) / parseFloat(totalGB)) * 100;
@@ -141,11 +177,23 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
         <Text bold color="green"> Stats {positionInfo}</Text>
         {scrolled && <Text color="yellow"> [SCROLL]</Text>}
         {loopedCount > 0 && <Text color="red" bold> ⚠ {loopedCount} need attention</Text>}
+
         <Text dimColor> System: {cpus}c Load {load} RAM {usedGB}/{totalGB}GB</Text>
         <Text dimColor> │ </Text>
         <Text dimColor>Stack: CPU {totalCpu.toFixed(1)}% RAM {stackMem} Err {totalErrors} Rst {totalRestarts} Svcs {names.length}</Text>
         {sortMode !== 'name' && <Text dimColor> │ Sort: {sortMode}</Text>}
       </Box>
+      {writableRemotes.length > 0 && (
+        // Its own line, like the RAM banner and for the same reason: the
+        // header row already carries System and Stack, and anything added
+        // there is squeezed and wrapped until it reads as noise. This one has
+        // to stay legible for as long as it is true — a request typed against
+        // one of these ports changes data somebody else is looking at.
+        <Box>
+          <Text color="magenta" bold> 🌐 {writableRemotes.length} remote → {remoteEnvs.join(', ')} — writes reach it: </Text>
+          <Text color="magenta">{writableRemotes.map(s => s.svc.name).join(', ')}</Text>
+        </Box>
+      )}
       {ramBanner && (
         <Box>
           <Text color="yellow" bold> ⚠ RAM {ramPct.toFixed(0)}% — top: </Text>

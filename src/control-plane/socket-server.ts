@@ -277,6 +277,12 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
     startedAt: st.startedAt,
     crashLog: st.crashLog ?? null,
     debugPort: st.debugPort ?? null,
+    // Null rather than omitted: a client reading `snapshot.remote?.envName`
+    // gets the same answer either way, and the field being always present is
+    // what lets the golden test pin it.
+    remote: st.remote
+      ? { envName: st.remote.envName, target: st.remote.target, readOnly: st.remote.readOnly }
+      : null,
   };
 }
 

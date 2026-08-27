@@ -5,6 +5,30 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Correr local apuntando a QA, que es lo que faltaba para trabajar en un servicio
+sin levantar los veinticuatro que lo rodean.
+
+### Added
+- **Remote environments** (`--remote <env>`) — a service that is not running locally stops being *absent* and starts being *proxied*: devup binds its configured port and forwards to a named environment from the new `environments` block. Nothing else in the stack has to know — not the other services, not the frontend, not the reverse proxy. See [docs/remote-environments.md](docs/remote-environments.md).
+
+  The port is the point of cut because it is where frontends already look: in development they resolve their backends to `localhost:<port>`, so neither reference project changes a line. It composes with profiles — `devup --profile check-in --remote qa` runs three services here and serves the rest from QA.
+
+  It is an HTTP proxy and not the TCP relay lazy mode uses, because three things have to happen on the way through. TLS is terminated locally and re-originated upstream with the right SNI; `Host` is rewritten so the environment's ingress can route at all; and the headers that select a **tenant** or validate a token are rewritten rather than forwarded. That last one is not cosmetic: an upstream resolving its database from `origin > referer > x-forwarded-host` finds nothing for `localhost`, and every request fails before it reaches a database.
+
+  `Set-Cookie` is localized by default — `Domain` and `Secure` removed — because without it a browser on `http://localhost` drops the session cookie twice over and there is no login. Redirects are pointed back at the local stack, and at *any* environment origin this run serves rather than only the service's own: a login answers with a 302 to the app.
+
+- **WebSocket upgrades** through the remote proxy, which is what makes it possible to serve a `web` service from an environment at all — the HMR channels of Vite and `ng serve` are WebSockets.
+
+- **`remote` in the status snapshot**: `{ envName, target, readOnly }`, `null` for an ordinary service. It is an added field rather than a new `status` value on purpose — widening that union breaks every exhaustive switch written against it, including the hand-written copy in gachlab/devup-vscode, while a client that has never heard of this field renders a remote service as the running service it is.
+
+- **A standing warning in the TUI** while any remote service accepts writes, on its own line rather than in the header, where it wrapped in half. `readOnly` is off by default and stays that way: logging in is a POST, so a restrictive default breaks the first thing anyone tries and teaches them to turn it off without reading why. The warning goes where it cannot be skipped instead.
+
+### Changed
+- **`CONTRACT_VERSION` is `3`** — the snapshot gained `remote`.
+- The health poller **skips remote services**. Their port is held by devup's own proxy, so a probe there reports a healthy service no matter what the environment is doing; health comes from a probe against the upstream instead.
+
 ## [0.17.0] — 2026-08-24
 
 Lo que 0.16.0 dejó a medias, y un bug de la TUI que llevaba abierto desde julio

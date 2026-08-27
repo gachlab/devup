@@ -120,6 +120,25 @@ Fields per service mirror `ProcessState`:
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
 - `debugPort`: port the Node inspector bound to, parsed from the process's startup line. `null` unless the service is running under `--inspect`
+- `remote`: `{ envName, target, readOnly }` when the service is **not a local
+  process** — devup holds its configured port and forwards to a remote
+  environment (see [Remote environments](./remote-environments.md)). `null` for
+  an ordinary service. Added in 0.18.0
+
+  It is an added field rather than a new `status` value on purpose: widening
+  that union breaks every exhaustive switch written against it, and a client
+  that does not know this field yet renders a remote service as the running
+  service it is.
+
+  Two things travel with it that nothing else in the snapshot says. `pid` is
+  `null` and stays null, so there is no process to attach a debugger to — an
+  "attach" offered for one of these silently does nothing. And there is no
+  process to sample, so the service is **absent from `stats`**, which is not
+  the same as 0% CPU.
+
+  `startedAt` is set: it answers since when devup has been serving that port.
+  This is the one case where `pid === null` and `startedAt !== null` together
+  are correct.
 
 ### `info`
 

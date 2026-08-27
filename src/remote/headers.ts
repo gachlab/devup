@@ -52,12 +52,27 @@ export function resolveHeaderValues(
   return out;
 }
 
+export interface UpstreamHeaderOpts {
+  /** Keep `connection` and `upgrade`, which are hop-by-hop everywhere except
+   *  on the request that is asking for the hop to change protocol. Stripping
+   *  them there turns a WebSocket handshake into an ordinary GET, and the
+   *  upstream answers 200 to a client waiting for 101. */
+  upgrade?: boolean;
+}
+
 /** The headers to send upstream, from the ones the local client sent. */
-export function buildUpstreamHeaders(incoming: IncomingHttpHeaders, ctx: RemoteContext): OutgoingHttpHeaders {
+export function buildUpstreamHeaders(
+  incoming: IncomingHttpHeaders,
+  ctx: RemoteContext,
+  opts: UpstreamHeaderOpts = {},
+): OutgoingHttpHeaders {
   const out: OutgoingHttpHeaders = {};
+  const stripped = opts.upgrade
+    ? HOP_BY_HOP.filter(h => h !== 'connection' && h !== 'upgrade')
+    : HOP_BY_HOP;
   for (const [key, value] of Object.entries(incoming)) {
     if (value === undefined) continue;
-    if (HOP_BY_HOP.includes(key.toLowerCase())) continue;
+    if (stripped.includes(key.toLowerCase())) continue;
     out[key] = value;
   }
 

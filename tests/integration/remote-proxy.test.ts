@@ -250,3 +250,112 @@ describe('remote-proxy integration', { skip: isWin }, () => {
     });
   });
 });
+
+describe('remote-proxy upgrades', { skip: isWin }, () => {
+  /** A minimal protocol switch: enough of a handshake to prove the pair of
+   *  hop-by-hop headers survived and that bytes flow both ways afterwards.
+   *  A real WebSocket frame codec would test `ws`, not the proxy. */
+  function startEchoUpstream(): Promise<{ server: http.Server; origin: string; seenHeaders: () => http.IncomingHttpHeaders; close: () => Promise<void> }> {
+    let seen: http.IncomingHttpHeaders = {};
+    // An upgraded socket is not a request: `server.close()` waits for it for
+    // ever, so the test has to let go of them itself.
+    const sockets = new Set<net.Socket>();
+    const server = http.createServer((_req, res) => { res.writeHead(200); res.end('not an upgrade'); });
+    server.on('upgrade', (req, socket, head) => {
+      seen = req.headers;
+      sockets.add(socket as net.Socket);
+      socket.on('close', () => sockets.delete(socket as net.Socket));
+      socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+      if (head?.length) socket.unshift(head);
+      socket.on('data', (chunk: Buffer) => socket.write(Buffer.concat([Buffer.from('echo:'), chunk])));
+    });
+    return new Promise(resolve => {
+      server.listen(0, '127.0.0.1', () => resolve({
+        server,
+        origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+        seenHeaders: () => seen,
+        close: () => new Promise<void>(done => {
+          for (const socket of sockets) socket.destroy();
+          sockets.clear();
+          server.close(() => done());
+        }),
+      }));
+    });
+  }
+
+  it('relays a protocol switch and pipes bytes both ways', { timeout: 10000 }, async () => {
+    const up = await startEchoUpstream();
+    const port = await findFreePort();
+    const proxy = createRemoteProxy({
+      listenPort: port, target: up.origin, envName: 'qa',
+      env: { origin: 'https://qa.norelian.com' }, originMap: new Map(),
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+      const { status, echoed } = await new Promise<{ status: string; echoed: string }>((resolve, reject) => {
+        const socket = net.connect(port, '127.0.0.1', () => {
+          socket.write(
+            `GET /ws HTTP/1.1\r\nHost: localhost:${port}\r\nUpgrade: websocket\r\n` +
+            'Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZQ==\r\n\r\n',
+          );
+        });
+        let buf = '';
+        socket.on('data', chunk => {
+          buf += chunk.toString();
+          if (buf.includes('\r\n\r\n') && !buf.includes('echo:')) socket.write('ping');
+          if (buf.includes('echo:ping')) {
+            socket.destroy();
+            resolve({ status: buf.split('\r\n')[0]!, echoed: 'echo:ping' });
+          }
+        });
+        socket.on('error', reject);
+        setTimeout(() => reject(new Error(`no upgrade; got: ${JSON.stringify(buf)}`)), 5000);
+      });
+
+      assert.match(status, /101/);
+      assert.equal(echoed, 'echo:ping');
+      // The two headers that are hop-by-hop on every other request are the
+      // ones that carry this one. Stripping them turns the handshake into an
+      // ordinary GET and the upstream answers 200 to a client awaiting 101.
+      assert.match(String(up.seenHeaders().upgrade), /websocket/i);
+      assert.match(String(up.seenHeaders().connection), /upgrade/i);
+      // And the environment's header rules still apply on the way up.
+      assert.equal(up.seenHeaders().origin, 'https://qa.norelian.com');
+      assert.equal(up.seenHeaders().host, new URL(up.origin).host);
+    } finally {
+      proxy.destroy();
+      await up.close();
+    }
+  });
+
+  it('closes the client instead of hanging when the upstream refuses the upgrade', { timeout: 10000 }, async () => {
+    const plain = http.createServer((_req, res) => { res.writeHead(200); res.end('ok'); });
+    await new Promise<void>(resolve => plain.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(plain.address() as AddressInfo).port}`;
+    const port = await findFreePort();
+    const proxy = createRemoteProxy({
+      listenPort: port, target: origin, envName: 'qa', env: {}, originMap: new Map(),
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+      const answer = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(port, '127.0.0.1', () => {
+          socket.write(
+            `GET /ws HTTP/1.1\r\nHost: localhost:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n`,
+          );
+        });
+        let buf = '';
+        socket.on('data', c => { buf += c.toString(); });
+        socket.on('close', () => resolve(buf));
+        socket.on('error', reject);
+        setTimeout(() => reject(new Error('socket stayed open')), 5000);
+      });
+      assert.match(answer, /Upgrade Refused/);
+    } finally {
+      proxy.destroy();
+      await new Promise<void>(resolve => plain.close(() => resolve()));
+    }
+  });
+});
