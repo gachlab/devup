@@ -150,8 +150,15 @@ async function main() {
   // do. And the remote path is not silent about its own emptiness:
   // `startRemoteServices` reports a selection that matched nothing, and names
   // anything it could not resolve a target for.
-  // Resolved once, here, so everything downstream sees the same split — the
-  // port scan above all, which is the check this used to be invisible to.
+  // Resolved here because the **port scan** needs it and had no way to ask:
+  // under the blanket `--remote qa` the remote services are absent from the
+  // filtered list, so their ports were never checked, while the explicit form
+  // scanned them. This is the fix for that.
+  //
+  // It is *not* threaded downstream yet: `daemon.ts`, `useBootSequence.ts` and
+  // `once.ts` each still call `parseRemoteSelection` + `classifyRemote`
+  // themselves. Passing this one down means changing four dispatch signatures,
+  // which is worth doing and is not this change — see gachlab/devup#132.
   let remote: RemoteClassification | null = null;
   try {
     remote = resolveRemote(config, services, cliArgs.remote);

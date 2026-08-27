@@ -243,7 +243,7 @@ The validator pattern (errors block, warnings advisory) is the right place to la
 - TypeScript strict mode (`strict: true`). Every invariant here is null-carrying — `proc`, `pid`, `remote`, `crashLog` — so this is the compiler doing the work hazard 2 is about. Prefer explicit return types on exported functions.
 - No emojis in code/docs unless the user asked for them. The exception: log output uses 🚀 🔨 ⚡ ⚠ ❌ ✓ to make scanning fast.
 - Comments explain **why**, not what. The function name should already say what.
-- One feature = one commit, in the milestone release branch. Bump + CHANGELOG = the last commit of the branch.
+- One change = one branch = one PR, staged into a commit per step when it is large. The **CHANGELOG entry goes in that branch**; the **version bump goes in a separate `release/X.Y.Z` branch** with a `chore(release): X.Y.Z` commit, and publishing the GitHub release triggers `publish.yml`. That is what the last five releases did; the older "bump in the last commit of the branch" rule is not what the history shows.
 
 ## Bumping
 

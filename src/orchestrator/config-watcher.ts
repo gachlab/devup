@@ -8,7 +8,11 @@ import type { LazyProxy } from '../lazy/proxy.js';
 import { rewriteServicePort } from '../lazy/classifier.js';
 import { restartService } from '../process/restart-service.js';
 import { registerLazy } from '../process/boot.js';
-import { releaseLazyProxy, DEFAULT_LAZY_TIMEOUT } from '../lazy/classifier.js';
+import { releaseLazyProxy } from '../lazy/classifier.js';
+import { isRunning, waitForExit } from '../process/liveness.js';
+
+/** Matches `start-service.ts`: long enough for a drain, short enough to notice. */
+const STOP_GRACE_MS = 5_000;
 
 export interface ConfigWatchOpts {
   configPath: string;
@@ -21,8 +25,10 @@ export interface ConfigWatchOpts {
    *  case for remote services a few lines down is the same gap noticed once
    *  and not generalized. */
   lazyProxies?: Map<string, LazyProxy & { ensureStarted(): Promise<boolean> }>;
-  /** Idle timeout for a proxy this reload has to re-create. */
-  lazyTimeout?: number;
+  /** Idle timeout for a proxy this reload has to re-create. **Required** when
+   *  `lazyProxies` is given: a default here would silently give a rebound
+   *  proxy a different timeout from every other one in the stack. */
+  lazyTimeout: number;
   /** Receives status lines: success, validation errors, reload errors. */
   log: (msg: string) => void;
   /** Services as the *file* last declared them.
@@ -105,8 +111,23 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
         // live config from state.
         const portChanged = prev !== undefined && prev.svc.originalPort !== next.port;
         if (portChanged) {
+          // Stop the running child **first**, and wait for it to go.
+          // `registerLazy` replaces the state entry with a fresh idle one, so
+          // an awake service would be orphaned: `Lifecycle.stop` reads the
+          // map, making every later stop a permanent no-op, the close handler
+          // still holds the old state object and would write `crashed` over
+          // the new entry, and the restarter would respawn the *old* rewritten
+          // config. All four are CLAUDE.md §1 rows.
+          if (prev && isRunning(prev)) {
+            manager.stop(next.name);
+            await waitForExit(prev, STOP_GRACE_MS);
+          }
+          manager.cancelPendingRestart(next.name);
+          // The failure streak is per name and would be inherited by the entry
+          // we are about to create — `forget` only runs via `remove()`.
+          manager.forgetHealth(next.name);
           releaseLazyProxy(lazyProxies, next.name);
-          registerLazy(manager, next, ci, lazyTimeout ?? DEFAULT_LAZY_TIMEOUT, lazyProxies!,
+          registerLazy(manager, next, ci, lazyTimeout, lazyProxies!,
             msg => log(`[${next.name}] ${msg}`));
           log(`↻ ${next.name}: port changed, proxy rebound on :${next.port}`);
           continue;

@@ -33,6 +33,7 @@ export function useHotReload(
     pushLog('devup', `👀 watching ${configPath}`, 12);
     return watchConfig({
       configPath, baseCwd, manager, lazyProxies: lazyProxies?.current ?? undefined,
+      lazyTimeout: cliArgs.lazyTimeout,
       baseline: services,
       log: msg => pushLog('devup', msg, msg.startsWith('⚠') ? 5 : 12),
     });

@@ -247,7 +247,11 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
           },
         };
       },
-      getProxyInfo: () => buildProxyInfo(proxyProvider, proxyOpts, !!cliArgs.proxy),
+      // `true`, not `cliArgs.proxy`: `index.ts` only builds the provider under
+      // that flag, so reaching here with one means it was on. The daemon has
+      // no runtime toggle — that is the TUI's `p` key, which is why `active`
+      // is a parameter at all.
+      getProxyInfo: () => buildProxyInfo(proxyProvider, proxyOpts, true),
       getInfo() {
         // The project as configured, plus which instance we are — `projectName`
         // above is the qualified path key and would read as a project name that
@@ -283,6 +287,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         writeDevupLog(`👀 watching ${configPath}`);
         stopConfigWatcher = watchConfig({
           configPath, baseCwd, manager: mgr, lazyProxies,
+          lazyTimeout: cliArgs.lazyTimeout,
           baseline: config.services,
           log: msg => writeDevupLog(msg),
         });

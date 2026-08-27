@@ -89,7 +89,16 @@ export function useControlPlane(
               onUpdate(name, state);
             });
           },
-          watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+          watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => {
+            // This map is the third copy of the CPU baseline — the daemon and
+            // `useProcessManager` each release theirs on removal, and this one
+            // had no release path at all. A service re-added under the same
+            // name would be diffed against the dead process's counter and
+            // report a large negative CPU for one sample: the `prevCpuMap` row
+            // of CLAUDE.md §1, verbatim.
+            prevCpuMap.current.delete(name);
+            onRemoved(name);
+          }),
           debug: (name, enable, port, brk) => debugService(manager, lazyProxies.current, name, enable, port, brk),
           start: (name) => startService(manager, lazyProxies.current, name),
           setRemote: (name, envName) => switchService({

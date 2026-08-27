@@ -116,6 +116,16 @@ export class ProcessManager {
     if (st) this.events.onStateChange(name, st);
   }
 
+  /** Drop a service's health failure streak without removing it.
+   *
+   *  `remove()` does this as part of a removal; a service being *replaced* in
+   *  place — a reload that rebinds a lazy proxy — needs it too, or the fresh
+   *  entry inherits the old streak and can be marked down on its first failed
+   *  probe. Same reasoning as the `failureCounts` row in CLAUDE.md §1. */
+  forgetHealth(name: string): void {
+    this.healthPoller.forget(name);
+  }
+
   restart(name: string): Promise<void> {
     return this.restarter.restart(name);
   }
