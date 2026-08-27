@@ -4,11 +4,11 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.13.0](https://github.com/gachlab/devup/releases/tag/0.13.0)** (2026-08-21) — `removed` frames on `status.follow`, host CPU in `stats`, and five ways a removed service could come back, all closed.
+Last released: **[0.18.0](https://github.com/gachlab/devup/releases/tag/0.18.0)** (2026-08-27) — remote environments: a service that is not running locally is served by forwarding its port to QA, with the header rewriting that makes sessions and tenants work.
 
 Full history is in [CHANGELOG.md](CHANGELOG.md); this file is only for what is *not* built yet.
 
-The VS Code extension lives in its own repo: **[gachlab/devup-vscode](https://github.com/gachlab/devup-vscode)** (0.7.0 on the Marketplace). It consumes this package's control plane and has its own release cadence.
+The VS Code extension lives in its own repo: **[gachlab/devup-vscode](https://github.com/gachlab/devup-vscode)** (0.11.0 on the Marketplace). It consumes this package's control plane and has its own release cadence.
 
 > **Reconciled 2026-08-21.** Every item below was checked against the source, and 25 of 29 turned out to be shipped while still marked `proposed` — including profiles, hot reload and the control plane itself. Per-item release attribution was not reconstructed; `done` here means *verified present in `src/`*, and the CHANGELOG is authoritative for when. Keep this honest: a roadmap that lists finished work as pending is worse than no roadmap, because it gets believed.
 
