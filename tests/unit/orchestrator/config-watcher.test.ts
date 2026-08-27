@@ -8,6 +8,7 @@ import { applyConfigChange, watchConfig } from '../../../src/orchestrator/config
 import type { ProcessManager } from '../../../src/process/manager.js';
 import type { ProcessState } from '../../../src/process/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
+import { rewriteServicePort } from '../../../src/lazy/classifier.js';
 
 function mkSvc(name: string, port: number, over: Partial<ServiceConfig> = {}): ServiceConfig {
   return { name, cwd: '.', cmd: 'node', args: [], type: 'api', port, phase: 0, ...over };
@@ -221,5 +222,110 @@ describe('watchConfig', () => {
         assert.equal(calls.started[0]!.name, 'web');
       } finally { stop(); }
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('applyConfigChange with a lazy service', () => {
+  it('does not spawn it on the public port its own proxy holds', async () => {
+    // The failure this replaces: `start(fileSvc, ci, isRestart=true)` skips
+    // the `isPortBindable` guard, so editing a lazy service's args spawned the
+    // process on the configured port — the one its proxy is listening on. The
+    // child died with EADDRINUSE, spent its restart budget and ended
+    // `crashed`, and `state.svc` was left holding the un-rewritten config so
+    // the snapshot reported a port that no longer matched the proxy's target.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-watch-lazy-'));
+    const configPath = join(dir, 'devup.config.json');
+    const base = { name: 'app-api', cwd: '.', cmd: 'node', args: ['a.js'], type: 'api', port: 3000, phase: 0 };
+    writeFileSync(configPath, JSON.stringify({ name: 't', services: [{ ...base, args: ['b.js'] }] }));
+
+    const started: Array<{ name: string; port: number; isRestart?: boolean }> = [];
+    const state = new Map<string, ProcessState>();
+    const manager = {
+      state,
+      install: async () => true,
+      start: async (svc: ServiceConfig, _ci: number, isRestart?: boolean) => {
+        started.push({ name: svc.name, port: svc.port, isRestart });
+      },
+      stop: () => {},
+      cancelPendingRestart: () => {},
+    } as unknown as import('../../../src/process/manager.js').ProcessManager;
+
+    // As the orchestrator holds a lazy service: the rewrite already happened.
+    const rewritten = rewriteServicePort(base as ServiceConfig);
+    state.set('app-api', {
+      svc: rewritten, proc: null, pid: null, status: 'idle', health: 'idle',
+      errors: 0, restarts: 0, startedAt: null, intentionalStop: false,
+      colorIdx: 0, crashLog: null,
+    });
+
+    let ensured = 0;
+    const lazyProxies = new Map([['app-api', {
+      destroy: () => {},
+      ensureStarted: async () => { ensured++; return true; },
+    }]]) as unknown as Map<string, import('../../../src/lazy/proxy.js').LazyProxy & { ensureStarted(): Promise<boolean> }>;
+
+    try {
+      await applyConfigChange({
+        configPath, baseCwd: dir, manager, lazyProxies,
+        baseline: [base as ServiceConfig],
+        log: () => {},
+      });
+
+      // Nothing spawned. The service was asleep, so `restartService` leaves it
+      // asleep — the next request starts it with the new config, which is the
+      // whole point of lazy. What must not happen is a spawn around the proxy.
+      assert.equal(ensured, 0, 'it woke a service that was asleep');
+      assert.deepEqual(started, [], 'it spawned around the proxy');
+      // And the state keeps the rewritten port, so the snapshot still matches
+      // what the proxy targets.
+      assert.equal(state.get('app-api')!.svc.port, rewritten.realPort);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('restarts a lazy service that is awake through its proxy', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-watch-lazy2-'));
+    const configPath = join(dir, 'devup.config.json');
+    const base = { name: 'app-api', cwd: '.', cmd: 'node', args: ['a.js'], type: 'api', port: 3000, phase: 0 };
+    writeFileSync(configPath, JSON.stringify({ name: 't', services: [{ ...base, args: ['b.js'] }] }));
+
+    const started: string[] = [];
+    const state = new Map<string, ProcessState>();
+    const manager = {
+      state,
+      install: async () => true,
+      start: async (svc: ServiceConfig) => { started.push(svc.name); },
+      stop: () => {},
+      cancelPendingRestart: () => {},
+    } as unknown as import('../../../src/process/manager.js').ProcessManager;
+
+    const rewritten = rewriteServicePort(base as ServiceConfig);
+    state.set('app-api', {
+      svc: rewritten, proc: null, pid: null, status: 'running', health: 'up',
+      errors: 0, restarts: 0, startedAt: Date.now(), intentionalStop: false,
+      colorIdx: 0, crashLog: null,
+    });
+
+    let ensured = 0;
+    const lazyProxies = new Map([['app-api', {
+      destroy: () => {},
+      ensureStarted: async () => { ensured++; return true; },
+    }]]) as unknown as Map<string, import('../../../src/lazy/proxy.js').LazyProxy & { ensureStarted(): Promise<boolean> }>;
+
+    try {
+      await applyConfigChange({
+        configPath, baseCwd: dir, manager, lazyProxies,
+        baseline: [base as ServiceConfig],
+        log: () => {},
+      });
+      // Through the proxy, never around it: spawning directly leaves the
+      // proxy's readiness flag false, and the next request starts a *second*
+      // process.
+      assert.equal(ensured, 1, 'it did not go through the lazy proxy');
+      assert.deepEqual(started, [], 'it spawned around the proxy');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

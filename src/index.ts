@@ -12,6 +12,7 @@ import { qualifyInstance, validateInstance, instanceFlag, describeStack } from '
 import { detectSubcommand, misplacedSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
 import { scanPortConflicts, resolvePortConflicts, type BlamedInstance } from './process/port-conflicts.js';
+import { allHeldPorts, resolveRemote, type RemoteClassification } from './remote/classifier.js';
 import { attributePort, type DaemonIdentity } from './orchestrator/instances.js';
 import { defaultSocketPath, sendRpc } from './control-plane/client.js';
 import { detectPlatform } from './platform/detect.js';
@@ -149,6 +150,16 @@ async function main() {
   // do. And the remote path is not silent about its own emptiness:
   // `startRemoteServices` reports a selection that matched nothing, and names
   // anything it could not resolve a target for.
+  // Resolved once, here, so everything downstream sees the same split — the
+  // port scan above all, which is the check this used to be invisible to.
+  let remote: RemoteClassification | null = null;
+  try {
+    remote = resolveRemote(config, services, cliArgs.remote);
+  } catch (e: any) {
+    console.error(`❌ ${e.message}`);
+    process.exit(1);
+  }
+
   if (nothingToRun(services, cliArgs)) {
     console.error('❌ No services to run after filtering');
     process.exit(1);
@@ -243,7 +254,12 @@ async function main() {
   // already cleared conflicts before spawning us). All other flows benefit:
   // TUI, `devup up -d`, `--once`.
   const ensurePortsFree = async (): Promise<boolean> => {
-    const conflicts = await scanPortConflicts(services);
+    // The remote services' ports too, not only the local selection's. devup's
+    // own proxy binds the configured port for each of them, so a port already
+    // held is just as fatal there — and under the blanket `--remote qa` those
+    // services are absent from `services`, so this used to skip them entirely
+    // while the explicit `--remote qa:a,b` form scanned them.
+    const conflicts = await scanPortConflicts(allHeldPorts(services, remote));
     if (!conflicts.length) return true;
     // Instances share ports on purpose, so another devup is the *expected*
     // holder here — naming it is the difference between an answer and a hunt.

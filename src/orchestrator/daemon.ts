@@ -297,7 +297,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         const configPath = findConfigFile(baseCwd, cliArgs.configPath);
         writeDevupLog(`👀 watching ${configPath}`);
         stopConfigWatcher = watchConfig({
-          configPath, baseCwd, manager: mgr,
+          configPath, baseCwd, manager: mgr, lazyProxies,
           baseline: config.services,
           log: msg => writeDevupLog(msg),
         });

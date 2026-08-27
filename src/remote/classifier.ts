@@ -1,4 +1,4 @@
-import type { EnvironmentConfig, ServiceConfig } from '../config/types.js';
+import type { DevStackConfig, EnvironmentConfig, ServiceConfig } from '../config/types.js';
 import { resolveRemoteTarget } from './target.js';
 
 export interface RemoteSelection {
@@ -126,4 +126,34 @@ export function parseRemoteSelection(
 function splitOnce(value: string, sep: string): [string, string | undefined] {
   const idx = value.indexOf(sep);
   return idx < 0 ? [value, undefined] : [value.slice(0, idx), value.slice(idx + 1)];
+}
+
+/** Resolve the whole remote split for a run, once.
+ *
+ *  Four entry paths were each doing `parseRemoteSelection` + `classifyRemote`
+ *  themselves, and the one place that does **not** — `index.ts`, which runs the
+ *  pre-boot port scan — therefore scanned the wrong set: under the blanket
+ *  `--remote qa` the remote services are not in the filtered list, so their
+ *  ports were never checked, while under `--remote qa:a,b` they were. Two forms
+ *  of one flag, opposite behaviour before a single process started.
+ *
+ *  Returns `null` when no environment was asked for, so a caller can keep its
+ *  plain-local path unchanged. */
+export function resolveRemote(
+  config: Pick<DevStackConfig, 'services' | 'environments' | 'proxy'>,
+  localSelection: ServiceConfig[],
+  remoteFlag: string | undefined,
+): RemoteClassification | null {
+  if (!remoteFlag) return null;
+  const selection = parseRemoteSelection(remoteFlag, config.environments);
+  return classifyRemote(config.services, localSelection, selection, config.proxy?.routes);
+}
+
+/** Every port this run will hold, local and proxied alike — what the pre-boot
+ *  scan has to look at. */
+export function allHeldPorts(
+  local: ServiceConfig[],
+  classification: RemoteClassification | null,
+): ServiceConfig[] {
+  return classification ? [...local, ...classification.remote.map(r => r.svc)] : local;
 }

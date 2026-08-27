@@ -4,11 +4,21 @@ import { validateConfig, formatValidationErrors } from '../config/validator.js';
 import { diffServices, summariseDiff } from '../config/diff.js';
 import type { ProcessManager } from '../process/manager.js';
 import type { ServiceConfig } from '../config/types.js';
+import type { LazyProxy } from '../lazy/proxy.js';
+import { rewriteServicePort } from '../lazy/classifier.js';
+import { restartService } from '../process/restart-service.js';
 
 export interface ConfigWatchOpts {
   configPath: string;
   baseCwd: string;
   manager: ProcessManager;
+  /** The lazy proxies, when there are any.
+   *
+   *  Every other path that writes `state` also owns these; this one was given
+   *  a narrower set of collaborators than the invariant needs, and the special
+   *  case for remote services a few lines down is the same gap noticed once
+   *  and not generalized. */
+  lazyProxies?: Map<string, LazyProxy & { ensureStarted(): Promise<boolean> }>;
   /** Receives status lines: success, validation errors, reload errors. */
   log: (msg: string) => void;
   /** Services as the *file* last declared them.
@@ -29,7 +39,7 @@ export interface ConfigWatchOpts {
  *  config file + manager state), so both the TUI hook and the daemon
  *  can call it directly. */
 export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
-  const { configPath, baseCwd, manager, log } = opts;
+  const { configPath, baseCwd, manager, log, lazyProxies } = opts;
   try {
     const nextCfg = await loadConfig(configPath);
     const errs = validateConfig(nextCfg, baseCwd);
@@ -65,11 +75,30 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       const next = fileSvc.debug === undefined && prev?.svc.debug !== undefined
         ? { ...fileSvc, debug: prev.svc.debug }
         : fileSvc;
-      manager.stop(next.name);
-      // Brief pause so the previous process releases its port before the new one starts.
-      await new Promise(r => setTimeout(r, 800));
-      await manager.install(next, ci);
-      await manager.start(next, ci, true);
+      // A lazy service runs on `port + LAZY_PORT_OFFSET` while its on-demand
+      // proxy holds the configured one (CLAUDE.md §3). Spawning the **file**
+      // config here put the process on the public port its own proxy is
+      // listening on — and `isRestart: true` skips the `isPortBindable` guard,
+      // so nothing caught it: the child died with EADDRINUSE, spent its
+      // restart budget and ended `crashed`, while `state.svc` was left holding
+      // the un-rewritten config so the snapshot reported a port that no longer
+      // matched what the proxy targets.
+      //
+      // Routed through `restartService`, which owns the lazy proxy and
+      // documents the four traps this loop was walking into — including
+      // waiting for the old process to actually exit, which the fixed 800 ms
+      // below was standing in for.
+      const st = manager.state.get(next.name);
+      st ? (st.svc = lazyProxies?.has(next.name) ? rewriteServicePort(next) : next) : null;
+      if (lazyProxies?.has(next.name)) {
+        await restartService(manager, lazyProxies, next.name);
+      } else {
+        manager.stop(next.name);
+        // Brief pause so the previous process releases its port before the new one starts.
+        await new Promise(r => setTimeout(r, 800));
+        await manager.install(next, ci);
+        await manager.start(next, ci, true);
+      }
     }
     for (const next of diff.added) {
       const ci = colorIdx++;

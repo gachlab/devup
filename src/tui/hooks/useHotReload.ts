@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import type { ProcessManager } from '../../process/manager.js';
+import type React from 'react';
+import type { LazyProxy } from '../../lazy/proxy.js';
 import type { CliArgs } from '../../config/cli.js';
 import { findConfigFile } from '../../config/loader.js';
 import { watchConfig } from '../../orchestrator/config-watcher.js';
@@ -15,6 +17,9 @@ export function useHotReload(
   /** Services as the config file declares them right now — the baseline the
    *  reload diffs against. See ConfigWatchOpts.baseline. */
   services: ServiceConfig[],
+  /** The lazy proxies. A reload that respawns a lazy service has to go through
+   *  its proxy, or it lands on the public port the proxy is holding. */
+  lazyProxies?: React.RefObject<Map<string, LazyProxy>>,
 ): void {
   useEffect(() => {
     if (!cliArgs.watchConfig || !manager) return;
@@ -27,9 +32,9 @@ export function useHotReload(
     }
     pushLog('devup', `👀 watching ${configPath}`, 12);
     return watchConfig({
-      configPath, baseCwd, manager,
+      configPath, baseCwd, manager, lazyProxies: lazyProxies?.current ?? undefined,
       baseline: services,
       log: msg => pushLog('devup', msg, msg.startsWith('⚠') ? 5 : 12),
     });
-  }, [cliArgs.watchConfig, cliArgs.configPath, baseCwd, manager, pushLog, services]);
+  }, [cliArgs.watchConfig, cliArgs.configPath, baseCwd, manager, pushLog, services, lazyProxies]);
 }
