@@ -580,17 +580,25 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       // all at once is how a phase-4 web comes up against a phase-0 API that
       // is still going down, and then spends its restart budget finding out.
       const results = await forEachInPhaseOrder(snapshot, names, async name => {
-        if (method === 'start') return { ok: (await client.start(name)).ok, skippedIdle: false };
+        if (method === 'start') {
+          const res = await client.start(name);
+          return { ok: res.ok, skippedIdle: false, skippedRemote: res.skippedRemote };
+        }
         // `restart` resolves once the service has been respawned, not once it
         // is healthy — see the client. `--wait` below is how you ask for more.
         const res = await client.restart(name);
-        return { ok: res.ok, skippedIdle: res.skippedIdle === true };
+        return { ok: res.ok, skippedIdle: res.skippedIdle === true, skippedRemote: res.skippedRemote };
       });
 
       const failed = results.filter(r => r.error !== null || r.value?.ok === false);
       for (const r of results) {
         if (r.error) out(`✗ ${r.name}  ${r.error.message}`);
         else if (r.value?.ok === false) out(`✗ ${r.name} did not come up — check \`devup ctl logs ${r.name}\``);
+        // Served from an environment: nothing here to start or restart, and
+        // saying "started" would claim a spawn that never happened. A skip
+        // rather than a failure — `restart --all` on a hybrid stack is an
+        // ordinary thing to do between suites.
+        else if (r.value?.skippedRemote) out(`· ${r.name} served from ${r.value.skippedRemote} — nothing to ${method} here`);
         // A lazy service that was asleep had nothing to restart, and waking it
         // is not what someone resetting state between suites asked for.
         else if (r.value?.skippedIdle) out(`· ${r.name} left idle (lazy, was not running)`);

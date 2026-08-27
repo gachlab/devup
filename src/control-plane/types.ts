@@ -156,8 +156,10 @@ export interface StatsResult {
  *  snapshot and the window fields to the `logs.follow` ack — 0.16.0 is
  *  published, so this one is a real bump rather than an invented version.
  *  `3` adds `remote` to the snapshot: a service devup serves by forwarding its
- *  configured port to an environment rather than by running a process. */
-export const CONTRACT_VERSION = 3;
+ *  configured port to an environment rather than by running a process.
+ *  `4` adds `skippedRemote` to the `start`, `restart` and `debug` results —
+ *  the three things a client can ask of a service that has no process here. */
+export const CONTRACT_VERSION = 4;
 
 export interface ProjectInfo {
   project: string;
@@ -209,6 +211,23 @@ export interface RestartResult {
    *  waking it is not what someone resetting state between suites asked for.
    *  Sent since 0.16.0. */
   skippedIdle?: boolean;
+  /** The environment this service is served from, when that is why nothing
+   *  was restarted. Sent since 0.19.0.
+   *
+   *  A **skip, not a failure**: the service is answering on its port, devup
+   *  simply has no process here to restart. Reporting `ok: false` would make
+   *  `ctl restart --all` fail on a healthy hybrid stack — and reporting a
+   *  plain `ok: true` would claim a restart that never happened. */
+  skippedRemote?: string;
+}
+
+/** The `start` result. `ok` answers "is it serving", which is why a remote
+ *  service reports `true`: it is, from somewhere else. `skippedRemote` is what
+ *  separates that from a process devup actually spawned. */
+export interface StartResult {
+  ok: boolean;
+  /** See `RestartResult.skippedRemote`. Sent since 0.19.0. */
+  skippedRemote?: string;
 }
 
 /** The `remote` result: what the service is now, not what was asked for.
@@ -226,6 +245,10 @@ export interface RemoteResult {
 }
 
 export interface DebugResult {
+  /** The environment the service is served from, when that is why the
+   *  inspector could not be turned on. There is no process to attach to and
+   *  there never will be while it is remote. Sent since 0.19.0. */
+  skippedRemote?: string;
   debug: boolean;
   /** `null` while the service is still starting — `status` reports it as
    *  `debugPort` once Node announces it. */

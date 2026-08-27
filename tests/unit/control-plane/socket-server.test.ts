@@ -30,7 +30,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
-    start: async () => true,
+    start: async () => ({ ok: true }),
     // Was missing, and `tests/` is not typechecked so nothing said so — the
     // daemon answered `ctx.debug is not a function`, which the "advertises
     // every method" check below happily accepted because it only rejected

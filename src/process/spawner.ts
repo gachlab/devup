@@ -54,6 +54,29 @@ export class Spawner {
   }
 
   async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
+    // Never spawn a process for a service that is served from a remote
+    // environment, and never touch its state on the way out.
+    //
+    // The port is held by devup's own proxy, so the `isPortBindable` guard
+    // below sees it as taken and — because there is no `proc` to recognise as
+    // ours — calls `recordCrashedState`, which builds a **fresh** state object
+    // and drops `remote` with it. The result is a service reported as crashed
+    // while its proxy serves QA perfectly, and `ctl restart` is enough to
+    // cause it. `isRestart: true` is worse still: it skips that guard
+    // altogether and spawns onto the proxy's port.
+    //
+    // Guarded here rather than in each caller because there are five —
+    // `start`, `restart`, `debug`, the config watcher, and the restarter's own
+    // timer — and two of them were found holding this hole one at a time.
+    const existing = this.state.get(svc.name);
+    if (existing?.remote) {
+      this.log(
+        svc.name,
+        `🌐 served from "${existing.remote.envName}" — nothing to start here (devup ctl remote ${svc.name} --local)`,
+        colorIdx,
+      );
+      return;
+    }
     const cwd = join(this.baseCwd, svc.cwd);
     // start() awaits the port check and the pre-build, and a caller may have
     // awaited before that (Restarter settles 1500 ms, a lazy proxy awaits

@@ -13,6 +13,7 @@ import { defaultSocketPath } from './socket-path.js';
 import type {
   DebugResult, LogsFollowAck, LogsTailResult, OkResult, PingResult, ProjectInfo, RestartResult,
   StatsResult, StatusResult, StreamFrame,
+  StartResult,
 } from './types.js';
 
 export { defaultSocketPath };
@@ -250,7 +251,7 @@ export interface DevupClient {
    *
    *  Slow by nature: for an API the daemon waits for the port to answer, up to
    *  45 s, before replying. */
-  start(svc: string, opts?: SendRpcOpts): Promise<OkResult>;
+  start(svc: string, opts?: SendRpcOpts): Promise<StartResult>;
   /** Restart a service.
    *
    *  **Not a fire-and-forget.** The daemon stops the process, waits for it to

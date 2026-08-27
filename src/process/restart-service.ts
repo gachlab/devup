@@ -6,6 +6,9 @@ export interface RestartServiceHost extends StartServiceHost {
 }
 
 export interface RestartOutcome {
+  /** The environment the service is served from, when that is why nothing was
+   *  restarted. A skip, not a failure — see RestartResult.skippedRemote. */
+  skippedRemote?: string;
   /** Whether the service is running again — the outcome, not an
    *  acknowledgement. */
   ok: boolean;
@@ -50,6 +53,14 @@ export async function restartService(
   const st: ProcessState | undefined = host.state.get(name);
   if (!st) throw new Error(`unknown service: ${name}`);
 
+  // Served from an environment: there is no process here to stop or start,
+  // and `Spawner.start` refuses anyway. Checked before `host.stop`, which
+  // would be a silent no-op, and reported as a skip rather than a failure —
+  // `restart --all` on a hybrid stack is a perfectly ordinary thing to do.
+  if (st.remote) {
+    return { ok: true, skippedIdle: false, skippedRemote: st.remote.envName };
+  }
+
   // Asleep: there is no process to restart, and its state is already fresh.
   // Waking it is the opposite of what `restart --all` between suites is for.
   if (lazyProxies?.has(name) && st.status === 'idle') {
@@ -57,5 +68,6 @@ export async function restartService(
   }
 
   host.stop(name);
-  return { ok: await startService(host, lazyProxies, name), skippedIdle: false };
+  const started = await startService(host, lazyProxies, name);
+  return { ok: started.ok, skippedIdle: false, ...(started.skippedRemote ? { skippedRemote: started.skippedRemote } : {}) };
 }

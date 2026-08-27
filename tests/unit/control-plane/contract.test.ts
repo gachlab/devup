@@ -33,6 +33,14 @@ const SHAPE_BY_CONTRACT: Record<number, string[]> = {
     'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'restartPendingIn',
     'pid', 'startedAt', 'crashLog', 'debugPort', 'remote',
   ],
+  // 4 changed the `start` / `restart` / `debug` results, not the snapshot —
+  // same fields as 3. Listed anyway rather than aliased, because the point of
+  // this table is that a number always says what it covers.
+  4: [
+    'name', 'status', 'health', 'port', 'originalPort', 'type', 'phase',
+    'cmd', 'cwd', 'errors', 'restarts', 'crashes', 'restartPendingIn',
+    'pid', 'startedAt', 'crashLog', 'debugPort', 'remote',
+  ],
 };
 
 /** Golden test for the `status` wire shape.

@@ -34,7 +34,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
     debug: async () => ({ debug: true, port: 39481, ok: true }),
-    start: async () => true,
+    start: async () => ({ ok: true }),
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -129,7 +129,7 @@ describe('control-plane client', { skip: !isUnix }, () => {
   });
 
   it('start() surfaces the daemon\'s outcome, not an acknowledgement', async () => {
-    await withServer({ start: async () => false }, async path => {
+    await withServer({ start: async () => ({ ok: false }) }, async path => {
       const res = await createClient(path).start('api');
       assert.equal(res.ok, false);
     });
