@@ -898,7 +898,11 @@ async function tmpServer(ctx: RpcContext): Promise<{ path: string; close: () => 
   };
 }
 
-describe('remote', () => {
+// `{ skip: !isUnix }` like every other block here: `startSocketServer` binds a
+// Unix socket by filesystem path, which Windows answers with EACCES — it wants
+// a named pipe. Every describe in this file needs the guard, and this one
+// shipped without it.
+describe('remote', { skip: !isUnix }, () => {
   it('switches a service to an environment', async () => {
     const { path, close } = await tmpServer(noopCtx());
     try {
