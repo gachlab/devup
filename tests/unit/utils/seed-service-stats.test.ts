@@ -59,11 +59,15 @@ describe('buildProxyInfo', () => {
     assert.deepEqual(info?.routes, { 'app-web': '' });
   });
 
-  it('is null when the caller says it is off', () => {
-    // The divergence this replaces: the daemon gated on `--proxy` while the
-    // TUI reported `active: true` regardless of its own `p` toggle, so turning
-    // proxy-file writing off left `info` and `status` still claiming it was on.
-    assert.equal(buildProxyInfo(provider, opts, false), null);
+  it('reports a configured proxy that is switched off as inactive, not absent', () => {
+    // Two different states, and `null` for both would make `ProxyInfo.active`
+    // a field nothing can ever observe as false. The divergence this replaces:
+    // the TUI reported `active: true` regardless of its own `p` toggle, so
+    // turning proxy-file writing off left `info` and `status` claiming it was
+    // still on.
+    const info = buildProxyInfo(provider, opts, false);
+    assert.equal(info?.active, false);
+    assert.equal(info?.domain, 'guesthub.remote', 'the details are still worth having');
   });
 
   it('is null when there is no proxy configured at all', () => {

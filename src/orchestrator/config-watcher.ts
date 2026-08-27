@@ -7,6 +7,8 @@ import type { ServiceConfig } from '../config/types.js';
 import type { LazyProxy } from '../lazy/proxy.js';
 import { rewriteServicePort } from '../lazy/classifier.js';
 import { restartService } from '../process/restart-service.js';
+import { registerLazy } from '../process/boot.js';
+import { releaseLazyProxy, DEFAULT_LAZY_TIMEOUT } from '../lazy/classifier.js';
 
 export interface ConfigWatchOpts {
   configPath: string;
@@ -19,6 +21,8 @@ export interface ConfigWatchOpts {
    *  case for remote services a few lines down is the same gap noticed once
    *  and not generalized. */
   lazyProxies?: Map<string, LazyProxy & { ensureStarted(): Promise<boolean> }>;
+  /** Idle timeout for a proxy this reload has to re-create. */
+  lazyTimeout?: number;
   /** Receives status lines: success, validation errors, reload errors. */
   log: (msg: string) => void;
   /** Services as the *file* last declared them.
@@ -39,7 +43,7 @@ export interface ConfigWatchOpts {
  *  config file + manager state), so both the TUI hook and the daemon
  *  can call it directly. */
 export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
-  const { configPath, baseCwd, manager, log, lazyProxies } = opts;
+  const { configPath, baseCwd, manager, log, lazyProxies, lazyTimeout } = opts;
   try {
     const nextCfg = await loadConfig(configPath);
     const errs = validateConfig(nextCfg, baseCwd);
@@ -89,8 +93,24 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       // waiting for the old process to actually exit, which the fixed 800 ms
       // below was standing in for.
       const st = manager.state.get(next.name);
-      st ? (st.svc = lazyProxies?.has(next.name) ? rewriteServicePort(next) : next) : null;
-      if (lazyProxies?.has(next.name)) {
+      const isLazy = lazyProxies?.has(next.name) ?? false;
+      // The state has to carry the *rewritten* config for a lazy service, or
+      // the snapshot reports a port that no longer matches what its proxy
+      // targets.
+      if (st) st.svc = isLazy ? rewriteServicePort(next) : next;
+      if (isLazy) {
+        // A changed **port** needs a new proxy: the old one bound the old
+        // configured port at creation, and nothing re-binds it. Everything
+        // else reaches the process through `onDemandStart`, which reads the
+        // live config from state.
+        const portChanged = prev !== undefined && prev.svc.originalPort !== next.port;
+        if (portChanged) {
+          releaseLazyProxy(lazyProxies, next.name);
+          registerLazy(manager, next, ci, lazyTimeout ?? DEFAULT_LAZY_TIMEOUT, lazyProxies!,
+            msg => log(`[${next.name}] ${msg}`));
+          log(`↻ ${next.name}: port changed, proxy rebound on :${next.port}`);
+          continue;
+        }
         await restartService(manager, lazyProxies, next.name);
       } else {
         manager.stop(next.name);

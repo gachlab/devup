@@ -214,7 +214,7 @@ What this daemon is, and what it can do.
   when a port conflict names a holder, this is the pid it names — no service of
   ours will match it. Sent since 0.16.0.
 
-**The last three are absent from daemons before 0.16.0** — which is itself the
+**The last four are absent from daemons before 0.16.0** — which is itself the
 answer when what you are asking is how old one is.
 
 That absence needs its own branch, and getting it wrong is worse than not

@@ -204,6 +204,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       mgr, services: localServices, lazyProxies,
       lazy: cliArgs.lazy ? config.lazy : undefined,
       lazyTimeout: cliArgs.lazyTimeout,
+      onLog: (svc, msg) => { logSink.write(svc, msg); logBus.emit({ svc, text: msg }); },
     });
 
     // ── Control plane ──

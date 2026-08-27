@@ -24,7 +24,8 @@ src/
     diff.ts                  diffServices (used by --watch-config)
   process/
     types.ts                 ProcessState, ProcessStatus, HealthStatus
-    manager.ts               ProcessManager: facade over the four below
+    manager.ts               ProcessManager: facade over spawner/restarter/
+                             health-poller/lifecycle
     spawner.ts               spawn, port guard, stdio wiring, close handling
     restarter.ts             the auto-restart budget and its queued timers
     health-poller.ts         one probe round across state
@@ -38,7 +39,9 @@ src/
     health.ts                checkPort (TCP), isPortBindable, checkHealth
     log-reader.ts            readLogWindow (--lines / --since)
     port-conflicts.ts        scan, blame, kill
-    external.ts              ExternalService start/stop
+    installer.ts             needsInstall, writeInstallStamp
+    log-sink.ts              LogSink: persistent per-service log files
+    external.ts              startExternals / stopExternals (Mongo, Redis, ...)
   remote/                    remote environments (--remote)
     classifier.ts            local/remote split, selection parsing
     proxy.ts                 the HTTP/WS reverse proxy and its health probe
@@ -47,9 +50,6 @@ src/
     boot.ts                  registering remote services and their proxies
     switch.ts                moving one between local and an environment
     toggle.ts                which way the TUI's one-key toggle goes
-    installer.ts             needsInstall, writeInstallStamp
-    log-sink.ts              LogSink: persistent per-service log files
-    external.ts              startExternals / stopExternals (Mongo, Redis, ...)
   lazy/
     classifier.ts            split services into always-on vs lazy
     proxy.ts                 createLazyProxy: TCP relay + idle timer

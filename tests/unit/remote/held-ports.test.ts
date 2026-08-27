@@ -47,13 +47,24 @@ describe('allHeldPorts', () => {
     assert.deepEqual(allHeldPorts(local, r).map(s => s.port).sort((a, b) => a - b), [3000, 3007, 3050]);
   });
 
+  it('does not list a port twice under the explicit form', () => {
+    // `--remote qa:a,b` leaves those services in the filtered list *and* puts
+    // them in the remote set. Listing both gave two entries per port, and
+    // `scanPortConflicts` does not dedupe: `--kill-port-conflicts` killed the
+    // holder on the first, then reported the second as "survived SIGKILL" and
+    // aborted a boot whose port was by then free.
+    const r = resolveRemote(config, all, 'qa:app-api,rules-api')!;
+    const ports = allHeldPorts(all, r).map(s => s.port);
+    assert.deepEqual([...ports].sort((a, b) => a - b), [3000, 3007, 3050]);
+    assert.equal(new Set(ports).size, ports.length, `duplicados: ${ports}`);
+  });
+
   it('agrees between the blanket and the explicit form', () => {
     // The regression this guards: the two forms disagreeing about what gets
     // scanned. Same services remote, same ports held, either way you say it.
     const blanket = resolveRemote(config, [svc('check-in-api', 3050)], 'qa')!;
     const explicit = resolveRemote(config, all, 'qa:app-api,rules-api')!;
-    const ports = (r: typeof blanket, local: ServiceConfig[]) =>
-      allHeldPorts(local, r).map(s => s.port).sort((a, b) => a - b);
-    assert.deepEqual(ports(blanket, [svc('check-in-api', 3050)]), ports(explicit, explicit.local));
+    const ports = (r: typeof blanket) => allHeldPorts(all, r).map(s => s.port).sort((a, b) => a - b);
+    assert.deepEqual(ports(blanket), ports(explicit));
   });
 });

@@ -150,10 +150,20 @@ export function resolveRemote(
 }
 
 /** Every port this run will hold, local and proxied alike — what the pre-boot
- *  scan has to look at. */
+ *  scan has to look at.
+ *
+ *  When there is a classification its **own** local set wins over the one
+ *  passed in, and that is the point rather than a nicety: with the explicit
+ *  form (`--remote qa:a,b`) those services are still in the filtered list *and*
+ *  in the remote set, so combining the two listed each port twice.
+ *  `scanPortConflicts` does not dedupe, so `--kill-port-conflicts` killed the
+ *  holder on the first entry and then reported the second as "survived
+ *  SIGKILL" — aborting a boot whose port was by then free. Deciding here means
+ *  a caller cannot get it wrong. */
 export function allHeldPorts(
   local: ServiceConfig[],
   classification: RemoteClassification | null,
 ): ServiceConfig[] {
-  return classification ? [...local, ...classification.remote.map(r => r.svc)] : local;
+  if (!classification) return local;
+  return [...classification.local, ...classification.remote.map(r => r.svc)];
 }

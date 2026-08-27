@@ -101,6 +101,10 @@ export function buildProxyInfo(
   opts: { domain: string; tls: boolean; routes: Record<string, string> } | null | undefined,
   active: boolean,
 ): { active: boolean; provider: string; domain: string; tls: boolean; routes: Record<string, string> } | null {
-  if (!provider || !opts || !active) return null;
-  return { active: true, provider: provider.name, domain: opts.domain, tls: opts.tls, routes: opts.routes };
+  // `null` only when there is no proxy *configured*. A configured proxy that
+  // is switched off reports `active: false` with its details intact —
+  // otherwise the field is dead weight (nothing could ever observe `false`)
+  // and a client cannot tell "turned off" from "never set up".
+  if (!provider || !opts) return null;
+  return { active, provider: provider.name, domain: opts.domain, tls: opts.tls, routes: opts.routes };
 }

@@ -272,8 +272,8 @@ describe('applyConfigChange with a lazy service', () => {
       });
 
       // Nothing spawned. The service was asleep, so `restartService` leaves it
-      // asleep — the next request starts it with the new config, which is the
-      // whole point of lazy. What must not happen is a spawn around the proxy.
+      // asleep — the next request starts it with the new config, and the test
+      // below is the one that proves that claim rather than assuming it.
       assert.equal(ensured, 0, 'it woke a service that was asleep');
       assert.deepEqual(started, [], 'it spawned around the proxy');
       // And the state keeps the rewritten port, so the snapshot still matches

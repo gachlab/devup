@@ -28,6 +28,8 @@ export interface BootOpts {
   lazyProxies: Map<string, LazyProxy>;
   /** First colour index to hand out. */
   colorIdxStart?: number;
+  /** Where a lazy proxy's own messages go — a failed bind above all. */
+  onLog?: (svc: string, msg: string) => void;
 }
 
 /** Boot a stack: phases in ascending order, lazy services registered behind
@@ -73,18 +75,23 @@ export async function bootStack(opts: BootOpts): Promise<number> {
   }
 
   for (const svc of lazy) {
-    registerLazy(mgr, svc, colorIdx++, lazyTimeout, lazyProxies);
+    registerLazy(mgr, svc, colorIdx++, lazyTimeout, lazyProxies, opts.onLog && ((m: string) => opts.onLog!(svc.name, m)));
   }
   return colorIdx;
 }
 
-/** Put a lazy service behind its on-demand proxy, idle until something asks. */
-function registerLazy(
+/** Put a lazy service behind its on-demand proxy, idle until something asks.
+ *
+ *  Exported so a config reload can re-register one whose **port** changed: the
+ *  proxy binds the configured port at creation, so a new port needs a new
+ *  proxy — reading the live config covers everything else. */
+export function registerLazy(
   mgr: ProcessManager,
   svc: ServiceConfig,
   ci: number,
   lazyTimeout: number,
   lazyProxies: Map<string, LazyProxy>,
+  onLog?: (msg: string) => void,
 ): void {
   const rewritten = rewriteServicePort(svc);
   const state: ProcessState = {
@@ -100,15 +107,22 @@ function registerLazy(
     targetPort: rewritten.realPort,
     timeoutMin: lazyTimeout,
     onDemandStart: async () => {
-      // Only the debug flag is read back from state. Taking the whole live
-      // config would be wrong: a `--watch-config` reload writes the *raw* file
-      // config into state, and starting a lazy service from that puts it on
-      // the public port its own proxy is already listening on.
-      const cfg = { ...rewritten, debug: mgr.state.get(svc.name)?.svc.debug };
+      // The **live** config from state, not the one captured at boot.
+      //
+      // This used to close over `rewritten` and read back only `debug`, for a
+      // reason that was true then: a `--watch-config` reload wrote the *raw*
+      // file config into state, and starting from that would put the process
+      // on the public port its own proxy is listening on. The reload writes
+      // the rewritten config now, so reading state is both safe and the only
+      // way an edit ever reaches the process — otherwise a reload of a lazy
+      // service changes the snapshot and nothing else.
+      //
+      // The fallback matters: a service removed mid-flight has no state left.
+      const cfg = mgr.state.get(svc.name)?.svc ?? rewritten;
       await mgr.install(cfg, ci);
       await mgr.start(cfg, ci);
       const suspended = startsSuspended(cfg);
-      const ok = await waitForPort(rewritten.realPort, {
+      const ok = await waitForPort(cfg.realPort ?? rewritten.realPort, {
         timeout: suspended ? SUSPENDED_READY_TIMEOUT_MS : READY_TIMEOUT_MS,
       });
       const st = mgr.state.get(svc.name);
@@ -132,6 +146,11 @@ function registerLazy(
       // gap easy to miss.
       mgr.notifyStateChange(svc.name);
     },
+    // Its only output. Without this the EADDRINUSE guard inside the proxy
+    // logs into nothing, which is worse than the uncaught exception it
+    // replaced: the daemon stays up and says nothing while the port answers
+    // somebody else.
+    onLog,
     isDebugging: () => typeof mgr.state.get(svc.name)?.debugPort === 'number',
     isAlive: () => {
       const st = mgr.state.get(svc.name);

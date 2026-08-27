@@ -83,6 +83,7 @@ export function useBootSequence(
         lazyTimeout,
         lazyProxies: refs.lazyProxies.current!,
         colorIdxStart: 0,
+        onLog: (svc, msg) => pushLog(svc, msg, 5),
       });
     })().catch((e: unknown) => {
       // Nothing else catches this. There is no `unhandledRejection` handler in
