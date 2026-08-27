@@ -211,6 +211,20 @@ export interface RestartResult {
   skippedIdle?: boolean;
 }
 
+/** The `remote` result: what the service is now, not what was asked for.
+ *
+ *  `ok: false` with an `error` rather than a thrown RPC failure, because every
+ *  way this goes wrong is a fact about the stack a client should show — the
+ *  environment does not exist, the service has no target there, the port is
+ *  still held by a process that has not finished draining. */
+export interface RemoteResult {
+  ok: boolean;
+  /** Where it is served from now, `null` when it is local. */
+  remote: RemoteInfo | null;
+  /** Why the switch did not happen. Present only when `ok` is false. */
+  error?: string;
+}
+
 export interface DebugResult {
   debug: boolean;
   /** `null` while the service is still starting — `status` reports it as

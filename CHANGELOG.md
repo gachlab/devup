@@ -13,6 +13,8 @@ sin levantar los veinticuatro que lo rodean.
 ### Added
 - **Remote environments** (`--remote <env>`) — a service that is not running locally stops being *absent* and starts being *proxied*: devup binds its configured port and forwards to a named environment from the new `environments` block. Nothing else in the stack has to know — not the other services, not the frontend, not the reverse proxy. See [docs/remote-environments.md](docs/remote-environments.md).
 
+  A blanket `--remote qa` proxies whatever the local selection left out, so on its own — no `--profile`, no `--services`, no `--skip` — it selects nothing. devup says so rather than quietly booting everything locally.
+
   The port is the point of cut because it is where frontends already look: in development they resolve their backends to `localhost:<port>`, so neither reference project changes a line. It composes with profiles — `devup --profile check-in --remote qa` runs three services here and serves the rest from QA.
 
   It is an HTTP proxy and not the TCP relay lazy mode uses, because three things have to happen on the way through. TLS is terminated locally and re-originated upstream with the right SNI; `Host` is rewritten so the environment's ingress can route at all; and the headers that select a **tenant** or validate a token are rewritten rather than forwarded. That last one is not cosmetic: an upstream resolving its database from `origin > referer > x-forwarded-host` finds nothing for `localhost`, and every request fails before it reaches a database.
@@ -25,8 +27,14 @@ sin levantar los veinticuatro que lo rodean.
 
 - **A standing warning in the TUI** while any remote service accepts writes, on its own line rather than in the header, where it wrapped in half. `readOnly` is off by default and stays that way: logging in is a POST, so a restrictive default breaks the first thing anyone tries and teaches them to turn it off without reading why. The warning goes where it cannot be skipped instead.
 
+- **`devup ctl remote <svc> <env|--local>`** and the `e` key in the TUI — move one service between local and remote while the rest of the stack stays up. This is what turns the feature from a launch flag into something used halfway through an afternoon: "this API I want mine, leave the other twenty on QA", and back twenty minutes later.
+
+  Exactly one owner of the port at a time: whatever holds it is released and *confirmed gone* before the next owner binds. A port still held by a process that has not finished draining is reported, not swallowed — answering "done" while a proxy quietly failed to bind is the worse of the two. The TUI's one-key toggle infers the environment from the run or from the config having only one, and refuses to guess between several rather than pointing a service at a shared system nobody named.
+
+- **`--once` honours `--remote`**, rather than ignoring it. A CI run reporting a stack healthy while the services it was told to proxy were simply absent is the exact silence this whole feature exists to remove. Reachability decides readiness for those, since there is no process to watch — a proxy that binds while the environment is unreachable is not a stack a suite can run against.
+
 ### Changed
-- **`CONTRACT_VERSION` is `3`** — the snapshot gained `remote`.
+- **`CONTRACT_VERSION` is `3`** — the snapshot gained `remote`, and the daemon answers a new `remote` method.
 - The health poller **skips remote services**. Their port is held by devup's own proxy, so a probe there reports a healthy service no matter what the environment is doing; health comes from a probe against the upstream instead.
 
 ## [0.17.0] — 2026-08-24

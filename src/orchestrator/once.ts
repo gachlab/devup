@@ -1,5 +1,8 @@
 import { ProcessManager } from '../process/manager.js';
 import { checkHealth } from '../process/health.js';
+import { classifyRemote, parseRemoteSelection } from '../remote/classifier.js';
+import { startRemoteServices } from '../remote/boot.js';
+import type { RemoteProxy } from '../remote/proxy.js';
 import { groupByPhase } from '../utils.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { CliArgs } from '../config/cli.js';
@@ -62,6 +65,16 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     },
   });
 
+  // Declared here rather than where it is filled, so the teardown below can be
+  // the single exit path: a proxy left holding a port keeps `--once` from
+  // exiting at all, and there are five places this function returns from.
+  const remoteProxies = new Map<string, RemoteProxy>();
+  const cleanupAll = async (): Promise<void> => {
+    for (const proxy of remoteProxies.values()) proxy.destroy();
+    remoteProxies.clear();
+    await mgr.cleanup();
+  };
+
   const reports: OnceServiceReport[] = [];
   /** Names actually spawned, so the report can tell "never launched" from
    *  "launched but never reached". */
@@ -104,7 +117,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     if (!result.allHealthy) {
       out(`✗ externals failed: ${result.failed.join(', ')}`);
       await stopExternals(externals, platform, { baseCwd, env });
-      await mgr.cleanup();
+      await cleanupAll();
       // Every service reports as never-started, with the real reason —
       // `finish` fills them in, so there is one place that decides what an
       // unreached service looks like.
@@ -115,7 +128,50 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     }
   }
 
-  const phases = groupByPhase(services);
+  // Remote services before the phases, and before anything is spawned: what
+  // is served from an environment must not also be started here, and it needs
+  // its port bound before a local service that talks to it comes up.
+  //
+  // Silently ignoring `--remote` here would be the exact failure this feature
+  // exists to remove — a CI run reporting a stack healthy while the services
+  // it was told to proxy were simply absent.
+  let localServices = services;
+  if (cliArgs.remote) {
+    const selection = parseRemoteSelection(cliArgs.remote, config.environments);
+    const classification = classifyRemote(config.services, services, selection, config.proxy?.routes);
+    localServices = classification.local;
+    startRemoteServices({
+      mgr, classification, proxies: remoteProxies,
+      colorIdxStart: config.services.length,
+      onLog: (svc, msg) => { logSink?.write(svc, msg); out(`[${svc}] ${msg}`); },
+      processEnv: env,
+    });
+
+    // Reachability decides readiness, since there is no process to watch. A
+    // proxy that binds while the environment is unreachable is not a stack a
+    // suite can run against, and reporting it ready is how a CI failure gets
+    // attributed to the tests.
+    for (const spec of classification.remote) {
+      const proxy = remoteProxies.get(spec.svc.name)!;
+      const reachable = await proxy.probe();
+      const st = mgr.state.get(spec.svc.name);
+      if (st) st.health = reachable ? 'up' : 'down';
+      if (reachable) {
+        out(`✓ ${spec.svc.name} served from ${spec.envName}`);
+        reports.push({ ...describe(spec.svc, true), readyAfterMs: Date.now() - startedAt });
+      } else {
+        out(`✗ ${spec.svc.name}: ${spec.target} did not answer`);
+        reports.push(describe(spec.svc, false, `${spec.envName} unreachable at ${spec.target}`));
+      }
+    }
+    if (classification.remote.some(spec => mgr.state.get(spec.svc.name)?.health !== 'up')) {
+      await cleanupAll();
+      await stopExternals(externals, platform, { baseCwd, env });
+      return finish(false);
+    }
+  }
+
+  const phases = groupByPhase(localServices);
   const phaseNums = Object.keys(phases).map(Number).sort((a, b) => a - b);
   const deadline = startedAt + cliArgs.onceTimeout * 1000;
   let colorIdx = 0;
@@ -128,7 +184,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       if (!installed) {
         out(`✗ install failed for ${svc.name}`);
         reports.push(describe(svc, false, 'install failed'));
-        await mgr.cleanup();
+        await cleanupAll();
         await stopExternals(externals, platform, { baseCwd, env });
         return finish(false);
       }
@@ -180,14 +236,16 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     }
 
     if (settled.some(r => !r.ok)) {
-      await mgr.cleanup();
+      await cleanupAll();
       await stopExternals(externals, platform, { baseCwd, env });
       return finish(false);
     }
   }
 
-  out(`ready: ${services.length} services in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
-  await mgr.cleanup();
+  const remoteCount = services.length - localServices.length;
+  out(`ready: ${services.length} services in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+    + (remoteCount > 0 ? ` (${remoteCount} served from ${cliArgs.remote!.split(':')[0]})` : ''));
+  await cleanupAll();
   await stopExternals(externals, platform, { baseCwd, env });
   return finish(true);
 }

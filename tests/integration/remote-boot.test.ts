@@ -35,14 +35,14 @@ describe('startRemoteServices', { skip: isWin }, () => {
   };
   after(() => { for (const p of created) p.destroy(); });
 
-  const makeManager = () => new ProcessManager({
-    baseCwd: process.cwd(), env: {}, platform: detectPlatform(),
+  const makeManager = async () => new ProcessManager({
+    baseCwd: process.cwd(), env: {}, platform: await detectPlatform(),
     events: { onLog: () => {}, onStateChange: () => {} },
   });
 
   it('registers remote services as running-with-no-process and binds their ports', { timeout: 10000 }, async () => {
     const port = await findFreePort();
-    const mgr = makeManager();
+    const mgr = await makeManager();
     const env: EnvironmentConfig = { domain: 'qa.norelian.com' };
     const all = [svc('app-api', port)];
     const classification = classifyRemote(all, [], { envName: 'qa', env }, { 'app-api': 'app-api' });
@@ -81,7 +81,7 @@ describe('startRemoteServices', { skip: isWin }, () => {
     const localProxies = track();
     const announced: string[] = [];
     const mgr = new ProcessManager({
-      baseCwd: process.cwd(), env: {}, platform: detectPlatform(),
+      baseCwd: process.cwd(), env: {}, platform: await detectPlatform(),
       events: {
         onLog: () => {}, onStateChange: () => {},
         onServiceRemoved: name => {
@@ -111,7 +111,7 @@ describe('startRemoteServices', { skip: isWin }, () => {
 
   it('names the services it could not resolve, and warns that writes land upstream', { timeout: 10000 }, async () => {
     const port = await findFreePort();
-    const mgr = makeManager();
+    const mgr = await makeManager();
     const env: EnvironmentConfig = { domain: 'qa.norelian.com' };
     const all = [svc('app-api', port), svc('rules-api', await findFreePort())];
     const classification = classifyRemote(all, [], { envName: 'qa', env }, { 'app-api': 'app-api' });
@@ -128,7 +128,7 @@ describe('startRemoteServices', { skip: isWin }, () => {
 
   it('stays quiet about writes when the environment is read-only', { timeout: 10000 }, async () => {
     const port = await findFreePort();
-    const mgr = makeManager();
+    const mgr = await makeManager();
     const env: EnvironmentConfig = { domain: 'qa.norelian.com', readOnly: true };
     const classification = classifyRemote([svc('app-api', port)], [], { envName: 'qa', env }, { 'app-api': 'app-api' });
 
@@ -137,5 +137,43 @@ describe('startRemoteServices', { skip: isWin }, () => {
 
     assert.ok(!lines.some(l => /writes reach/.test(l)), lines.join('\n'));
     assert.equal(mgr.state.get('app-api')!.remote?.readOnly, true);
+  });
+});
+
+describe('startRemoteServices with nothing to do', { skip: isWin }, () => {
+  it('says so rather than booting locally in silence', async () => {
+    // `--remote qa` with no profile leaves nothing out of the local selection,
+    // so it selects nothing. Correct, and worth hearing: otherwise somebody
+    // who asked for an environment gets an ordinary local boot and no reason.
+    const mgr = new ProcessManager({
+      baseCwd: process.cwd(), env: {}, platform: await detectPlatform(),
+      events: { onLog: () => {}, onStateChange: () => {} },
+    });
+    const lines: string[] = [];
+    startRemoteServices({
+      mgr,
+      classification: { local: [], remote: [], unresolved: [] },
+      proxies: new Map(), colorIdxStart: 0,
+      onLog: (_s, m) => lines.push(m),
+    });
+    assert.ok(lines.some(l => /selected no services/.test(l)), lines.join('\n'));
+  });
+
+  it('stays quiet when the reason is already on screen', async () => {
+    // An unresolved list is the more specific answer; saying both would read
+    // as two separate problems.
+    const mgr = new ProcessManager({
+      baseCwd: process.cwd(), env: {}, platform: await detectPlatform(),
+      events: { onLog: () => {}, onStateChange: () => {} },
+    });
+    const lines: string[] = [];
+    startRemoteServices({
+      mgr,
+      classification: { local: [], remote: [], unresolved: ['rules-api'] },
+      proxies: new Map(), colorIdxStart: 0,
+      onLog: (_s, m) => lines.push(m),
+    });
+    assert.ok(lines.some(l => /no remote target for: rules-api/.test(l)), lines.join('\n'));
+    assert.ok(!lines.some(l => /selected no services/.test(l)), lines.join('\n'));
   });
 });

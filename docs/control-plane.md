@@ -140,6 +140,27 @@ Fields per service mirror `ProcessState`:
   This is the one case where `pid === null` and `startedAt !== null` together
   are correct.
 
+### `remote`
+
+Move a service between running locally and being served from an environment.
+
+```json
+{ "method": "remote", "params": { "svc": "check-in-api", "env": "qa" } }
+{ "method": "remote", "params": { "svc": "check-in-api", "local": true } }
+→ { "result": { "ok": true, "remote": { "envName": "qa", "target": "https://check-in-api.qa.norelian.com", "readOnly": false } } }
+```
+
+Exactly one of `env` and `local` — neither is refused rather than treated as
+"leave it alone", since a caller that meant one and sent neither would get a
+no-op reported as success and find out when traffic went somewhere unexpected.
+
+Failures come back as `{ ok: false, error }`, **not** as an RPC error: an
+unknown environment, a service with no target there, or a port still held by a
+process that has not finished draining are all facts about the stack worth
+showing, where an RPC error reads as "devup is broken".
+
+Added in 0.18.0.
+
 ### `info`
 
 What this daemon is, and what it can do.

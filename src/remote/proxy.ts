@@ -47,6 +47,16 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
   const { listenPort, target, envName, env, originMap, onLog, onUpstreamError } = opts;
   const targetUrl = new URL(target);
   const agent = targetUrl.protocol === 'https:' ? https : http;
+  // Its own connection pool rather than the global one. Two reasons, and the
+  // second is the one that bites: keep-alive to a remote environment is worth
+  // having — every request would otherwise pay a TLS handshake — but sockets
+  // parked in the *global* agent outlive `destroy()`, so a proxy that has been
+  // torn down leaves idle connections to the environment behind it, and
+  // anything waiting for the process to end waits for their idle timeout.
+  const pool = new (targetUrl.protocol === 'https:' ? https.Agent : http.Agent)({
+    keepAlive: true,
+    keepAliveMsecs: 10_000,
+  });
   const timeoutMs = env.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const ctx: RemoteContext = {
@@ -75,6 +85,7 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       // is rewritten to it — but SNI comes from the connection, not the
       // header, so it has to be said again here.
       servername: targetUrl.hostname,
+      agent: pool,
       ...over,
     };
   }
@@ -229,7 +240,11 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       // they hold the event loop open for as long as the far end stays quiet.
       for (const socket of upgraded) socket.destroy();
       upgraded.clear();
+      pool.destroy();
       server.close();
+      // Clients parked on keep-alive hold the listener open the same way, and
+      // `close()` only stops new connections.
+      server.closeAllConnections?.();
     },
   };
 }

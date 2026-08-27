@@ -16,6 +16,7 @@ import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
 import { classifyRemote, parseRemoteSelection, releaseRemoteProxy } from '../remote/classifier.js';
 import { startRemoteServices } from '../remote/boot.js';
+import { switchService } from '../remote/switch.js';
 import type { RemoteProxy } from '../remote/proxy.js';
 import { startsSuspended } from '../utils/process-args.js';
 import { readLogWindow } from '../process/log-reader.js';
@@ -226,6 +227,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
       debug: (name, enable, port, brk) => debugService(mgr, lazyProxies, name, enable, port, brk),
       start: (name) => startService(mgr, lazyProxies, name),
+      setRemote: (name, envName) => switchService({
+        mgr, config, remoteProxies, lazyProxies, processEnv: env,
+        onLog: (svc, msg) => { logSink.write(svc, msg); logBus.emit({ svc, text: msg }); },
+      }, name, envName),
 
       async getStats() {
         const pids: number[] = [];

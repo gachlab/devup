@@ -1,7 +1,7 @@
 import { useInput } from 'ink';
 import React, { useState, useCallback } from 'react';
 
-export type Modal = 'none' | 'filter' | 'restart' | 'open' | 'search';
+export type Modal = 'none' | 'filter' | 'restart' | 'open' | 'search' | 'remote';
 export type Panel = 'logs' | 'stats';
 
 export type LevelFilter = 'all' | 'error' | 'warn';
@@ -85,6 +85,7 @@ export function useKeyBindings(opts: {
     else if (input === 'f') setModal('filter');
     else if (input === 'r') setModal('restart');
     else if (input === 'o') setModal('open');
+    else if (input === 'e') setModal('remote');
     else if (input === '/') setModal('search');
     else if (input === 'a') setState(s => ({ ...s, logFilter: null, searchTerm: null, levelFilter: 'all' }));
     else if (input === 'p') setState(s => ({ ...s, logsPaused: !s.logsPaused }));

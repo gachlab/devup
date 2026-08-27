@@ -41,7 +41,17 @@ export function startRemoteServices(opts: StartRemoteOpts): number {
     // up as a connection refused several minutes later.
     onLog('devup', `⚠ no remote target for: ${unresolved.join(', ')} — these stay down`, 5);
   }
-  if (!remote.length) return colorIdx;
+  if (!remote.length) {
+    // The blanket `--remote qa` proxies whatever the local selection left out,
+    // so with no `--profile` / `--services` / `--skip` it selects nothing at
+    // all. That is the right rule, and a silent no-op is the wrong way to
+    // report it: somebody who asked for an environment and got an ordinary
+    // local boot should hear why.
+    if (!unresolved.length) {
+      onLog('devup', '⚠ --remote selected no services — everything is running locally. Combine it with --profile / --services / --skip, or name them: --remote <env>:a,b', 5);
+    }
+    return colorIdx;
+  }
 
   const originMap = buildOriginMap(new Map(
     remote.map(r => [r.svc.name, { target: r.target, port: r.svc.port }]),

@@ -39,6 +39,12 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
+    // Same rule as `debug` above: a fake that lags the interface fails only at
+    // runtime, and only if something happens to call it.
+    setRemote: async (_name, envName) => ({
+      ok: true,
+      remote: envName === null ? null : { envName, target: `https://x.${envName}.test`, readOnly: false },
+    }),
     ...over,
   };
 }
@@ -774,9 +780,14 @@ describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
       try {
         const advertised = (await rpcCall(path, { id: 1, method: 'info' })).result.methods as string[];
         assert.deepEqual(advertised, METHODS);
+        // `svc` covers most of them; `remote` also needs to be told which way
+        // to go, and refusing a call that says neither is the point of that
+        // handler rather than an accident to work around.
+        const extraParams: Record<string, Record<string, unknown>> = { remote: { local: true } };
         for (const method of advertised) {
-          // `svc` for the ones that need it; the rest ignore it.
-          const res = await rpcCall(path, { id: 2, method, params: { svc: 'api' } });
+          const res = await rpcCall(path, {
+            id: 2, method, params: { svc: 'api', ...(extraParams[method] ?? {}) },
+          });
           // Any error at all, not just `unknown method`: a fake missing a
           // member answers `ctx.X is not a function`, which is just as much a
           // method the daemon cannot serve.
@@ -869,5 +880,73 @@ describe('info tells a client what the daemon is', { skip: !isUnix }, () => {
     // left out of a hand-maintained list.
     assert.ok(METHODS.includes('logs.follow'));
     assert.ok(METHODS.includes('status.follow'));
+  });
+});
+
+/** A server on a throwaway socket, with its own cleanup. The existing tests
+ *  each build this inline; the `remote` block below has five of them. */
+async function tmpServer(ctx: RpcContext): Promise<{ path: string; close: () => Promise<void> }> {
+  const dir = mkdtempSync(join(tmpdir(), 'devup-sock-'));
+  const path = join(dir, 's.sock');
+  const handle = await startSocketServer('remote-test', ctx, { path });
+  return {
+    path,
+    close: async () => {
+      await handle.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+describe('remote', () => {
+  it('switches a service to an environment', async () => {
+    const { path, close } = await tmpServer(noopCtx());
+    try {
+      const res = await rpcCall(path, { id: 1, method: 'remote', params: { svc: 'app-api', env: 'qa' } });
+      assert.equal(res.result.ok, true);
+      assert.equal(res.result.remote.envName, 'qa');
+    } finally { await close(); }
+  });
+
+  it('brings one back with local: true', async () => {
+    const { path, close } = await tmpServer(noopCtx());
+    try {
+      const res = await rpcCall(path, { id: 1, method: 'remote', params: { svc: 'app-api', local: true } });
+      assert.equal(res.result.ok, true);
+      assert.equal(res.result.remote, null);
+    } finally { await close(); }
+  });
+
+  it('rejects a call that names neither', async () => {
+    // Not a no-op reported as success: a caller that meant one and sent
+    // neither would only find out when traffic went somewhere unexpected.
+    const { path, close } = await tmpServer(noopCtx());
+    try {
+      const res = await rpcCall(path, { id: 1, method: 'remote', params: { svc: 'app-api' } });
+      assert.match(res.error.message, /either "env" or "local"/);
+    } finally { await close(); }
+  });
+
+  it('rejects a call that names both', async () => {
+    const { path, close } = await tmpServer(noopCtx());
+    try {
+      const res = await rpcCall(path, { id: 1, method: 'remote', params: { svc: 'a', env: 'qa', local: true } });
+      assert.match(res.error.message, /not both/);
+    } finally { await close(); }
+  });
+
+  it('passes a failed switch back as a result, not as an RPC error', async () => {
+    // Every way this fails is a fact about the stack worth showing — the
+    // environment does not exist, the port is still held. An RPC error would
+    // read as "devup is broken".
+    const { path, close } = await tmpServer(noopCtx({
+      setRemote: async () => ({ ok: false, remote: null, error: 'unknown environment: "prod"' }),
+    }));
+    try {
+      const res = await rpcCall(path, { id: 1, method: 'remote', params: { svc: 'a', env: 'prod' } });
+      assert.equal(res.error, undefined);
+      assert.equal(res.result.ok, false);
+      assert.match(res.result.error, /unknown environment/);
+    } finally { await close(); }
   });
 });

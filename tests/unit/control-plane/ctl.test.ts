@@ -35,6 +35,10 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
+    setRemote: async (_n, envName) => ({
+      ok: true,
+      remote: envName === null ? null : { envName, target: `https://api.${envName}.test`, readOnly: false },
+    }),
     ...over,
   };
 }
@@ -756,6 +760,85 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
       const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0);
       assert.deepEqual(lines, ['✓ api started']);
+    });
+  });
+});
+
+describe('runCtl remote', { skip: !isUnix }, () => {
+  it('sends a service to an environment and warns about writes', async () => {
+    const asked: Array<[string, string | null]> = [];
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      setRemote: async (name, envName) => {
+        asked.push([name, envName]);
+        return { ok: true, remote: { envName: envName!, target: 'https://api.qa.test', readOnly: false } };
+      },
+    }), async path => {
+      const code = await runCtl(['remote', 'api', 'qa'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(asked, [['api', 'qa']]);
+      assert.ok(lines.some(l => l.includes('https://api.qa.test')), JSON.stringify(lines));
+      // Said every time it happens. The default is writable, and this is the
+      // moment somebody just pointed a service at a shared environment.
+      assert.ok(lines.some(l => /writes reach qa/.test(l)), JSON.stringify(lines));
+    });
+  });
+
+  it('stays quiet about writes for a read-only environment', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      setRemote: async () => ({ ok: true, remote: { envName: 'qa', target: 'https://api.qa.test', readOnly: true } }),
+    }), async path => {
+      await runCtl(['remote', 'api', 'qa'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.ok(!lines.some(l => /writes reach/.test(l)), JSON.stringify(lines));
+    });
+  });
+
+  it('brings a service back local with --local', async () => {
+    const asked: Array<string | null> = [];
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      setRemote: async (_n, envName) => { asked.push(envName); return { ok: true, remote: null }; },
+    }), async path => {
+      const code = await runCtl(['remote', 'api', '--local'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0);
+      assert.deepEqual(asked, [null]);
+      assert.ok(lines.some(l => /running locally/.test(l)), JSON.stringify(lines));
+    });
+  });
+
+  it('exits 1 and prints the reason when the switch fails', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      setRemote: async () => ({ ok: false, remote: null, error: 'unknown environment: "prod"' }),
+    }), async path => {
+      const code = await runCtl(['remote', 'api', 'prod'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines.some(l => /unknown environment/.test(l)), JSON.stringify(lines));
+    });
+  });
+
+  it('refuses an environment and --local together', async () => {
+    // Two opposite intentions in one command. Picking either silently is how
+    // traffic ends up somewhere nobody asked for.
+    const calls: number[] = [];
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      setRemote: async () => { calls.push(1); return { ok: true, remote: null }; },
+    }), async path => {
+      const code = await runCtl(['remote', 'api', 'qa', '--local'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.equal(calls.length, 0, 'it asked the daemon anyway');
+      assert.ok(lines.some(l => /not both/.test(l)), JSON.stringify(lines));
+    });
+  });
+
+  it('prints usage when the service or the destination is missing', async () => {
+    const lines: string[] = [];
+    await withServer(noopCtx(), async path => {
+      const code = await runCtl(['remote', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 1);
+      assert.ok(lines.some(l => l.includes('usage')), JSON.stringify(lines));
     });
   });
 });

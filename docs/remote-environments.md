@@ -189,8 +189,54 @@ back is the service's own business and is not counted.
   a profile names them.
 - `--skip x` with `--remote` makes `x` remote rather than absent. "Not running
   it here" is what skipping has always meant; what changes is its port.
+- `--remote qa` on its own selects **nothing**: with no profile, no `--services`
+  and no `--skip`, there is nothing the local selection left out. devup says so
+  rather than booting everything locally in silence.
 - A remote service is never also lazy. The remote proxy binds the configured
   port, which is the port a lazy proxy would want.
+
+## Switching one service without restarting the stack
+
+The boot-time split is not the last word. A service can be moved between
+running here and being served from an environment while everything else stays
+up — which is the point at which this stops being a launch flag and starts
+being something you use halfway through an afternoon.
+
+```
+devup ctl remote check-in-api qa       # hand it to the environment
+devup ctl remote check-in-api --local  # take it back
+```
+
+In the TUI, `e` opens a picker and toggles the selected service. A key press
+carries no environment name, so it infers one: the environment this run was
+started against, or the only one in the config. With several configured and no
+`--remote`, it says so and points at `devup ctl remote` rather than guessing —
+picking one would send traffic to a shared system nobody named.
+
+Whatever holds the port is released and **confirmed gone** before the next
+owner binds it. That is why a switch can report failure: a process that has not
+finished draining leaves the port busy, and answering "done" while a proxy
+quietly failed to bind is worse than saying so.
+
+A service brought back local is started outright, not handed back to lazy mode.
+`--lazy` decides how a stack *boots*; a service you just asked for is not one
+you want going straight back to sleep.
+
+The switch also fails, without touching anything, when the environment does not
+exist or has no target for that service. It is checked before the teardown
+starts: a failed switch must not leave the service worse off than it found it.
+
+## CI
+
+`--once` honours `--remote`. A proxied service is ready when the environment
+answers, not when the proxy binds — a stack whose environment is unreachable is
+not one a suite can run against, and reporting it healthy is how a CI failure
+gets blamed on the tests.
+
+```
+devup --once --profile e2e --remote qa
+devup exec --profile e2e --remote qa -- npx playwright test
+```
 
 ## Logs
 
