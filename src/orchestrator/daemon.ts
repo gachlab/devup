@@ -10,6 +10,7 @@ import { groupByPhase, calcCpuPercent } from '../utils.js';
 import { waitForPort } from '../process/health.js';
 import { Broadcaster } from '../utils/broadcaster.js';
 import { systemLoad } from '../utils/system-load.js';
+import { seedServiceStats } from '../utils/stats.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
@@ -233,17 +234,9 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       }, name, envName),
 
       async getStats() {
-        const pids: number[] = [];
-        const pidToName = new Map<number, string>();
-        for (const [name, st] of mgr.state) {
-          if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
-        }
+        const { services, pids, pidToName } = seedServiceStats(mgr.state);
         const cores = cpus().length;
         const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
-        const services: Record<string, { cpu: number; memMB: number }> = {};
-        for (const [name] of mgr.state) {
-          services[name] = { cpu: 0, memMB: 0 };
-        }
         for (const [pid, data] of raw) {
           const name = pidToName.get(pid);
           if (!name) continue;

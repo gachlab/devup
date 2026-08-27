@@ -9,6 +9,7 @@ import type { Platform } from '../../platform/types.js';
 import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 import { calcCpuPercent } from '../../utils.js';
+import { seedServiceStats } from '../../utils/stats.js';
 import { systemLoad } from '../../utils/system-load.js';
 import type { RemoteProxy } from '../../remote/proxy.js';
 import type { LazyProxy } from '../../lazy/proxy.js';
@@ -92,17 +93,9 @@ export function useControlPlane(
           }, name, envName),
 
           async getStats() {
-            const pids: number[] = [];
-            const pidToName = new Map<number, string>();
-            for (const [name, st] of manager.state) {
-              if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
-            }
+            const { services, pids, pidToName } = seedServiceStats(manager.state);
             const cores = cpus().length;
             const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
-            const services: Record<string, { cpu: number; memMB: number }> = {};
-            for (const [name] of manager.state) {
-              services[name] = { cpu: 0, memMB: 0 };
-            }
             for (const [pid, data] of raw) {
               const name = pidToName.get(pid);
               if (!name) continue;

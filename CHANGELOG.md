@@ -34,6 +34,7 @@ sin levantar los veinticuatro que lo rodean.
 - **`--once` honours `--remote`**, rather than ignoring it. A CI run reporting a stack healthy while the services it was told to proxy were simply absent is the exact silence this whole feature exists to remove. Reachability decides readiness for those, since there is no process to watch — a proxy that binds while the environment is unreachable is not a stack a suite can run against.
 
 ### Changed
+- **A service with no process is absent from `stats`, not reported at zero.** Both `getStats` implementations seeded every service in the state map with `{cpu: 0, memMB: 0}` before filling in what was sampled, so a remote service came back as a measurement nobody took — indistinguishable from a service that is genuinely idle, and quietly wrong in every total built on it. The seeding now lives in one place (`seedServiceStats`) rather than inline in the daemon and the TUI, which is how the two came to need saying twice.
 - **`CONTRACT_VERSION` is `3`** — the snapshot gained `remote`, and the daemon answers a new `remote` method.
 - The health poller **skips remote services**. Their port is held by devup's own proxy, so a probe there reports a healthy service no matter what the environment is doing; health comes from a probe against the upstream instead.
 

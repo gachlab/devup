@@ -38,3 +38,30 @@ export function nextRamBannerVisibility(
   if (usagePct < lowWatermark) return false;
   return previousVisible;
 }
+
+/** Which services `stats` should carry an entry for, and the pids to sample.
+ *
+ *  Shared because the daemon and the TUI each built this inline and the two
+ *  have to agree — `devup` in the foreground and `devup up -d` answering the
+ *  same RPC differently is the failure this kind of duplication produces.
+ *
+ *  A service with no process is **left out**, not seeded at zero. 0% CPU and
+ *  0 MB is a measurement nobody took: a client cannot tell it apart from a
+ *  service that is genuinely idle, every total it feeds is quietly wrong, and
+ *  `docs/control-plane.md` promises absence for a remote service. Everything
+ *  else starts at zero, because a service that is running but whose pid the
+ *  platform could not sample this round is a different thing from one that has
+ *  no pid to sample. */
+export function seedServiceStats<T extends { pid: number | null; remote?: unknown }>(
+  states: Iterable<[string, T]>,
+): { services: Record<string, { cpu: number; memMB: number }>; pids: number[]; pidToName: Map<number, string> } {
+  const services: Record<string, { cpu: number; memMB: number }> = {};
+  const pids: number[] = [];
+  const pidToName = new Map<number, string>();
+  for (const [name, st] of states) {
+    if (st.remote) continue;
+    services[name] = { cpu: 0, memMB: 0 };
+    if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
+  }
+  return { services, pids, pidToName };
+}
