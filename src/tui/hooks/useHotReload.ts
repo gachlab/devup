@@ -4,7 +4,7 @@ import type React from 'react';
 import type { LazyProxy } from '../../lazy/proxy.js';
 import type { CliArgs } from '../../config/cli.js';
 import { findConfigFile } from '../../config/loader.js';
-import { watchConfig } from '../../orchestrator/config-watcher.js';
+import { watchConfig, type LazyWatchOpts } from '../../orchestrator/config-watcher.js';
 import type { ServiceConfig } from '../../config/types.js';
 
 /** Watches the resolved config file when --watch-config is on. Bridge between
@@ -31,9 +31,14 @@ export function useHotReload(
       return;
     }
     pushLog('devup', `👀 watching ${configPath}`, 12);
+    // The pair or neither — annotated, because a conditional spread widens to
+    // "both optional", which is neither arm of the union.
+    const lazyOpts: LazyWatchOpts = lazyProxies?.current
+      ? { lazyProxies: lazyProxies.current, lazyTimeout: cliArgs.lazyTimeout }
+      : {};
     return watchConfig({
-      configPath, baseCwd, manager, lazyProxies: lazyProxies?.current ?? undefined,
-      lazyTimeout: cliArgs.lazyTimeout,
+      configPath, baseCwd, manager,
+      ...lazyOpts,
       baseline: services,
       log: msg => pushLog('devup', msg, msg.startsWith('⚠') ? 5 : 12),
     });

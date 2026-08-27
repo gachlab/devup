@@ -266,7 +266,7 @@ describe('applyConfigChange with a lazy service', () => {
 
     try {
       await applyConfigChange({
-        configPath, baseCwd: dir, manager, lazyProxies,
+        configPath, baseCwd: dir, manager, lazyProxies, lazyTimeout: 10,
         baseline: [base as ServiceConfig],
         log: () => {},
       });
@@ -315,7 +315,7 @@ describe('applyConfigChange with a lazy service', () => {
 
     try {
       await applyConfigChange({
-        configPath, baseCwd: dir, manager, lazyProxies,
+        configPath, baseCwd: dir, manager, lazyProxies, lazyTimeout: 10,
         baseline: [base as ServiceConfig],
         log: () => {},
       });

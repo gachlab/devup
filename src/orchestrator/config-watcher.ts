@@ -14,21 +14,24 @@ import { isRunning, waitForExit } from '../process/liveness.js';
 /** Matches `start-service.ts`: long enough for a drain, short enough to notice. */
 const STOP_GRACE_MS = 5_000;
 
-export interface ConfigWatchOpts {
+/** The lazy half of the options: both or neither.
+ *
+ *  A union rather than two optional fields, because they are only meaningful
+ *  together. `lazyTimeout` alone would be ignored; `lazyProxies` alone means a
+ *  proxy this reload re-creates gets a **different idle timeout from every
+ *  other one in the stack**, silently — which is what happened when the field
+ *  was added optional and neither production caller passed it.
+ *
+ *  Written this way so the compiler asks, instead of a default papering over
+ *  it. */
+export type LazyWatchOpts =
+  | { lazyProxies: Map<string, LazyProxy & { ensureStarted(): Promise<boolean> }>; lazyTimeout: number }
+  | { lazyProxies?: undefined; lazyTimeout?: undefined };
+
+export type ConfigWatchOpts = LazyWatchOpts & {
   configPath: string;
   baseCwd: string;
   manager: ProcessManager;
-  /** The lazy proxies, when there are any.
-   *
-   *  Every other path that writes `state` also owns these; this one was given
-   *  a narrower set of collaborators than the invariant needs, and the special
-   *  case for remote services a few lines down is the same gap noticed once
-   *  and not generalized. */
-  lazyProxies?: Map<string, LazyProxy & { ensureStarted(): Promise<boolean> }>;
-  /** Idle timeout for a proxy this reload has to re-create. **Required** when
-   *  `lazyProxies` is given: a default here would silently give a rebound
-   *  proxy a different timeout from every other one in the stack. */
-  lazyTimeout: number;
   /** Receives status lines: success, validation errors, reload errors. */
   log: (msg: string) => void;
   /** Services as the *file* last declared them.
@@ -41,7 +44,7 @@ export interface ConfigWatchOpts {
    *
    *  Updated in place after each successful reload. */
   baseline: ServiceConfig[];
-}
+};
 
 /** Re-loads the config, validates it, diffs against the running set, and
  *  applies add/remove/restart at the service level. A failed validation
@@ -49,7 +52,11 @@ export interface ConfigWatchOpts {
  *  config file + manager state), so both the TUI hook and the daemon
  *  can call it directly. */
 export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
-  const { configPath, baseCwd, manager, log, lazyProxies, lazyTimeout } = opts;
+  const { configPath, baseCwd, manager, log } = opts;
+  // Narrowed once, as a pair. Destructuring the two separately loses the
+  // union's guarantee and TypeScript is right to complain: `lazyTimeout` is
+  // only a number on the arm where `lazyProxies` exists.
+  const lazy = opts.lazyProxies ? { proxies: opts.lazyProxies, timeout: opts.lazyTimeout } : null;
   try {
     const nextCfg = await loadConfig(configPath);
     const errs = validateConfig(nextCfg, baseCwd);
@@ -99,7 +106,7 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       // waiting for the old process to actually exit, which the fixed 800 ms
       // below was standing in for.
       const st = manager.state.get(next.name);
-      const isLazy = lazyProxies?.has(next.name) ?? false;
+      const isLazy = lazy?.proxies.has(next.name) ?? false;
       // The state has to carry the *rewritten* config for a lazy service, or
       // the snapshot reports a port that no longer matches what its proxy
       // targets.
@@ -126,13 +133,13 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
           // The failure streak is per name and would be inherited by the entry
           // we are about to create — `forget` only runs via `remove()`.
           manager.forgetHealth(next.name);
-          releaseLazyProxy(lazyProxies, next.name);
-          registerLazy(manager, next, ci, lazyTimeout, lazyProxies!,
+          releaseLazyProxy(lazy!.proxies, next.name);
+          registerLazy(manager, next, ci, lazy!.timeout, lazy!.proxies,
             msg => log(`[${next.name}] ${msg}`));
           log(`↻ ${next.name}: port changed, proxy rebound on :${next.port}`);
           continue;
         }
-        await restartService(manager, lazyProxies, next.name);
+        await restartService(manager, lazy!.proxies, next.name);
       } else {
         manager.stop(next.name);
         // Brief pause so the previous process releases its port before the new one starts.
