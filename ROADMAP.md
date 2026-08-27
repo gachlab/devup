@@ -4,7 +4,7 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.18.0](https://github.com/gachlab/devup/releases/tag/0.18.0)** (2026-08-27) — remote environments: a service that is not running locally is served by forwarding its port to QA, with the header rewriting that makes sessions and tenants work.
+Last released: **[0.19.0](https://github.com/gachlab/devup/releases/tag/0.19.0)** (2026-08-27) — asking a remote service for something only a local process can do no longer marks it crashed and loses its marker.
 
 Full history is in [CHANGELOG.md](CHANGELOG.md); this file is only for what is *not* built yet.
 
