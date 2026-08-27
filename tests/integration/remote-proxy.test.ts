@@ -359,3 +359,103 @@ describe('remote-proxy upgrades', { skip: isWin }, () => {
     }
   });
 });
+
+describe('remote-proxy failure handling', { skip: isWin }, () => {
+  it('reports a port it cannot bind instead of taking the process down', { timeout: 10000 }, async () => {
+    // No `error` listener on the server meant an EADDRINUSE here was an
+    // uncaught exception that killed the daemon — and `ctl remote` makes that
+    // reachable at runtime, not only at boot.
+    const port = await findFreePort();
+    const squatter = net.createServer();
+    await new Promise<void>(r => squatter.listen(port, '0.0.0.0', r));
+
+    const logs: string[] = [];
+    const errors: Error[] = [];
+    const proxy = createRemoteProxy({
+      listenPort: port, target: 'http://127.0.0.1:1', envName: 'qa', env: {},
+      originMap: new Map(),
+      onLog: m => logs.push(m),
+      onUpstreamError: e => errors.push(e),
+    });
+    try {
+      await new Promise(r => setTimeout(r, 200));
+      assert.ok(logs.some(l => /already in use/.test(l)), logs.join('\n'));
+      assert.equal((errors[0] as NodeJS.ErrnoException | undefined)?.code, 'EADDRINUSE');
+    } finally {
+      proxy.destroy();
+      await new Promise<void>(r => squatter.close(() => r()));
+    }
+  });
+
+  it('drops the connection when the upstream dies mid-body', { timeout: 10000 }, async () => {
+    // The status and content-length are already on the wire. Appending an
+    // explanation splices English into the middle of a JSON payload; the
+    // client then reports a parse error instead of a truncated transfer.
+    const upstreamServer = http.createServer((_q, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': '40' });
+      res.write('{"items":[');
+      setTimeout(() => res.socket?.destroy(), 30);
+    });
+    await new Promise<void>(r => upstreamServer.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${(upstreamServer.address() as AddressInfo).port}`;
+    const port = await findFreePort();
+    const proxy = createRemoteProxy({
+      listenPort: port, target: origin, envName: 'qa', env: {}, originMap: new Map(),
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        const req = http.get({ host: '127.0.0.1', port, path: '/' }, res => {
+          let buf = '';
+          res.on('data', c => { buf += c; });
+          res.on('end', () => resolve(buf));
+          res.on('error', () => resolve(buf));
+        });
+        req.on('error', reject);
+        setTimeout(() => reject(new Error('never finished')), 5000);
+      }).catch(e => `ERR:${(e as Error).message}`);
+
+      assert.ok(!/devup:/.test(body), `devup's own text landed in the body: ${body}`);
+      assert.ok(!/unreachable/.test(body), body);
+    } finally {
+      proxy.destroy();
+      upstreamServer.closeAllConnections?.();
+      await new Promise<void>(r => upstreamServer.close(() => r()));
+    }
+  });
+
+  it('redacts a token in a WebSocket handshake URL', { timeout: 10000 }, async () => {
+    // A browser cannot set headers on a WebSocket handshake, so a token in the
+    // query string is the standard shape — and this path logged the raw URL
+    // straight into ~/.devup/logs.
+    const port = await findFreePort();
+    const deadPort = await findFreePort();
+    const logs: string[] = [];
+    const proxy = createRemoteProxy({
+      listenPort: port, target: `http://127.0.0.1:${deadPort}`, envName: 'qa', env: {},
+      originMap: new Map(), onLog: m => logs.push(m),
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+      await new Promise<void>(resolve => {
+        const socket = net.connect(port, '127.0.0.1', () => {
+          socket.write(
+            `GET /hub?access_token=eyJhbGciOiJIUzI1 HTTP/1.1\r\nHost: localhost:${port}\r\n` +
+            'Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
+          );
+        });
+        socket.on('close', () => resolve());
+        socket.on('error', () => resolve());
+        setTimeout(resolve, 3000);
+      });
+      const line = logs.find(l => /hub/.test(l));
+      assert.ok(line, `no log line for the handshake: ${logs.join('\n')}`);
+      assert.ok(!/eyJhbGciOiJIUzI1/.test(line!), `token leaked: ${line}`);
+      assert.match(line!, /access_token=\*\*\*/);
+    } finally {
+      proxy.destroy();
+    }
+  });
+});

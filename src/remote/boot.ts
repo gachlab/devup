@@ -32,9 +32,12 @@ export interface StartRemoteOpts {
  *  Returns the next free colour index. */
 export function startRemoteServices(opts: StartRemoteOpts): number {
   const { mgr, classification, proxies, onLog } = opts;
-  const { remote, unresolved } = classification;
+  const { remote, unresolved, unknown } = classification;
   let colorIdx = opts.colorIdxStart;
 
+  if (unknown?.length) {
+    onLog('devup', `⚠ --remote named ${unknown.join(', ')}, which ${unknown.length === 1 ? 'is not a service' : 'are not services'} in this config`, 5);
+  }
   if (unresolved.length) {
     // Never silent. A service that is neither started nor proxied looks
     // exactly like one that is starting slowly, and the difference only shows
@@ -47,7 +50,7 @@ export function startRemoteServices(opts: StartRemoteOpts): number {
     // all. That is the right rule, and a silent no-op is the wrong way to
     // report it: somebody who asked for an environment and got an ordinary
     // local boot should hear why.
-    if (!unresolved.length) {
+    if (!unresolved.length && !unknown?.length) {
       onLog('devup', '⚠ --remote selected no services — everything is running locally. Combine it with --profile / --services / --skip, or name them: --remote <env>:a,b', 5);
     }
     return colorIdx;
@@ -89,10 +92,19 @@ export function startRemoteServices(opts: StartRemoteOpts): number {
       onHealth: reachable => {
         const st = mgr.state.get(spec.svc.name);
         if (!st || !st.remote) return; // removed, or replaced by a local start
-        st.health = reachable ? 'up' : 'down';
+        const next = reachable ? 'up' : 'down';
+        if (st.health === next) return;
+        st.health = next;
+        // The health poller skips remote services, so this probe is the only
+        // thing that can tell a follower the environment stopped answering.
+        mgr.notifyStateChange(spec.svc.name);
       },
     });
     proxies.set(spec.svc.name, proxy);
+    // Followers learn about this service the same way they learn about a
+    // spawned one. Without it a `status.follow` client — the VS Code extension
+    // this contract bump is for — never hears the stack has remote services.
+    mgr.notifyStateChange(spec.svc.name);
     onLog(spec.svc.name, `🌐 :${spec.svc.port} → ${spec.target}`, ci);
   }
 

@@ -105,3 +105,27 @@ describe('releaseRemoteProxy', () => {
     assert.equal(releaseRemoteProxy(undefined, 'app-api'), false);
   });
 });
+
+describe('classifyRemote with a name that is not a service', () => {
+  it('reports a typo instead of dropping it', () => {
+    // `--remote qa:app_api` (underscore) matched nothing, so the filter simply
+    // returned fewer entries and `app-api` ran locally with nothing said. That
+    // is the silent absence the whole feature exists to remove.
+    const out = classifyRemote(all, all, { envName: 'qa', env: qa, only: ['app_api'] }, routes);
+    assert.deepEqual(out.unknown, ['app_api']);
+    assert.equal(out.remote.length, 0);
+  });
+
+  it('keeps a typo separate from a service the environment cannot reach', () => {
+    // "no target for app_api" would send someone to their environment config
+    // when the problem is what they typed.
+    const out = classifyRemote(all, [], { envName: 'qa', env: qa, only: ['rules-api', 'nope'] }, routes);
+    assert.deepEqual(out.unknown, ['nope']);
+    assert.deepEqual(out.unresolved, ['rules-api']);
+  });
+
+  it('has nothing to report when every name is real', () => {
+    const out = classifyRemote(all, [], { envName: 'qa', env: qa, only: ['app-api'] }, routes);
+    assert.deepEqual(out.unknown, []);
+  });
+});

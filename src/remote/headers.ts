@@ -87,7 +87,7 @@ export function buildUpstreamHeaders(
     // there at all. Asking for an origin means every request carries it.
     out.origin = ctx.env.origin;
     const referer = incoming.referer;
-    if (typeof referer === 'string') out.referer = rewriteOrigin(referer, ctx.localOrigin, ctx.env.origin);
+    if (typeof referer === 'string') out.referer = rewriteReferer(referer, ctx.env.origin);
   }
 
   if (ctx.env.forwarded) {
@@ -195,6 +195,33 @@ export function localizeLocation(
   return `${mapped}${url.pathname}${url.search}${url.hash}`;
 }
 
-function rewriteOrigin(value: string, from: string, to: string): string {
-  return value.startsWith(from) ? `${to}${value.slice(from.length)}` : value;
+/** Point the referer at the same origin the request claims to come from.
+ *
+ *  This used to rewrite only a referer starting with the service's **own**
+ *  local origin — `http://localhost:3050` for an API on :3050 — which a
+ *  browser never sends. The referer on an XHR is the *page's* origin
+ *  (`http://localhost:4201/check-in`), so it was forwarded verbatim while
+ *  `Origin` was rewritten: the request arrived claiming two different places
+ *  at once, and an upstream reading `origin > referer` to resolve a tenant
+ *  gets a different answer depending on which one it looks at first.
+ *
+ *  Rewritten wholesale rather than matched against a list of local origins: a
+ *  frontend reached through the local reverse proxy sends a referer under
+ *  whatever domain that serves (`app.guesthub.remote`), which is neither
+ *  localhost nor anything this proxy knows about. If the environment has been
+ *  told who we are, every header that says so agrees. */
+function rewriteReferer(value: string, origin: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return value; // not a URL we can reason about — leave it as it came
+  }
+  // `new URL` accepts far more than a referer ever is — `about:blank` parses,
+  // with a null origin and `blank` as its path, and would come out the other
+  // side as `https://qa.norelian.com/blank`. Only a web page has a referer
+  // worth rewriting.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
+  if (url.origin === origin) return value;
+  return `${origin}${url.pathname}${url.search}${url.hash}`;
 }

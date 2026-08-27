@@ -113,7 +113,10 @@ async function toRemote(
     onHealth: reachable => {
       const s = mgr.state.get(name);
       if (!s || !s.remote) return;
-      s.health = reachable ? 'up' : 'down';
+      const next = reachable ? 'up' : 'down';
+      if (s.health === next) return;
+      s.health = next;
+      mgr.notifyStateChange(name);
     },
   });
   remoteProxies.set(name, proxy);
@@ -125,8 +128,22 @@ async function toRemote(
   st.health = 'wait';
   st.startedAt = Date.now();
   st.debugPort = null;
-  st.intentionalStop = false;
+  // `intentionalStop` is deliberately **not** cleared here. `Lifecycle.stop`
+  // set it, and the spawner's close handler is what consumes it — on the same
+  // state object, because this mutates in place.
+  //
+  // The two do not happen in that order. A service that closes its listening
+  // socket on SIGTERM and then drains frees the port before `proc` emits
+  // `close`, so `waitForPortFree` returns and we get here first. Clearing the
+  // flag then makes the close handler read a non-zero exit as a crash: it
+  // writes `crashed`/`down` over the state we just marked remote, and calls
+  // `onCrash`, which schedules an auto-restart *after* the
+  // `cancelPendingRestart` above. When that timer fires, the port is held by
+  // the new proxy, so the spawner lands in `recordCrashedState` — which
+  // replaces the whole state object and drops `remote` with it. The proxy
+  // keeps serving while every client shows the service as crashed.
   st.remote = { envName, target, readOnly: env.readOnly === true };
+  mgr.notifyStateChange(name);
   onLog(name, `🌐 :${svc.port} → ${target}`, st.colorIdx);
   if (!env.readOnly) onLog(name, `⚠ writes now reach ${envName}`, st.colorIdx);
 
@@ -161,6 +178,10 @@ async function toLocal(deps: SwitchDeps, name: string, svc: ServiceConfig): Prom
   st.startedAt = null;
   st.errors = 0;
 
+  // Announced before the spawn, not after: between the two the service is
+  // neither proxied nor running, and a follower left on the old frame shows it
+  // as still served from the environment.
+  mgr.notifyStateChange(name);
   onLog(name, `⬅ back to local from ${from}`, st.colorIdx);
   // Deliberately started outright rather than handed back to lazy mode. A
   // service is brought local to work on it, and going straight back to sleep

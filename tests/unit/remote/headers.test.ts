@@ -37,12 +37,40 @@ describe('buildUpstreamHeaders', () => {
     assert.equal(out.origin, 'http://localhost:4201');
   });
 
-  it('rewrites Referer while keeping its path', () => {
+  it('rewrites the Referer a browser actually sends, not just this port', () => {
+    // The referer on an XHR is the *page's* origin, not the API's. Matching
+    // only the service's own local origin meant it was never rewritten, and
+    // the request reached the upstream claiming two different places at once.
     const out = buildUpstreamHeaders(
-      { host: 'localhost:3050', referer: 'http://localhost:3050/login?next=/home' },
+      { host: 'localhost:3050', referer: 'http://localhost:4201/check-in?id=7' },
       ctx({ origin: 'https://qa.norelian.com' }),
     );
-    assert.equal(out.referer, 'https://qa.norelian.com/login?next=/home');
+    assert.equal(out.referer, 'https://qa.norelian.com/check-in?id=7');
+  });
+
+  it('rewrites a Referer that came through the local reverse proxy', () => {
+    // Neither localhost nor a port this proxy knows about.
+    const out = buildUpstreamHeaders(
+      { host: 'localhost:3050', referer: 'https://app.guesthub.remote/home' },
+      ctx({ origin: 'https://qa.norelian.com' }),
+    );
+    assert.equal(out.referer, 'https://qa.norelian.com/home');
+  });
+
+  it('leaves a Referer that already matches the configured origin', () => {
+    const out = buildUpstreamHeaders(
+      { host: 'localhost:3050', referer: 'https://qa.norelian.com/home' },
+      ctx({ origin: 'https://qa.norelian.com' }),
+    );
+    assert.equal(out.referer, 'https://qa.norelian.com/home');
+  });
+
+  it('leaves a Referer that is not a URL alone', () => {
+    const out = buildUpstreamHeaders(
+      { host: 'localhost:3050', referer: 'about:blank' },
+      ctx({ origin: 'https://qa.norelian.com' }),
+    );
+    assert.equal(out.referer, 'about:blank');
   });
 
   it('does not invent a Referer that was not sent', () => {

@@ -126,8 +126,15 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       inFlight.delete(upstream);
       onUpstreamError?.(err);
       onLog?.(`❌ ${req.method} ${redactUrl(path)} → ${err.message}`);
-      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
-      if (!res.writableEnded) res.end(`devup: ${envName} unreachable — ${err.message}\n`);
+      // Once the headers are out there is no way to say "this failed" in
+      // band: the status is sent and `content-length` promises a length this
+      // body will not reach. Appending an explanation splices English into
+      // the middle of a JSON payload, and the client reports a parse error
+      // instead of a truncated transfer. Dropping the connection is the only
+      // honest signal left.
+      if (res.headersSent) { res.destroy(); return; }
+      res.writeHead(502, { 'content-type': 'text/plain' });
+      res.end(`devup: ${envName} unreachable — ${err.message}\n`);
     });
     upstream.on('close', () => inFlight.delete(upstream));
 
@@ -169,7 +176,7 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       client.on('close', forget);
       upSocket.on('close', forget);
       upSocket.pipe(client).pipe(upSocket);
-      onLog?.(`🔌 ${path} → 101 (upgraded)`);
+      onLog?.(`🔌 ${redactUrl(path)} → 101 (upgraded)`);
     });
 
     // The upstream answered normally: it does not speak this protocol, or the
@@ -178,14 +185,17 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
     upstream.on('response', up => {
       inFlight.delete(upstream);
       up.resume();
-      onLog?.(`⚠ ${path} → ${up.statusCode} (upgrade refused)`);
+      onLog?.(`⚠ ${redactUrl(path)} → ${up.statusCode} (upgrade refused)`);
       client.end(`HTTP/1.1 ${up.statusCode ?? 502} Upgrade Refused\r\n\r\n`);
     });
 
     upstream.on('error', (err: Error) => {
       inFlight.delete(upstream);
       onUpstreamError?.(err);
-      onLog?.(`❌ ${path} → ${err.message}`);
+      // A WebSocket handshake is where a token is *most* likely to be in the
+      // query string: a browser cannot set headers on one, so `?access_token=`
+      // is the standard shape. These three lines were the leak.
+      onLog?.(`❌ ${redactUrl(path)} → ${err.message}`);
       client.destroy();
     });
 
@@ -194,6 +204,18 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
 
   const server = http.createServer(forward);
   server.on('upgrade', upgrade);
+  // Without this an EADDRINUSE here is an uncaught exception that takes the
+  // whole daemon — or the TUI — down. It is reachable at runtime, not only at
+  // boot: `ctl remote` and the `e` key bind a port after checking it is free,
+  // and two switches racing through that window leave the loser throwing.
+  // The local spawner has the same guard as an explicit `isPortBindable`
+  // check; a proxy has to answer for itself.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    onUpstreamError?.(err);
+    onLog?.(err.code === 'EADDRINUSE'
+      ? `❌ :${listenPort} is already in use — nothing is serving ${envName} here`
+      : `❌ proxy on :${listenPort} failed: ${err.message}`);
+  });
   server.listen(listenPort, '0.0.0.0');
 
   /** Reachability, not correctness: an environment answering 401 to an

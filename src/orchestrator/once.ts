@@ -242,7 +242,11 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     }
   }
 
-  const remoteCount = services.length - localServices.length;
+  // From the classification, not from the difference in list lengths: under
+  // the blanket `--remote qa` the remote services were never in `services` to
+  // begin with, so the subtraction is zero and the run reports "3 services"
+  // without a word about the twenty-one being proxied.
+  const remoteCount = remoteProxies.size;
   out(`ready: ${services.length} services in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
     + (remoteCount > 0 ? ` (${remoteCount} served from ${cliArgs.remote!.split(':')[0]})` : ''));
   await cleanupAll();

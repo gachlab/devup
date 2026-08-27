@@ -239,3 +239,84 @@ describe('switchService', { skip: isWin }, () => {
     assert.ok(!lines.some(l => /writes now reach/.test(l)), lines.join('\n'));
   });
 });
+
+describe('switchService and the crash path', { skip: isWin }, () => {
+  const created2: RemoteProxy[] = [];
+  const managers2: ProcessManager[] = [];
+  const servers2: http.Server[] = [];
+  after(async () => {
+    for (const p of created2) p.destroy();
+    for (const m of managers2) await m.cleanup().catch(() => {});
+    for (const s of servers2) {
+      s.closeAllConnections?.();
+      await new Promise<void>(r => s.close(() => r()));
+    }
+  });
+
+  it('does not report a service as crashed after handing it to an environment', { timeout: 30000 }, async () => {
+    // `Lifecycle.stop` sets `intentionalStop`, and the spawner's close handler
+    // is what consumes it — on this same state object. A service that closes
+    // its listener on SIGTERM and then lingers frees the port first, so the
+    // switch completes before `close` fires. Clearing the flag there made the
+    // close read as a crash: `crashed`/`down` written over the state we just
+    // marked remote, plus an auto-restart scheduled after the cancel.
+    const upstreamServer = http.createServer((_q, r) => { r.writeHead(200); r.end('from qa'); });
+    servers2.push(upstreamServer);
+    await new Promise<void>(r => upstreamServer.listen(0, '127.0.0.1', r));
+    const target = `http://127.0.0.1:${(upstreamServer.address() as AddressInfo).port}`;
+    const port = await findFreePort();
+
+    const svc: ServiceConfig = {
+      name: 'app-api', cwd: '.', cmd: 'node', type: 'api', port, phase: 0,
+      args: [
+        '-e',
+        // Closes its listening socket on SIGTERM but stays alive for a while
+        // afterwards — a graceful drain, and the ordering that exposed the bug.
+        `const s = require('http').createServer((q, r) => r.end('local')).listen(${port});` +
+        `process.on('SIGTERM', () => { s.close(); setTimeout(() => process.exit(1), 1500); });` +
+        `setInterval(() => {}, 1000);`,
+      ],
+    };
+    const config: DevStackConfig = {
+      name: 'test', services: [svc],
+      environments: { qa: { targets: { 'app-api': target } } },
+    };
+
+    const mgr = new ProcessManager({
+      baseCwd: process.cwd(), env: { PATH: process.env['PATH'] ?? '' },
+      platform: await detectPlatform(),
+      events: { onLog: () => {}, onStateChange: () => {} },
+    });
+    managers2.push(mgr);
+    const proxies = new Map<string, RemoteProxy>();
+    const setOrig = proxies.set.bind(proxies);
+    proxies.set = (n: string, p: RemoteProxy) => { created2.push(p); return setOrig(n, p); };
+
+    // Start it locally first, so there is a real process to stop.
+    mgr.state.set('app-api', {
+      svc, proc: null, pid: null, status: 'stopped', health: 'down',
+      errors: 0, restarts: 0, startedAt: null, intentionalStop: false,
+      colorIdx: 0, crashLog: null,
+    });
+    await mgr.start(svc, 0);
+    await waitListening(port);
+    assert.equal((await get(port)).body, 'local');
+
+    const res = await switchService(
+      { mgr, config, remoteProxies: proxies, onLog: () => {} }, 'app-api', 'qa');
+    assert.equal(res.ok, true, res.error);
+    await waitListening(port);
+    assert.equal((await get(port)).body, 'from qa');
+
+    // Now let the drained process actually exit, and give the close handler
+    // and any queued auto-restart time to do their worst.
+    await new Promise(r => setTimeout(r, 3000));
+
+    const st = mgr.state.get('app-api')!;
+    assert.equal(st.status, 'running', 'the close handler marked it crashed');
+    assert.ok(st.remote, 'the remote marker was lost');
+    assert.equal(st.remote?.envName, 'qa');
+    // And the environment is still what answers.
+    assert.equal((await get(port)).body, 'from qa');
+  });
+});

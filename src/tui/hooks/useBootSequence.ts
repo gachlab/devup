@@ -181,6 +181,17 @@ export function useBootSequence(
           });
         }
       }
-    })();
+    })().catch((e: unknown) => {
+      // Nothing else catches this. There is no `unhandledRejection` handler in
+      // the process, so a throw here killed the foreground TUI with a raw
+      // stack trace over Ink's alternate screen — losing the very message the
+      // throw exists to deliver. `--remote qq` says which environments do
+      // exist; a missing `${VAR}` in `headers.set` names the environment and
+      // the header. Both are useless printed into a torn-down terminal.
+      //
+      // The daemon never had this problem: `daemonBody` wraps the same boot in
+      // try/catch and writes the boot-error file.
+      pushLog('devup', `❌ boot failed: ${(e as Error).message}`, 5);
+    });
   }, [booted, manager, services, cliArgs, config.lazy, config.external, baseCwd, env, platform, refs, pushLog]);
 }

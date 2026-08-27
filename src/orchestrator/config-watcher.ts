@@ -47,6 +47,17 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
     for (const { next: fileSvc } of diff.changed) {
       const prev = manager.state.get(fileSvc.name);
       const ci = prev?.colorIdx ?? colorIdx++;
+      // A service served from a remote environment has no process to restart,
+      // and starting one would be worse than a no-op: `manager.stop` does
+      // nothing (there is no child), and `start(..., isRestart: true)` skips
+      // the `isPortBindable` guard entirely — so it would spawn onto the port
+      // the remote proxy is listening on, and the fresh state object the
+      // spawner builds carries no `remote`, losing the marker while the proxy
+      // keeps answering.
+      if (prev?.remote) {
+        log(`↷ ${fileSvc.name} changed in the config but is served from "${prev.remote.envName}" — bring it local (\`devup ctl remote ${fileSvc.name} --local\`) for the change to take effect`);
+        continue;
+      }
       // A runtime `devup ctl debug` toggle lives on the service, not in the
       // file, so a reload would silently drop it — disconnecting an attached
       // debugger. The file wins when it says something; otherwise the toggle

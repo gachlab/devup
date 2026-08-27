@@ -152,7 +152,7 @@ describe('startRemoteServices with nothing to do', { skip: isWin }, () => {
     const lines: string[] = [];
     startRemoteServices({
       mgr,
-      classification: { local: [], remote: [], unresolved: [] },
+      classification: { local: [], remote: [], unresolved: [], unknown: [] },
       proxies: new Map(), colorIdxStart: 0,
       onLog: (_s, m) => lines.push(m),
     });
@@ -169,11 +169,31 @@ describe('startRemoteServices with nothing to do', { skip: isWin }, () => {
     const lines: string[] = [];
     startRemoteServices({
       mgr,
-      classification: { local: [], remote: [], unresolved: ['rules-api'] },
+      classification: { local: [], remote: [], unresolved: ['rules-api'], unknown: [] },
       proxies: new Map(), colorIdxStart: 0,
       onLog: (_s, m) => lines.push(m),
     });
     assert.ok(lines.some(l => /no remote target for: rules-api/.test(l)), lines.join('\n'));
+    assert.ok(!lines.some(l => /selected no services/.test(l)), lines.join('\n'));
+  });
+});
+
+describe('startRemoteServices reporting an unknown name', { skip: isWin }, () => {
+  it('names it as not being a service at all', async () => {
+    const mgr = new ProcessManager({
+      baseCwd: process.cwd(), env: {}, platform: await detectPlatform(),
+      events: { onLog: () => {}, onStateChange: () => {} },
+    });
+    const lines: string[] = [];
+    startRemoteServices({
+      mgr,
+      classification: { local: [], remote: [], unresolved: [], unknown: ['app_api'] },
+      proxies: new Map(), colorIdxStart: 0,
+      onLog: (_s, m) => lines.push(m),
+    });
+    assert.ok(lines.some(l => /app_api.*is not a service/.test(l)), lines.join('\n'));
+    // And not also the generic "selected no services" line — the specific
+    // reason is on screen already.
     assert.ok(!lines.some(l => /selected no services/.test(l)), lines.join('\n'));
   });
 });

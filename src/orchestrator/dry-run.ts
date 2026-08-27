@@ -57,6 +57,10 @@ export function renderDryRun(opts: DryRunOpts): string {
     }
     lines.push('');
   }
+  if (remote?.unknown.length) {
+    lines.push(`Not services in this config: ${remote.unknown.join(', ')}`);
+    lines.push('');
+  }
   if (remote?.unresolved.length) {
     lines.push(`No remote target (these stay down): ${remote.unresolved.join(', ')}`);
     lines.push('');

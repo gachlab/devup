@@ -23,6 +23,12 @@ export interface RemoteClassification {
    *  a service that is neither started nor proxied is exactly the silent
    *  absence this feature exists to remove. */
   unresolved: string[];
+  /** Names passed to `--remote <env>:a,b` that are not services at all —
+   *  a typo, or a service renamed since the command was last used. Separate
+   *  from `unresolved`, which is about a real service the environment cannot
+   *  reach: "no target for app_api" would send someone looking at their
+   *  environment config when the problem is the underscore they typed. */
+  unknown: string[];
 }
 
 /** Split the stack into what runs here and what is forwarded to an environment.
@@ -49,9 +55,14 @@ export function classifyRemote(
   selection: RemoteSelection | null,
   routes: Record<string, string> | undefined,
 ): RemoteClassification {
-  if (!selection) return { local, remote: [], unresolved: [] };
+  if (!selection) return { local, remote: [], unresolved: [], unknown: [] };
 
   const localNames = new Set(local.map(s => s.name));
+  const known = new Set(all.map(s => s.name));
+  // A name in the explicit list that matches nothing would otherwise vanish:
+  // the filter simply returns fewer entries, and `--remote qa:app_api` runs
+  // `app-api` locally with nothing said about the underscore.
+  const unknown = (selection.only ?? []).filter(name => !known.has(name));
   const wanted = selection.only
     ? all.filter(s => selection.only!.includes(s.name))
     : all.filter(s => !localNames.has(s.name));
@@ -65,7 +76,7 @@ export function classifyRemote(
   }
 
   const remoteNames = new Set(remote.map(r => r.svc.name));
-  return { local: local.filter(s => !remoteNames.has(s.name)), remote, unresolved };
+  return { local: local.filter(s => !remoteNames.has(s.name)), remote, unresolved, unknown };
 }
 
 /** Tear down and forget the remote proxy for a service that has been removed.
