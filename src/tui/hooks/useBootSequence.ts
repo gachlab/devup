@@ -8,6 +8,9 @@ import { groupByPhase } from '../../utils.js';
 import { waitForPort } from '../../process/health.js';
 import { classifyServices, rewriteServicePort } from '../../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../../lazy/proxy.js';
+import { classifyRemote, parseRemoteSelection } from '../../remote/classifier.js';
+import { startRemoteServices } from '../../remote/boot.js';
+import type { RemoteProxy } from '../../remote/proxy.js';
 import { startsSuspended } from '../../utils/process-args.js';
 
 /** See daemon.ts — a service suspended on its first line waits for a person. */
@@ -16,6 +19,7 @@ import { startExternals, type ExternalProc } from '../../process/external.js';
 
 interface BootRefs {
   lazyProxies: React.RefObject<Map<string, LazyProxy>>;
+  remoteProxies: React.RefObject<Map<string, RemoteProxy>>;
   externals: React.RefObject<ExternalProc[]>;
 }
 
@@ -61,9 +65,27 @@ export function useBootSequence(
         }
       }
 
+      // ── Remote environment ──
+      // Runs before the lazy split so a service served from an environment is
+      // neither spawned here nor given a lazy proxy on the port the remote
+      // proxy is about to bind.
+      let localServices = services;
+      if (cliArgs.remote) {
+        const selection = parseRemoteSelection(cliArgs.remote, config.environments);
+        const classification = classifyRemote(config.services, services, selection, config.proxy?.routes);
+        localServices = classification.local;
+        startRemoteServices({
+          mgr, classification,
+          proxies: refs.remoteProxies.current!,
+          colorIdxStart: config.services.length,
+          onLog: pushLog,
+          processEnv: env,
+        });
+      }
+
       if (lazyMode && config.lazy) {
         // ── Lazy mode ──
-        const { alwaysOn, lazy } = classifyServices(services, config.lazy);
+        const { alwaysOn, lazy } = classifyServices(localServices, config.lazy);
 
         // Boot always-on services normally
         const aoPhases = groupByPhase(alwaysOn);
@@ -142,7 +164,7 @@ export function useBootSequence(
         }
       } else {
         // ── Normal mode ──
-        const phases = groupByPhase(services);
+        const phases = groupByPhase(localServices);
         let colorIdx = 0;
         for (const num of Object.keys(phases).map(Number).sort((a, b) => a - b)) {
           const svcs = phases[num]!;
@@ -159,6 +181,17 @@ export function useBootSequence(
           });
         }
       }
-    })();
+    })().catch((e: unknown) => {
+      // Nothing else catches this. There is no `unhandledRejection` handler in
+      // the process, so a throw here killed the foreground TUI with a raw
+      // stack trace over Ink's alternate screen — losing the very message the
+      // throw exists to deliver. `--remote qq` says which environments do
+      // exist; a missing `${VAR}` in `headers.set` names the environment and
+      // the header. Both are useless printed into a torn-down terminal.
+      //
+      // The daemon never had this problem: `daemonBody` wraps the same boot in
+      // try/catch and writes the boot-error file.
+      pushLog('devup', `❌ boot failed: ${(e as Error).message}`, 5);
+    });
   }, [booted, manager, services, cliArgs, config.lazy, config.external, baseCwd, env, platform, refs, pushLog]);
 }

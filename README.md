@@ -13,6 +13,7 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 - **Phased startup** — boot services in dependency order with automatic port readiness detection.
 - **Lazy mode** — only start services when they receive traffic; idle services shut down after a configurable timeout (respects active connections, no killing mid-WebSocket).
 - **Profiles** — name common service subsets in config; boot with `devup --profile check-in`.
+- **Remote environments** — run part of the stack here and serve the rest from QA: `devup --profile check-in --remote qa`. devup holds the configured port and forwards, rewriting the headers that select a tenant, validate a token, or scope a session cookie — so no frontend and no service configuration changes.
 - **External hooks** — start `docker compose` (DBs, queues) before phase 0, with health gating and `stopCmd` on shutdown.
 - **Build hooks** — `preBuild` (must succeed before spawn) and `watchBuild` (runs alongside the service), both managed by devup with kill-tree cleanup.
 - **Hot reload** — `--watch-config` diffs `devup.config.*` on save and applies add/remove/restart without killing the TUI.
@@ -103,6 +104,7 @@ The comprehensive guide lives in [docs/](./docs/README.md):
 - **[Configuration reference](./docs/configuration.md)** — every field of `devup.config.ts`
 - **[Health checks](./docs/health-checks.md)** — TCP / HTTP / `readyPattern` / `startPeriod` / `errorPattern`
 - **[Lazy mode](./docs/lazy-mode.md)** — on-demand spawning, idle timeouts, troubleshooting
+- **[Remote environments](./docs/remote-environments.md)** — `--remote`, header rewriting, and what reaches a shared environment
 - **[Build hooks](./docs/build-hooks.md)** — `preBuild` and `watchBuild` for TypeScript services
 - **[External services](./docs/external-services.md)** — wire docker-compose into the boot sequence
 - **[Profiles](./docs/profiles.md)** — save service subsets under a name

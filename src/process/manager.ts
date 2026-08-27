@@ -103,6 +103,19 @@ export class ProcessManager {
     this.events.onServiceRemoved?.(name);
   }
 
+  /** Announce a state change made from outside the manager.
+   *
+   *  Everything the manager spawns emits through `Spawner` on its own, but a
+   *  remote service is not spawned: `startRemoteServices` and `switchService`
+   *  write into `state` directly, and a `status.follow` client would never
+   *  hear that the service exists, moved environment, or stopped answering.
+   *  The `status` snapshot is fine either way — it iterates the map — which is
+   *  what makes the gap easy to miss. */
+  notifyStateChange(name: string): void {
+    const st = this.state.get(name);
+    if (st) this.events.onStateChange(name, st);
+  }
+
   restart(name: string): Promise<void> {
     return this.restarter.restart(name);
   }

@@ -10,10 +10,15 @@ import { groupByPhase, calcCpuPercent } from '../utils.js';
 import { waitForPort } from '../process/health.js';
 import { Broadcaster } from '../utils/broadcaster.js';
 import { systemLoad } from '../utils/system-load.js';
+import { seedServiceStats } from '../utils/stats.js';
 import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy, classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
+import { classifyRemote, parseRemoteSelection, releaseRemoteProxy } from '../remote/classifier.js';
+import { startRemoteServices } from '../remote/boot.js';
+import { switchService } from '../remote/switch.js';
+import type { RemoteProxy } from '../remote/proxy.js';
 import { startsSuspended } from '../utils/process-args.js';
 import { readLogWindow } from '../process/log-reader.js';
 
@@ -99,6 +104,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   const stateBus = new Broadcaster<{ name: string; state: ProcessState }>();
   const removedBus = new Broadcaster<{ name: string }>();
   const lazyProxies = new Map<string, LazyProxy>();
+  const remoteProxies = new Map<string, RemoteProxy>();
   const prevCpuMap = new Map<string, { time: number; cpu: number }>();
   let externals: ExternalProc[] = [];
   let socket: SocketServerHandle | null = null;
@@ -121,6 +127,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       onStateChange: (name, state) => stateBus.emit({ name, state }),
       onServiceRemoved: (name) => {
         releaseLazyProxy(lazyProxies, name);
+        // Same rule, same reason: the remote proxy holds the service's public
+        // port, so until it is destroyed the stack keeps answering for a
+        // service every client was just told had gone.
+        releaseRemoteProxy(remoteProxies, name);
         // The CPU baseline is per name: a service re-added later under the same
         // name would be diffed against the old process's counter and report a
         // large negative percentage for one sample.
@@ -135,6 +145,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
     if (proxyTimer) clearInterval(proxyTimer);
     if (stopConfigWatcher) { try { stopConfigWatcher(); } catch { /* ignore */ } }
     for (const p of lazyProxies.values()) p.destroy();
+    for (const p of remoteProxies.values()) p.destroy();
     if (socket) await socket.close().catch(() => {});
     await mgr.cleanup().catch(() => {});
     if (externals.length) {
@@ -173,11 +184,28 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       }
     }
 
+    // ── Remote environment ──
+    // Before the local boot, and before lazy classification: what is served
+    // from an environment must not also be spawned here, and must not be given
+    // a lazy proxy on the port the remote proxy is about to bind.
+    let localServices = services;
+    if (cliArgs.remote) {
+      const selection = parseRemoteSelection(cliArgs.remote, config.environments);
+      const classification = classifyRemote(config.services, services, selection, config.proxy?.routes);
+      localServices = classification.local;
+      startRemoteServices({
+        mgr, classification, proxies: remoteProxies,
+        colorIdxStart: config.services.length,
+        onLog: (svc, msg) => { logSink.write(svc, msg); logBus.emit({ svc, text: msg }); },
+        processEnv: env,
+      });
+    }
+
     // ── Boot phases ──
     if (cliArgs.lazy && config.lazy) {
-      await bootLazy(mgr, services, config.lazy, cliArgs.lazyTimeout, lazyProxies);
+      await bootLazy(mgr, localServices, config.lazy, cliArgs.lazyTimeout, lazyProxies);
     } else {
-      await bootNormal(mgr, services);
+      await bootNormal(mgr, localServices);
     }
 
     // ── Control plane ──
@@ -200,19 +228,15 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
       debug: (name, enable, port, brk) => debugService(mgr, lazyProxies, name, enable, port, brk),
       start: (name) => startService(mgr, lazyProxies, name),
+      setRemote: (name, envName) => switchService({
+        mgr, config, remoteProxies, lazyProxies, processEnv: env,
+        onLog: (svc, msg) => { logSink.write(svc, msg); logBus.emit({ svc, text: msg }); },
+      }, name, envName),
 
       async getStats() {
-        const pids: number[] = [];
-        const pidToName = new Map<number, string>();
-        for (const [name, st] of mgr.state) {
-          if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
-        }
+        const { services, pids, pidToName } = seedServiceStats(mgr.state);
         const cores = cpus().length;
         const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
-        const services: Record<string, { cpu: number; memMB: number }> = {};
-        for (const [name] of mgr.state) {
-          services[name] = { cpu: 0, memMB: 0 };
-        }
         for (const [pid, data] of raw) {
           const name = pidToName.get(pid);
           if (!name) continue;

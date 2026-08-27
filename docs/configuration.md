@@ -27,6 +27,7 @@ The top-level export of your config file.
 | `proxy` | `ProxyConfig` | | Reverse proxy config generation (see [Reverse proxy](./proxy.md)) |
 | `profiles` | `Record<string, string[]>` | | Named subsets of services bootable with `--profile <name>` (see [Profiles](./profiles.md)) |
 | `external` | `ExternalService[]` | | Dependencies started before phase 0 (DBs, queues — see [External services](./external-services.md)) |
+| `environments` | `Record<string, EnvironmentConfig>` | | Named remote environments selectable with `--remote <name>` (see [Remote environments](./remote-environments.md)) |
 
 ## `ServiceConfig`
 

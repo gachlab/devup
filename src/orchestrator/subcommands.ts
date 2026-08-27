@@ -247,6 +247,15 @@ type WindowInfo = { oldestRetained?: number | null; truncated?: boolean };
 /** A `logs.tail` result: a window, plus the lines. */
 type LogsTailShape = WindowInfo & { lines: string[] };
 
+/** The `remote` result as this command reads it — the daemon's `RemoteResult`.
+ *  Kept local for the same reason as `ServiceRow`: this file speaks to the
+ *  socket, not to the server's types. */
+type RemoteRow = {
+  ok: boolean;
+  remote: { envName: string; target: string; readOnly: boolean } | null;
+  error?: string;
+};
+
 type ServiceRow = {
   name: string; status: string; health: string;
   port: number; type: string; pid: number | null;
@@ -338,6 +347,8 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
     out('  restart <svc...> | --profile <p> | --all [--wait]');
     out('                               Restart services, in config phase order');
     out('  stop <svc>                   Stop a service');
+    out('  remote <svc> <env> | --local');
+    out('                               Serve a service from an environment, or bring it back');
     return 0;
   }
 
@@ -611,6 +622,34 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       if (!svc) { out('usage: devup ctl stop <service>'); return 1; }
       await sendRpc(socketPath, 'stop', { svc });
       out(`✓ stop sent to ${svc}`);
+      return 0;
+    }
+
+    if (method === 'remote') {
+      const local = argv.includes('--local');
+      const [svc, envName] = positionalArgs(argv, 1);
+      if (!svc || (!envName && !local)) {
+        out('usage: devup ctl remote <service> <environment>');
+        out('       devup ctl remote <service> --local');
+        return 1;
+      }
+      // Both is not a harmless over-specification: it is two opposite
+      // intentions in one command, and picking either silently is how traffic
+      // ends up somewhere nobody asked for.
+      if (envName && local) { out('pass an environment or --local, not both'); return 1; }
+
+      const res = await sendRpc(socketPath, 'remote',
+        local ? { svc, local: true } : { svc, env: envName }) as RemoteRow;
+      if (!res.ok) { out(`✗ ${res.error ?? 'switch failed'}`); return 1; }
+      if (res.remote) {
+        out(`✓ ${svc} → ${res.remote.target} (${res.remote.envName})`);
+        // Said on the way in, every time. The default is writable, and the
+        // moment worth saying so is the one where somebody just pointed a
+        // service they are working on at a shared environment.
+        if (!res.remote.readOnly) out(`  ⚠ writes reach ${res.remote.envName}`);
+      } else {
+        out(`✓ ${svc} is running locally`);
+      }
       return 0;
     }
 

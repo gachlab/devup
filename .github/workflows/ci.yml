@@ -26,7 +26,12 @@ jobs:
         run: npm run test:unit
 
   integration:
-    if: github.ref == 'refs/heads/main'
+    # Runs on every branch, not only on main. The integration suite is where
+    # anything that binds a port, spawns a process or speaks over the control
+    # plane is actually exercised — a proxy handing a port back to a process, a
+    # daemon answering an RPC, `--once` tearing itself down. Gating it on `main`
+    # meant a PR could go green on unit tests alone and surface those failures
+    # after the merge, in the one place where reverting is expensive.
     needs: unit
     strategy:
       matrix:

@@ -19,6 +19,9 @@ import { StatsPanel } from './StatsPanel.js';
 import { StatusBar } from './StatusBar.js';
 import { ServiceList } from './ServiceList.js';
 import { SearchInput } from './SearchInput.js';
+import type { RemoteProxy } from '../remote/proxy.js';
+import { switchService } from '../remote/switch.js';
+import { bootEnvName, resolveToggle } from '../remote/toggle.js';
 import type { LazyProxy } from '../lazy/proxy.js';
 import { stopExternals, type ExternalProc } from '../process/external.js';
 
@@ -62,7 +65,8 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
 
   // Declared before the manager so it can tear a proxy down as part of removal.
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
-  const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies);
+  const remoteProxies = useRef<Map<string, RemoteProxy>>(new Map());
+  const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies, remoteProxies);
   const externals = useRef<ExternalProc[]>([]);
 
   const kb = useKeyBindings({
@@ -85,10 +89,11 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     [proxyProvider, proxyOpts],
   );
   const profiles = useMemo(() => config.profiles ?? {}, [config.profiles]);
-  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, platform, proxyCtx, profiles, cliArgs.instance);
+  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, remoteProxies, config, env, platform, proxyCtx, profiles, cliArgs.instance);
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
+    remoteProxies.current.forEach(p => p.destroy());
     await socketServer.current?.close();
     await pm.cleanup();
     if (externals.current.length) {
@@ -107,10 +112,26 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
   useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
-    { lazyProxies, externals }, pm.pushLog);
+    { lazyProxies, remoteProxies, externals }, pm.pushLog);
 
   const handleFilterSelect = useCallback((name: string) => kb.setFilter(name), [kb]);
   const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);
+  const handleRemoteSelect = useCallback((name: string) => {
+    kb.setModal('none');
+    const st = pm.states.get(name);
+    if (!st || !pm.manager) return;
+    const target = resolveToggle(config, !!st.remote, bootEnvName(cliArgs.remote));
+    if ('error' in target) { pm.pushLog(name, `⚠ ${target.error}`, st.colorIdx); return; }
+    void switchService({
+      mgr: pm.manager, config,
+      remoteProxies: remoteProxies.current,
+      lazyProxies: lazyProxies.current,
+      processEnv: env,
+      onLog: pm.pushLog,
+    }, name, target.envName).then(res => {
+      if (!res.ok) pm.pushLog(name, `✗ ${res.error ?? 'switch failed'}`, st.colorIdx);
+    });
+  }, [pm, kb, config, cliArgs.remote, env]);
   const handleOpenSelect = useCallback((name: string) => {
     const st = pm.states.get(name);
     if (st) {
@@ -151,6 +172,9 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
       )}
       {kb.modal === 'restart' && (
         <ServiceList title="Restart service" services={pm.states} onSelect={handleRestartSelect} onClose={() => kb.setModal('none')} />
+      )}
+      {kb.modal === 'remote' && (
+        <ServiceList title="Local ⇄ remote" services={pm.states} onSelect={handleRemoteSelect} onClose={() => kb.setModal('none')} />
       )}
       {kb.modal === 'open' && (
         <ServiceList title="Open in browser" services={pm.states} onSelect={handleOpenSelect} onClose={() => kb.setModal('none')} filterType="web" />

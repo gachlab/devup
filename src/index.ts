@@ -152,6 +152,13 @@ async function main() {
     console.error('❌ --env needs a path');
     process.exit(1);
   }
+  // A bare `--remote` must not fall through to an ordinary local boot: the
+  // services it was meant to cover would simply be missing, and what the
+  // developer sees is a frontend failing to connect, minutes from the cause.
+  if (cliArgs.remote === '') {
+    console.error('❌ --remote needs an environment name');
+    process.exit(1);
+  }
   const envFile = cliArgs.envFile
     ? resolve(cwd, cliArgs.envFile)
     : (config.envFile ? join(cwd, config.envFile) : join(cwd, '.env'));

@@ -24,6 +24,7 @@ devup --help
 | `--only webs` | Only start web services |
 | `--services a,b,c` | Start only the named services |
 | `--profile <name>` | Start the services in a named profile (see [Profiles](./profiles.md)) |
+| `--remote <env>` | Serve every service not running locally by forwarding its port to a named environment. `--remote <env>:a,b` proxies only those, even if a profile names them (see [Remote environments](./remote-environments.md)) |
 | `--skip a,b,c` | Start everything except these |
 | `--config <path>` | Use a custom config file |
 
@@ -315,6 +316,28 @@ Exits `1` naming the ones that did not come up. Neither takes an implicit
 because a name was forgotten is not a mistake worth being quiet about. A name
 the daemon does not have fails the whole batch before anything is started,
 rather than half-doing it.
+
+### `devup ctl remote <svc> <env>` / `devup ctl remote <svc> --local`
+
+Move one service between running locally and being served from a remote
+environment, without restarting the stack.
+
+```
+devup ctl remote check-in-api qa       # hand it to the environment
+devup ctl remote check-in-api --local  # take it back and start it here
+```
+
+Exits 1 and prints the reason when the switch does not happen: an unknown
+environment, a service the environment cannot reach, or a port still held by a
+process that has not finished draining. Whatever holds the port is released and
+confirmed gone before the next owner binds, so a busy port is reported rather
+than swallowed.
+
+An environment and `--local` together are refused — two opposite intentions in
+one command, and picking either silently is how traffic ends up somewhere
+nobody asked for.
+
+See [Remote environments](./remote-environments.md).
 
 ### `devup ctl logs <svc> [--since <when>] [--lines <n>] [--follow]`
 

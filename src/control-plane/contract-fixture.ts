@@ -70,6 +70,18 @@ export function buildContractSnapshot(): Record<string, unknown> {
         restartPendingUntil: 1755800008000,
         crashLog: ['Error: listen EADDRINUSE: address already in use :::4201', '    at Server.setupListenHandle'],
       })),
+      // Served from an environment, so `remote` is pinned as an object rather
+      // than only ever null. Note what travels with it: `pid` null on a
+      // service whose `status` is `running` — the combination a client has to
+      // be able to read, since it is what says "there is nothing here to
+      // attach a debugger to, and nothing to sample for CPU".
+      serializeState('rules-api', mkState(
+        { ...alwaysOn, name: 'rules-api', cwd: 'rules/api', port: 3007, phase: 1 },
+        {
+          status: 'running', health: 'up', startedAt: 1755800000000,
+          remote: { envName: 'qa', target: 'https://rules-api.qa.norelian.com', readOnly: false },
+        },
+      )),
     ],
     proxy: {
       active: true,

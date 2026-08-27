@@ -34,6 +34,10 @@ export interface CliArgs {
   instance?: string;
   watchConfig: boolean;
   killPortConflicts: boolean;
+  /** Raw `--remote` value: `<env>` or `<env>:svc,svc`. Empty string for a bare
+   *  `--remote`, which index.ts rejects — falling through to "no remote" would
+   *  leave the services it was meant to cover silently absent. */
+  remote?: string;
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
@@ -56,6 +60,14 @@ Lazy mode:
   --lazy                   Enable lazy mode (default)
   --no-lazy                Start every service immediately
   --timeout <minutes>      Idle timeout for lazy services. Default: 10
+
+Remote environments:
+  --remote <env>           Serve every service that is not running locally by
+                           forwarding its port to a named environment from
+                           config.environments. With --profile, the profile
+                           wins: what it names runs here, the rest is proxied.
+  --remote <env>:a,b       Proxy only these, even if a profile names them.
+                           See docs/remote-environments.md
 
 Reverse proxy:
   --proxy                  Enable proxy config generation
@@ -161,7 +173,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     // acting on the wrong thing: `--env=` runs the suite against the
     // development database, `--instance=` stops the daemon you are working in.
     // The rest keep the spaced form they have always had.
-    for (const f of ['--env', '--instance']) {
+    for (const f of ['--env', '--instance', '--remote']) {
       if (arg.startsWith(`${f}=`)) { next = arg.slice(f.length + 1); arg = f; i--; break; }
     }
 
@@ -207,6 +219,16 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--env': {
         const hasValue = next !== undefined && !next.startsWith('-');
         args.envFile = hasValue ? next : '';
+        if (hasValue) i++;
+        break;
+      }
+      // Same empty-string-not-undefined shape as `--env`: a bare `--remote`
+      // (value forgotten, or an empty shell variable) must not fall through to
+      // a plain local boot, where the services it was meant to cover are
+      // simply missing and the frontend fails with ECONNREFUSED.
+      case '--remote': {
+        const hasValue = next !== undefined && !next.startsWith('-');
+        args.remote = hasValue ? next : '';
         if (hasValue) i++;
         break;
       }

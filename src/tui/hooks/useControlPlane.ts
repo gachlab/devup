@@ -4,12 +4,16 @@ import type { ProcessManager } from '../../process/manager.js';
 import type { LogSink } from '../../process/log-sink.js';
 import type { Broadcaster } from '../../utils/broadcaster.js';
 import type { ProcessState } from '../../process/types.js';
+import type { DevStackConfig } from '../../config/types.js';
 import type { Platform } from '../../platform/types.js';
 import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 import { calcCpuPercent } from '../../utils.js';
+import { seedServiceStats } from '../../utils/stats.js';
 import { systemLoad } from '../../utils/system-load.js';
+import type { RemoteProxy } from '../../remote/proxy.js';
 import type { LazyProxy } from '../../lazy/proxy.js';
+import { switchService } from '../../remote/switch.js';
 import { startService } from '../../process/start-service.js';
 import { debugService } from '../../process/debug-service.js';
 import { readLogWindow } from '../../process/log-reader.js';
@@ -30,6 +34,12 @@ export function useControlPlane(
   stateBus: Broadcaster<{ name: string; state: ProcessState }>,
   removedBus: Broadcaster<{ name: string }>,
   lazyProxies: React.RefObject<Map<string, LazyProxy>>,
+  remoteProxies: React.RefObject<Map<string, RemoteProxy>>,
+  /** The whole config, for `remote`: switching a service needs its
+   *  `environments`, its `proxy.routes` and the service's **configured** port —
+   *  `state.svc` carries the rewritten one for anything lazy. */
+  config: DevStackConfig,
+  env: Record<string, string>,
   platform: Platform,
   proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
   profiles: Record<string, string[]>,
@@ -76,19 +86,16 @@ export function useControlPlane(
           watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
           debug: (name, enable, port, brk) => debugService(manager, lazyProxies.current, name, enable, port, brk),
           start: (name) => startService(manager, lazyProxies.current, name),
+          setRemote: (name, envName) => switchService({
+            mgr: manager, config, remoteProxies: remoteProxies.current,
+            lazyProxies: lazyProxies.current, processEnv: env,
+            onLog: pushLog,
+          }, name, envName),
 
           async getStats() {
-            const pids: number[] = [];
-            const pidToName = new Map<number, string>();
-            for (const [name, st] of manager.state) {
-              if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
-            }
+            const { services, pids, pidToName } = seedServiceStats(manager.state);
             const cores = cpus().length;
             const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
-            const services: Record<string, { cpu: number; memMB: number }> = {};
-            for (const [name] of manager.state) {
-              services[name] = { cpu: 0, memMB: 0 };
-            }
             for (const [pid, data] of raw) {
               const name = pidToName.get(pid);
               if (!name) continue;
@@ -132,6 +139,9 @@ export function useControlPlane(
       }
     })();
     return () => { cancelled = true; void handle?.close(); handleRef.current = null; };
-  }, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, lazyProxies, platform, proxy, profiles, instance]);
+    // `config` and `env` are props of App, created once when the stack is
+  // loaded — stable, like the rest. Anything rebuilt per render belongs in a
+  // useMemo before it gets here; see the note on `proxyCtx` in App.tsx.
+}, [manager, projectName, logSink, pushLog, logBus, stateBus, removedBus, lazyProxies, remoteProxies, config, env, platform, proxy, profiles, instance]);
   return handleRef;
 }

@@ -8,6 +8,7 @@ import { readVersion } from '../utils/version.js';
 import type { LogWindow, LogWindowOpts } from '../process/log-reader.js';
 import { CONTRACT_VERSION } from './types.js';
 import type {
+  RemoteResult,
   ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
 } from './types.js';
 
@@ -59,6 +60,11 @@ export interface RpcContext {
   getProxyInfo(): ProxyInfo | null;
   /** Project metadata: name, instance, and the profiles defined in config. */
   getInfo(): ProjectInfo;
+  /** Move a service between running locally and being served from a named
+   *  environment. `null` brings it back local. Reports the outcome, not that
+   *  the request was accepted: the port has to change hands, and it can fail
+   *  to. */
+  setRemote(name: string, envName: string | null): Promise<RemoteResult>;
 }
 
 export interface SocketServerHandle {
@@ -277,6 +283,12 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
     startedAt: st.startedAt,
     crashLog: st.crashLog ?? null,
     debugPort: st.debugPort ?? null,
+    // Null rather than omitted: a client reading `snapshot.remote?.envName`
+    // gets the same answer either way, and the field being always present is
+    // what lets the golden test pin it.
+    remote: st.remote
+      ? { envName: st.remote.envName, target: st.remote.target, readOnly: st.remote.readOnly }
+      : null,
   };
 }
 
@@ -356,6 +368,24 @@ const HANDLER_TABLE = {
     const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
     ctx.stop(svc);
     return { ok: true };
+  },
+
+  remote: async (params, ctx) => {
+    const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
+    const rawEnv = params['env'];
+    const local = params['local'];
+    if (local !== undefined && typeof local !== 'boolean') {
+      throw new Error('param "local" must be a boolean');
+    }
+    if (rawEnv !== undefined && rawEnv !== null && typeof rawEnv !== 'string') {
+      throw new Error('param "env" must be a string');
+    }
+    // Neither is not "leave it as it is": a caller that meant one and sent
+    // neither would get a silent no-op reported as success, and only find out
+    // when traffic went somewhere it did not expect.
+    if (local !== true && !rawEnv) throw new Error('pass either "env" or "local": true');
+    if (local === true && rawEnv) throw new Error('pass "env" or "local", not both');
+    return await ctx.setRemote(svc, local === true ? null : rawEnv as string);
   },
 
   'logs.tail': async (params, ctx) => {

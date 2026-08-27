@@ -37,6 +37,23 @@ export interface ProcessState {
   /** Port the Node inspector bound to, parsed from the process's startup line.
    *  Null unless the service is running under `--inspect`. */
   debugPort?: number | null;
+  /** Set when this service is not a process at all: devup holds its configured
+   *  port and forwards to a remote environment.
+   *
+   *  Anything that reasons about a local process has to check this first.
+   *  `pid` is null and stays null, and the port answers unconditionally
+   *  because devup's own proxy is what answers — so a TCP probe there reports
+   *  a healthy service no matter what the environment is doing. */
+  remote?: RemoteState;
+}
+
+export interface RemoteState {
+  /** Which entry of `config.environments` this is served from. */
+  envName: string;
+  /** Absolute upstream base, e.g. `https://check-in-api.qa.norelian.com`. */
+  target: string;
+  /** Whether writes are refused with 405. */
+  readOnly: boolean;
 }
 
 export interface ProcessManagerEvents {

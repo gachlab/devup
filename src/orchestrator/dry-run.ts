@@ -4,6 +4,7 @@ import type { ProxyConfigProvider, ProxyOpts } from '../proxy-config/types.js';
 import type { ServiceState } from '../proxy-config/types.js';
 import { groupByPhase, buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { classifyServices, rewriteServicePort, getLazyRealPort } from '../lazy/classifier.js';
+import { classifyRemote, parseRemoteSelection, type RemoteClassification } from '../remote/classifier.js';
 
 export interface DryRunOpts {
   config: DevStackConfig;
@@ -16,12 +17,23 @@ export interface DryRunOpts {
 }
 
 export function renderDryRun(opts: DryRunOpts): string {
-  const { config, services, cliArgs, env, proxyProvider, proxyOpts } = opts;
+  const { config, cliArgs, env, proxyProvider, proxyOpts } = opts;
   const lines: string[] = [];
+
+  // The remote split first: `--dry-run` exists to print the plan that will
+  // actually run, and a plan that lists a service under a phase when it is
+  // going to be proxied is a plan for a different boot.
+  let remote: RemoteClassification | null = null;
+  if (cliArgs.remote) {
+    const selection = parseRemoteSelection(cliArgs.remote, config.environments);
+    remote = classifyRemote(config.services, opts.services, selection, config.proxy?.routes);
+  }
+  const services = remote ? remote.local : opts.services;
 
   lines.push(`Project:  ${config.icon ?? '📦'} ${config.name}`);
   lines.push(`Mode:     ${cliArgs.lazy && config.lazy ? 'lazy' : 'normal'}`);
   if (cliArgs.profile) lines.push(`Profile:  ${cliArgs.profile}`);
+  if (remote) lines.push(`Remote:   ${cliArgs.remote!.split(':')[0]} (${remote.remote.length} service(s))`);
   lines.push(`Services: ${services.length}`);
   lines.push('');
 
@@ -34,6 +46,23 @@ export function renderDryRun(opts: DryRunOpts): string {
         : '';
       lines.push(`  - ${ext.name.padEnd(20)} ${ext.cmd}${hcTag}`);
     }
+    lines.push('');
+  }
+
+  if (remote?.remote.length) {
+    lines.push(`Remote (${remote.remote[0]!.envName}):`);
+    for (const spec of remote.remote) {
+      const flags = spec.env.readOnly ? ' [read-only]' : '';
+      lines.push(`  - ${spec.svc.name.padEnd(20)} :${spec.svc.port} → ${spec.target}${flags}`);
+    }
+    lines.push('');
+  }
+  if (remote?.unknown.length) {
+    lines.push(`Not services in this config: ${remote.unknown.join(', ')}`);
+    lines.push('');
+  }
+  if (remote?.unresolved.length) {
+    lines.push(`No remote target (these stay down): ${remote.unresolved.join(', ')}`);
     lines.push('');
   }
 

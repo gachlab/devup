@@ -120,6 +120,46 @@ Fields per service mirror `ProcessState`:
 - `startedAt`: epoch ms of the current spawn, `null` if not running. Nulled together with `pid`, so it is not a liveness signal of its own
 - `crashLog`: `string[]` of the last stderr lines when the service crashed, otherwise `null`
 - `debugPort`: port the Node inspector bound to, parsed from the process's startup line. `null` unless the service is running under `--inspect`
+- `remote`: `{ envName, target, readOnly }` when the service is **not a local
+  process** — devup holds its configured port and forwards to a remote
+  environment (see [Remote environments](./remote-environments.md)). `null` for
+  an ordinary service. Added in 0.18.0
+
+  It is an added field rather than a new `status` value on purpose: widening
+  that union breaks every exhaustive switch written against it, and a client
+  that does not know this field yet renders a remote service as the running
+  service it is.
+
+  Two things travel with it that nothing else in the snapshot says. `pid` is
+  `null` and stays null, so there is no process to attach a debugger to — an
+  "attach" offered for one of these silently does nothing. And there is no
+  process to sample, so the service is **absent from `stats`**, which is not
+  the same as 0% CPU.
+
+  `startedAt` is set: it answers since when devup has been serving that port.
+  This is the one case where `pid === null` and `startedAt !== null` together
+  are correct.
+
+### `remote`
+
+Move a service between running locally and being served from an environment.
+
+```json
+{ "method": "remote", "params": { "svc": "check-in-api", "env": "qa" } }
+{ "method": "remote", "params": { "svc": "check-in-api", "local": true } }
+→ { "result": { "ok": true, "remote": { "envName": "qa", "target": "https://check-in-api.qa.norelian.com", "readOnly": false } } }
+```
+
+Exactly one of `env` and `local` — neither is refused rather than treated as
+"leave it alone", since a caller that meant one and sent neither would get a
+no-op reported as success and find out when traffic went somewhere unexpected.
+
+Failures come back as `{ ok: false, error }`, **not** as an RPC error: an
+unknown environment, a service with no target there, or a port still held by a
+process that has not finished draining are all facts about the stack worth
+showing, where an RPC error reads as "devup is broken".
+
+Added in 0.18.0.
 
 ### `info`
 

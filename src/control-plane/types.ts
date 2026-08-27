@@ -77,6 +77,31 @@ export interface ServiceSnapshot {
    *  runs under `--inspect`. Sent since 0.14.0 — see the note on daemon age at
    *  the top of this file. */
   debugPort: number | null;
+  /** Set when the service is not a local process at all: devup holds its
+   *  configured port and forwards to a remote environment. `null` for an
+   *  ordinary service. Sent since 0.18.0.
+   *
+   *  Deliberately an added field rather than a new member of `ProcessStatus`.
+   *  Widening that union breaks every exhaustive switch written against it,
+   *  including the hand-written copy in gachlab/devup-vscode; a client that
+   *  does not know this field yet renders a remote service as the running
+   *  service it is — wrong in detail, right in substance.
+   *
+   *  Two things follow from it that a client cannot infer from anywhere else.
+   *  `pid` is null and stays null, so anything offering to attach a debugger
+   *  has nothing to attach to. And there is no process to sample, so the
+   *  service is absent from `stats` — which is not the same as 0% CPU. */
+  remote: RemoteInfo | null;
+}
+
+export interface RemoteInfo {
+  /** Which entry of `config.environments` serves it. */
+  envName: string;
+  /** Absolute upstream base, e.g. `https://check-in-api.qa.norelian.com`. */
+  target: string;
+  /** Whether writes are refused with 405. When false — the default — requests
+   *  made against this port change data in a shared environment. */
+  readOnly: boolean;
 }
 
 export interface ProxyInfo {
@@ -129,8 +154,10 @@ export interface StatsResult {
  *
  *  `1` is the shape 0.16.0 settled on. `2` adds `restartPendingIn` to the
  *  snapshot and the window fields to the `logs.follow` ack — 0.16.0 is
- *  published, so this one is a real bump rather than an invented version. */
-export const CONTRACT_VERSION = 2;
+ *  published, so this one is a real bump rather than an invented version.
+ *  `3` adds `remote` to the snapshot: a service devup serves by forwarding its
+ *  configured port to an environment rather than by running a process. */
+export const CONTRACT_VERSION = 3;
 
 export interface ProjectInfo {
   project: string;
@@ -182,6 +209,20 @@ export interface RestartResult {
    *  waking it is not what someone resetting state between suites asked for.
    *  Sent since 0.16.0. */
   skippedIdle?: boolean;
+}
+
+/** The `remote` result: what the service is now, not what was asked for.
+ *
+ *  `ok: false` with an `error` rather than a thrown RPC failure, because every
+ *  way this goes wrong is a fact about the stack a client should show — the
+ *  environment does not exist, the service has no target there, the port is
+ *  still held by a process that has not finished draining. */
+export interface RemoteResult {
+  ok: boolean;
+  /** Where it is served from now, `null` when it is local. */
+  remote: RemoteInfo | null;
+  /** Why the switch did not happen. Present only when `ok` is false. */
+  error?: string;
 }
 
 export interface DebugResult {

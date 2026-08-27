@@ -6,6 +6,7 @@ import type { ServiceConfig } from '../../config/types.js';
 import { calcCpuPercent, detectLogLevel, type LogLevel } from '../../utils.js';
 import { LogSink } from '../../process/log-sink.js';
 import { Broadcaster } from '../../utils/broadcaster.js';
+import { releaseRemoteProxy } from '../../remote/classifier.js';
 import { releaseLazyProxy } from '../../lazy/classifier.js';
 
 export interface LogEntry {
@@ -27,6 +28,7 @@ export function useProcessManager(
   env: Record<string, string>,
   logSink: LogSink | null = null,
   lazyProxies?: React.RefObject<Map<string, { destroy: () => void }>>,
+  remoteProxies?: React.RefObject<Map<string, { destroy: () => void }>>,
 ) {
   const [states, setStates] = useState<Map<string, ProcessState>>(new Map());
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -69,6 +71,9 @@ export function useProcessManager(
         },
         onServiceRemoved: (name) => {
           releaseLazyProxy(lazyProxies?.current, name);
+          // Both, and before the removal is announced: either one left alive
+          // keeps answering on the service's public port.
+          releaseRemoteProxy(remoteProxies?.current, name);
           prevCpu.current?.delete(name);
           removedBus.current.emit({ name });
           setStates(new Map(mgr.state));

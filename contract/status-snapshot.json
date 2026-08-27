@@ -17,7 +17,8 @@
       "pid": 4242,
       "startedAt": 1755800000000,
       "crashLog": null,
-      "debugPort": null
+      "debugPort": null,
+      "remote": null
     },
     {
       "name": "app-api",
@@ -36,7 +37,8 @@
       "pid": 4243,
       "startedAt": 1755800000000,
       "crashLog": null,
-      "debugPort": 39481
+      "debugPort": 39481,
+      "remote": null
     },
     {
       "name": "authorization-api",
@@ -55,7 +57,8 @@
       "pid": null,
       "startedAt": null,
       "crashLog": null,
-      "debugPort": null
+      "debugPort": null,
+      "remote": null
     },
     {
       "name": "app-web",
@@ -77,7 +80,32 @@
         "Error: listen EADDRINUSE: address already in use :::4201",
         "    at Server.setupListenHandle"
       ],
-      "debugPort": null
+      "debugPort": null,
+      "remote": null
+    },
+    {
+      "name": "rules-api",
+      "status": "running",
+      "health": "up",
+      "port": 3007,
+      "originalPort": 3007,
+      "type": "api",
+      "phase": 1,
+      "cmd": "node",
+      "cwd": "rules/api",
+      "errors": 0,
+      "restarts": 0,
+      "crashes": 0,
+      "restartPendingIn": null,
+      "pid": null,
+      "startedAt": 1755800000000,
+      "crashLog": null,
+      "debugPort": null,
+      "remote": {
+        "envName": "qa",
+        "target": "https://rules-api.qa.norelian.com",
+        "readOnly": false
+      }
     }
   ],
   "proxy": {

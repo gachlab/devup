@@ -35,6 +35,13 @@ export class HealthPoller {
       // back from: a service that started slowly and then served perfectly
       // well stayed marked down for the rest of the session. It is probed like
       // any other now, and promoted below when it answers.
+      // A remote service has no local process, and probing its port would
+      // answer the wrong question: devup's own proxy holds that port, so a
+      // check there says "the proxy is listening" and never "the environment
+      // is reachable". Worse, it would land in the `!st.pid` branch below and
+      // be marked down every round. Its health belongs to the proxy's probe
+      // against the upstream — see `createRemoteProxy`.
+      if (st.remote) continue;
       if (!st.pid || st.status === 'idle') {
         st.health = st.status === 'idle' ? 'idle' : 'down';
         continue;
