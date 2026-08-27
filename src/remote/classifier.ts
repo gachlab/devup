@@ -1,0 +1,118 @@
+import type { EnvironmentConfig, ServiceConfig } from '../config/types.js';
+import { resolveRemoteTarget } from './target.js';
+
+export interface RemoteSelection {
+  envName: string;
+  env: EnvironmentConfig;
+  /** The `--remote qa:a,b` form. Absent means the blanket form. */
+  only?: string[];
+}
+
+export interface RemoteSpec {
+  svc: ServiceConfig;
+  target: string;
+  envName: string;
+  env: EnvironmentConfig;
+}
+
+export interface RemoteClassification {
+  /** Services to start as processes, after the remote ones are taken out. */
+  local: ServiceConfig[];
+  remote: RemoteSpec[];
+  /** Named for the remote set but with no resolvable target. Report these:
+   *  a service that is neither started nor proxied is exactly the silent
+   *  absence this feature exists to remove. */
+  unresolved: string[];
+}
+
+/** Split the stack into what runs here and what is forwarded to an environment.
+ *
+ *  Two forms, with different precedence, and the difference is deliberate:
+ *
+ *  - `--remote qa` — the blanket form. Everything the local selection did
+ *    *not* pick becomes remote. The profile wins, because the profile is the
+ *    statement of what you are working on.
+ *  - `--remote qa:app-api,rules-api` — the explicit form. Those services are
+ *    remote even if a profile named them, because naming a service on the
+ *    command line is more specific than the profile it happens to belong to.
+ *
+ *  `--skip x` under the blanket form makes `x` remote rather than absent. That
+ *  is the point: "not running it here" is what skipping has always meant, and
+ *  what changes is only what happens to its port.
+ *
+ *  Lazy classification runs on `local` afterwards, which is what keeps a
+ *  service from being lazy and remote at once — the lazy proxy and the remote
+ *  proxy would bind the same port, and the second one loses. */
+export function classifyRemote(
+  all: ServiceConfig[],
+  local: ServiceConfig[],
+  selection: RemoteSelection | null,
+  routes: Record<string, string> | undefined,
+): RemoteClassification {
+  if (!selection) return { local, remote: [], unresolved: [] };
+
+  const localNames = new Set(local.map(s => s.name));
+  const wanted = selection.only
+    ? all.filter(s => selection.only!.includes(s.name))
+    : all.filter(s => !localNames.has(s.name));
+
+  const remote: RemoteSpec[] = [];
+  const unresolved: string[] = [];
+  for (const svc of wanted) {
+    const target = resolveRemoteTarget(svc.name, selection.env, routes);
+    if (target) remote.push({ svc, target, envName: selection.envName, env: selection.env });
+    else unresolved.push(svc.name);
+  }
+
+  const remoteNames = new Set(remote.map(r => r.svc.name));
+  return { local: local.filter(s => !remoteNames.has(s.name)), remote, unresolved };
+}
+
+/** Tear down and forget the remote proxy for a service that has been removed.
+ *
+ *  Same hazard as `releaseLazyProxy`, and the same rule: the proxy holds the
+ *  service's **public** port, so until it is destroyed the stack still answers
+ *  for a service every client was just told had gone. Call this before
+ *  announcing the removal, not after. */
+export function releaseRemoteProxy(
+  proxies: Map<string, { destroy: () => void }> | undefined | null,
+  name: string,
+): boolean {
+  const proxy = proxies?.get(name);
+  if (!proxy) return false;
+  proxy.destroy();
+  proxies!.delete(name);
+  return true;
+}
+
+/** Turn the `--remote` value into a selection, or throw with the list of
+ *  environments that do exist.
+ *
+ *  A misspelled environment name must not degrade into a plain local boot: the
+ *  services it was meant to cover would just be missing, and what the
+ *  developer sees is a frontend failing to connect — several minutes away from
+ *  the typo that caused it. */
+export function parseRemoteSelection(
+  raw: string,
+  environments: Record<string, EnvironmentConfig> | undefined,
+): RemoteSelection {
+  const [envName, list] = splitOnce(raw, ':');
+  const env = environments?.[envName];
+  if (!env) {
+    const available = Object.keys(environments ?? {});
+    const hint = available.length
+      ? `Available: ${available.join(', ')}`
+      : 'No environments defined in config.';
+    throw new Error(`Unknown environment: "${envName}". ${hint}`);
+  }
+
+  if (list === undefined) return { envName, env };
+  const only = list.split(',').map(s => s.trim()).filter(Boolean);
+  if (!only.length) throw new Error(`--remote ${envName}: needs at least one service name`);
+  return { envName, env, only };
+}
+
+function splitOnce(value: string, sep: string): [string, string | undefined] {
+  const idx = value.indexOf(sep);
+  return idx < 0 ? [value, undefined] : [value.slice(0, idx), value.slice(idx + 1)];
+}

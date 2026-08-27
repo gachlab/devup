@@ -19,6 +19,7 @@ import { StatsPanel } from './StatsPanel.js';
 import { StatusBar } from './StatusBar.js';
 import { ServiceList } from './ServiceList.js';
 import { SearchInput } from './SearchInput.js';
+import type { RemoteProxy } from '../remote/proxy.js';
 import type { LazyProxy } from '../lazy/proxy.js';
 import { stopExternals, type ExternalProc } from '../process/external.js';
 
@@ -62,7 +63,8 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
 
   // Declared before the manager so it can tear a proxy down as part of removal.
   const lazyProxies = useRef<Map<string, LazyProxy>>(new Map());
-  const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies);
+  const remoteProxies = useRef<Map<string, RemoteProxy>>(new Map());
+  const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies, remoteProxies);
   const externals = useRef<ExternalProc[]>([]);
 
   const kb = useKeyBindings({
@@ -89,6 +91,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
+    remoteProxies.current.forEach(p => p.destroy());
     await socketServer.current?.close();
     await pm.cleanup();
     if (externals.current.length) {
@@ -107,7 +110,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
   useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
-    { lazyProxies, externals }, pm.pushLog);
+    { lazyProxies, remoteProxies, externals }, pm.pushLog);
 
   const handleFilterSelect = useCallback((name: string) => kb.setFilter(name), [kb]);
   const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);

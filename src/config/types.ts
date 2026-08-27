@@ -69,6 +69,86 @@ export interface HealthCheckConfig {
   failureThreshold?: number;
 }
 
+/** How a service that is *not* running locally is served: devup binds its
+ *  configured port and forwards to a remote environment.
+ *
+ *  The point of cut is the port, not the service's own configuration, because
+ *  that is where every consumer already looks — a frontend that resolves its
+ *  backend as `http://localhost:3050` keeps working untouched. See
+ *  docs/remote-environments.md. */
+export interface EnvironmentConfig {
+  /** Domain the environment is served under. The per-service host is built
+   *  from `proxy.routes[name]` plus this — the same map the reverse-proxy
+   *  generator uses, and the same subdomains the deployed frontends call. */
+  domain?: string;
+  /** Per-service absolute URL, for a service whose remote host does not follow
+   *  `proxy.routes` (or a stack with no `proxy` block at all). Wins over
+   *  `domain`. */
+  targets?: Record<string, string>;
+  /** Scheme for targets built from `domain`. Default: true (https).
+   *  Ignored for entries in `targets`, which carry their own scheme. */
+  tls?: boolean;
+  /** Verify the upstream's TLS certificate. Default: true. Set false only for
+   *  an environment with a self-signed certificate. */
+  tlsVerify?: boolean;
+  /** What to send as `Origin` and `Referer`, and what to restore in the
+   *  response's `Access-Control-Allow-Origin`.
+   *
+   *  Absent means passthrough: the browser's own origin travels up. That works
+   *  where the upstream allowlists localhost, and fails where the origin
+   *  selects a tenant — the request never reaches a database. Both halves are
+   *  driven from this one option on purpose: rewriting the request origin
+   *  without restoring the CORS header makes the browser reject every reply,
+   *  and two separate options can drift apart. */
+  origin?: string;
+  /** `Host` sent upstream. 'target' (default) uses the target's own host,
+   *  which is what an ingress routes on; 'passthrough' forwards the local one. */
+  host?: 'target' | 'passthrough';
+  /** Send `X-Forwarded-Host` / `-Proto` / `-For` with the *local* values.
+   *
+   *  Default false, which is not the obvious choice. An upstream that resolves
+   *  a tenant from headers may read `x-forwarded-host` as a fallback: filling
+   *  it with the local host either matches nothing or, worse, selects the
+   *  wrong tenant without a word. Opt in per environment. */
+  forwarded?: boolean;
+  /** Request headers, applied after every rule above. Values interpolate
+   *  `${VAR}` from the process environment. */
+  headers?: { set?: Record<string, string>; remove?: string[] };
+  /** `Set-Cookie` handling. 'localize' (default) drops `Domain` and `Secure`
+   *  so a cookie scoped to the remote domain, and marked https-only, is kept
+   *  by a browser on `http://localhost`. Without it there is no session. */
+  cookies?: 'localize' | 'passthrough';
+  /** `Location` handling on redirects. 'localize' (default) rewrites a
+   *  redirect back to the remote origin into the local one, so a login flow
+   *  does not walk the browser out of the local stack. */
+  location?: 'localize' | 'passthrough';
+  /** Reject every method other than GET/HEAD/OPTIONS with 405.
+   *
+   *  Default **false**, deliberately. Logging in is a POST, so a restrictive
+   *  default breaks the first thing anyone tries and teaches them to turn it
+   *  off without reading why. The warning lives where it cannot be skipped
+   *  instead: a boot banner and a permanent marker in the TUI. */
+  readOnly?: boolean;
+  /** Upstream request timeout in ms. Default: 30 000. */
+  timeoutMs?: number;
+  /** Liveness probe against the environment. */
+  healthCheck?: RemoteHealthCheckConfig;
+}
+
+export interface RemoteHealthCheckConfig {
+  /** Request path. Default: '/' */
+  path?: string;
+  /** Acceptable status code(s). Default: any response at all — an upstream
+   *  that answers 401 is reachable, which is what this probe asks. */
+  expect?: number | number[];
+  /** Milliseconds between probes. Default: 30 000 — a remote environment is
+   *  shared, and the 3 s cadence used for local services is rude at 24
+   *  services. */
+  intervalMs?: number;
+  /** Per-probe timeout in ms. Default: 5000 */
+  timeoutMs?: number;
+}
+
 export interface LazyConfig {
   alwaysOn: string[];
   timeout?: number;
@@ -114,6 +194,10 @@ export interface DevStackConfig {
   profiles?: Record<string, string[]>;
   /** Optional external dependencies (DBs, queues) started before phase 0. */
   external?: ExternalService[];
+  /** Named remote environments — selectable with `--remote <name>`. A service
+   *  not selected to run locally is served by forwarding its configured port
+   *  to the environment instead of being absent. */
+  environments?: Record<string, EnvironmentConfig>;
 }
 
 export function defineConfig(config: DevStackConfig): DevStackConfig {

@@ -11,6 +11,7 @@ Comprehensive guides for `@gachlab/devup`. If you're new, start with [Getting St
 - **[Build hooks](./build-hooks.md)** — `preBuild` and `watchBuild` for TypeScript and other compile-step services.
 - **[External services](./external-services.md)** — wire docker-compose (databases, queues) into the boot sequence.
 - **[Profiles](./profiles.md)** — save service subsets under a name and boot them with `--profile`.
+- **[Remote environments](./remote-environments.md)** — run part of the stack locally and serve the rest from QA, with the header rewriting that makes sessions and tenants work.
 - **[Reverse proxy](./proxy.md)** — generating config for Traefik, Nginx, and Caddy; writing your own provider.
 - **[TUI tour](./tui.md)** — every keybinding, scroll, search, filter, tips.
 - **[CLI reference](./cli.md)** — flags and subcommands (`logs`, `install`, `status`).

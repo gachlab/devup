@@ -34,6 +34,23 @@ export function collectWarnings(config: DevStackConfig): ValidationWarning[] {
       }
     }
   }
+  // An environment that can only reach part of the stack. Not an error — a
+  // stack may deliberately proxy two services and run the rest — but the
+  // failure mode when it is *not* deliberate is a service that is neither
+  // started nor proxied, and nothing else says so until a request fails.
+  for (const [envName, env] of Object.entries(config.environments ?? {})) {
+    if (!env.domain) continue;
+    const unreachable = config.services
+      .filter(s => config.proxy?.routes?.[s.name] === undefined && env.targets?.[s.name] === undefined)
+      .map(s => s.name);
+    if (unreachable.length) {
+      warnings.push({
+        field: `environments.${envName}`,
+        message: `no target for ${unreachable.join(', ')} — absent from proxy.routes and from targets. Under --remote ${envName} these stay down.`,
+      });
+    }
+  }
+
   return warnings;
 }
 
@@ -257,7 +274,50 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     }
   }
 
+  // Environments
+  if (config.environments) {
+    for (const [envName, env] of Object.entries(config.environments)) {
+      if (!env.domain && !Object.keys(env.targets ?? {}).length) {
+        errors.push({
+          field: `environments.${envName}`,
+          message: 'needs `domain` (resolved through proxy.routes) or `targets`',
+        });
+      }
+      for (const ref of Object.keys(env.targets ?? {})) {
+        if (!names.has(ref)) {
+          errors.push({ field: `environments.${envName}.targets`, message: `Unknown service: ${ref}` });
+          continue;
+        }
+        const value = env.targets![ref]!;
+        if (!isAbsoluteHttpUrl(value)) {
+          errors.push({
+            field: `environments.${envName}.targets.${ref}`,
+            message: `must be an absolute http(s) URL, got "${value}"`,
+          });
+        }
+      }
+      if (env.origin !== undefined && !isAbsoluteHttpUrl(env.origin)) {
+        errors.push({
+          field: `environments.${envName}.origin`,
+          message: `must be an absolute http(s) URL (scheme included), got "${env.origin}"`,
+        });
+      }
+      if (env.healthCheck?.path !== undefined && !env.healthCheck.path.startsWith('/')) {
+        errors.push({ field: `environments.${envName}.healthCheck.path`, message: 'must start with "/"' });
+      }
+    }
+  }
+
   return errors;
+}
+
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 export function formatValidationErrors(errors: ValidationError[]): string {

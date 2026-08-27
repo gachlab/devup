@@ -199,3 +199,34 @@ describe('--instance', () => {
     assert.equal(parseCliArgs(['down', '--instance', '--json']).onceJson, true, 'the flag it would have eaten survives');
   });
 });
+
+describe('--remote', () => {
+  it('reads the blanket form', () => {
+    assert.equal(parseCliArgs(['--remote', 'qa']).remote, 'qa');
+  });
+
+  it('reads the =value form', () => {
+    assert.equal(parseCliArgs(['--remote=qa']).remote, 'qa');
+  });
+
+  it('reads the explicit service list', () => {
+    assert.equal(parseCliArgs(['--remote', 'qa:app-api,rules-api']).remote, 'qa:app-api,rules-api');
+  });
+
+  it('reports a bare --remote as the empty string, not as absent', () => {
+    // index.ts rejects the empty string. Falling through to `undefined` would
+    // be an ordinary local boot with the services it was meant to cover simply
+    // missing — a frontend failing to connect, minutes from the cause.
+    assert.equal(parseCliArgs(['--remote']).remote, '');
+  });
+
+  it('does not swallow the following flag as its value', () => {
+    const args = parseCliArgs(['--remote', '--profile', 'app']);
+    assert.equal(args.remote, '');
+    assert.equal(args.profile, 'app');
+  });
+
+  it('is absent when the flag is not given', () => {
+    assert.equal(parseCliArgs(['--profile', 'app']).remote, undefined);
+  });
+});
