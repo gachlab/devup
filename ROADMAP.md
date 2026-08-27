@@ -4,7 +4,7 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.19.0](https://github.com/gachlab/devup/releases/tag/0.19.0)** (2026-08-27) — asking a remote service for something only a local process can do no longer marks it crashed and loses its marker.
+Last released: **[0.19.1](https://github.com/gachlab/devup/releases/tag/0.19.1)** (2026-08-27) — with `--remote`, an empty local selection is a legitimate configuration and is no longer rejected.
 
 Full history is in [CHANGELOG.md](CHANGELOG.md); this file is only for what is *not* built yet.
 
