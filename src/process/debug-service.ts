@@ -1,4 +1,5 @@
 import type { StartServiceHost } from './start-service.js';
+import type { DebugResult } from '../control-plane/types.js';
 import { startService } from './start-service.js';
 
 /** Same range the config validator enforces: a bad value reaches
@@ -8,18 +9,8 @@ function isInspectPort(p: unknown): p is number {
   return typeof p === 'number' && Number.isInteger(p) && p > 0 && p <= 65535;
 }
 
-export interface DebugResult {
-  /** Whether the service is now running under the inspector. */
-  debug: boolean;
-  /** Port the inspector bound to, once Node has announced it. Null while the
-   *  service is still starting, or when debugging was turned off. */
-  port: number | null;
-  /** False when the restart did not bring the service back up. */
-  ok: boolean;
-  /** The environment the service is served from, when that is why the
-   *  inspector could not be turned on. */
-  skippedRemote?: string;
-}
+/** The wire shape — see the note on `RestartOutcome`. */
+export type { DebugResult };
 
 export interface DebugServiceHost extends StartServiceHost {
   stop(name: string): void;

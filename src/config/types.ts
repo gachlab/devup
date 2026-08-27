@@ -149,6 +149,15 @@ export interface RemoteHealthCheckConfig {
   timeoutMs?: number;
 }
 
+/** How far a lazy service's real port sits from its configured one.
+ *
+ *  Lives here rather than in `lazy/` because the validator needs it to catch a
+ *  service configured on a port that collides with another service's rewritten
+ *  one — and a config module reaching into a feature module for a constant is
+ *  the wrong direction. `lazy/classifier.ts` re-exports it, so every existing
+ *  import keeps working. */
+export const LAZY_PORT_OFFSET = 10000;
+
 export interface LazyConfig {
   alwaysOn: string[];
   timeout?: number;

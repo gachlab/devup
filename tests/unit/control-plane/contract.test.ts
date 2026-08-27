@@ -63,6 +63,13 @@ const RESULT_SHAPES = {
   StatsResult: true,
   LogsTailResult: true,
   LogsFollowAck: true,
+  // The three the bump to contract 4 was *for*, plus `StartResult`. They were
+  // outside this list, so the guard built for #87 did not cover the last
+  // change to the number it guards.
+  StartResult: true,
+  RestartResult: true,
+  DebugResult: true,
+  RemoteResult: true,
 } as const;
 
 describe('control-plane contract', () => {
@@ -103,7 +110,7 @@ describe('control-plane contract', () => {
     // said nothing, because it only knew about the snapshot. Listing the
     // shapes here is what makes "bump it in the same commit" checkable.
     const covered = Object.keys(RESULT_SHAPES).sort();
-    assert.deepEqual(covered, ['LogsFollowAck', 'LogsTailResult', 'ProjectInfo', 'ServiceSnapshot', 'StatsResult'],
+    assert.deepEqual(covered, ['DebugResult', 'LogsFollowAck', 'LogsTailResult', 'ProjectInfo', 'RemoteResult', 'RestartResult', 'ServiceSnapshot', 'StartResult', 'StatsResult'],
       'a wire shape was added or removed without saying which contract covers it');
   });
 

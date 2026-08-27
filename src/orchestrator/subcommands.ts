@@ -21,6 +21,7 @@ import { findConfigFile, loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from '../config/validator.js';
 import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
+import type { RemoteResult, ServiceSnapshot } from '../control-plane/types.js';
 
 const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config', 'exec']);
 
@@ -247,27 +248,26 @@ type WindowInfo = { oldestRetained?: number | null; truncated?: boolean };
 /** A `logs.tail` result: a window, plus the lines. */
 type LogsTailShape = WindowInfo & { lines: string[] };
 
-/** The `remote` result as this command reads it — the daemon's `RemoteResult`.
- *  Kept local for the same reason as `ServiceRow`: this file speaks to the
- *  socket, not to the server's types. */
-type RemoteRow = {
-  ok: boolean;
-  remote: { envName: string; target: string; readOnly: boolean } | null;
-  error?: string;
-};
+/** The wire types, not copies of them.
+ *
+ *  These were hand-written here with a comment saying this file «speaks to the
+ *  socket, not to the server's types» — while `exec.ts` and `wait.ts`, in the
+ *  same layer, import them properly two files away. A copy is how `fmtStatus`
+ *  came to print the internal port: `ServiceSnapshot` never declared
+ *  `originalPort`, so nothing here could show the one a user can connect to. */
 
-type ServiceRow = {
-  name: string; status: string; health: string;
-  port: number; type: string; pid: number | null;
-  errors: number; restarts: number;
-};
 
-function fmtStatus(rows: ServiceRow[], out: (l: string) => void): void {
+function fmtStatus(rows: ServiceSnapshot[], out: (l: string) => void): void {
   const maxLen = Math.max(...rows.map(r => r.name.length), 8);
   for (const r of rows) {
     const pid = r.pid != null ? `pid=${r.pid}` : '        ';
     const name = r.name.padEnd(maxLen);
-    const port = `:${r.port}`.padStart(6);
+    // `originalPort`, not `port`: for a lazy service `port` is the internal
+    // one devup runs the process on, and the on-demand proxy holds the
+    // configured one — so `port` is precisely the number a user cannot
+    // connect to (CLAUDE.md §3). This printed it until the hand-written row
+    // type was replaced by the real one, which does declare the field.
+    const port = `:${r.originalPort ?? r.port}`.padStart(6);
     const status = r.status.padEnd(8);
     const health = r.health.padEnd(4);
     out(`${name}  ${port}  ${status}  ${health}  ${pid}  errors=${r.errors}  restarts=${r.restarts}`);
@@ -382,7 +382,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
             return;
           }
           if (frame.event !== 'status') return;
-          for (const r of frame.data as ServiceRow[]) {
+          for (const r of frame.data as ServiceSnapshot[]) {
             out(`[${ts}] ${r.name.padEnd(24)}  ${r.status}/${r.health}`);
           }
         }, err => { out(`error: ${err.message}`); resolve(1); },
@@ -519,7 +519,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
 
     if (method === 'status' && !follow) {
       const json = argv.includes('--json');
-      const res = await sendRpc(socketPath, 'status') as { services: ServiceRow[] };
+      const res = await sendRpc(socketPath, 'status') as { services: ServiceSnapshot[] };
       if (json) {
         out(JSON.stringify(res.services, null, 2));
       } else {
@@ -647,7 +647,7 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
       if (envName && local) { out('pass an environment or --local, not both'); return 1; }
 
       const res = await sendRpc(socketPath, 'remote',
-        local ? { svc, local: true } : { svc, env: envName }) as RemoteRow;
+        local ? { svc, local: true } : { svc, env: envName }) as RemoteResult;
       if (!res.ok) { out(`✗ ${res.error ?? 'switch failed'}`); return 1; }
       if (res.remote) {
         out(`✓ ${svc} → ${res.remote.target} (${res.remote.envName})`);

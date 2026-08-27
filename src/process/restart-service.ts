@@ -1,22 +1,19 @@
 import type { ProcessState } from './types.js';
 import { startService, type StartServiceHost } from './start-service.js';
+import type { RestartResult } from '../control-plane/types.js';
 
 export interface RestartServiceHost extends StartServiceHost {
   stop(name: string): void;
 }
 
-export interface RestartOutcome {
-  /** The environment the service is served from, when that is why nothing was
-   *  restarted. A skip, not a failure — see RestartResult.skippedRemote. */
-  skippedRemote?: string;
-  /** Whether the service is running again — the outcome, not an
-   *  acknowledgement. */
-  ok: boolean;
-  /** True when the service was lazy and idle, so there was nothing to restart.
-   *  Worth saying: "restarted" would be a lie, and waking it is not what
-   *  someone resetting state between suites asked for. */
-  skippedIdle: boolean;
-}
+/** The wire shape, not a copy of it.
+ *
+ *  This used to be declared here and again in `control-plane/types.ts`, with
+ *  nothing connecting them: `skippedRemote` could be renamed on one side and
+ *  `tsc` would pass while every client read `undefined`. One declaration, and
+ *  the compiler carries it to the socket. */
+export type RestartOutcome = RestartResult;
+
 
 /** Restart one service: stop it, then start it the way `start` starts it.
  *

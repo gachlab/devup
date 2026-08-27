@@ -892,3 +892,26 @@ describe('runCtl restart with a remote service in the batch', { skip: !isUnix },
     });
   });
 });
+
+describe('runCtl status prints the port you can connect to', { skip: !isUnix }, () => {
+  it('shows the configured port for a lazy service, not the internal one', async () => {
+    // The whole point of `originalPort`: devup runs a lazy service on
+    // `port + 10000` and keeps the on-demand proxy on the configured one, so
+    // `port` is the number a user cannot reach. `ctl status` printed it,
+    // because the hand-written row type never declared the field.
+    const states = new Map([['auth', mkState({
+      svc: { ...svc, name: 'auth', port: 13002 },
+      status: 'idle', health: 'idle', pid: null,
+    })]]);
+    // As the orchestrator holds a lazy service: the rewrite already happened.
+    (states.get('auth')!.svc as { originalPort?: number }).originalPort = 3002;
+
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states }), async path => {
+      await runCtl(['status'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+    });
+    const said = lines.join(' ');
+    assert.match(said, /:3002/);
+    assert.ok(!/:13002/.test(said), `printed the internal port: ${said}`);
+  });
+});

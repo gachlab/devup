@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { DevStackConfig } from './types.js';
-import { LAZY_PORT_OFFSET } from '../lazy/classifier.js';
+import { LAZY_PORT_OFFSET, type DevStackConfig } from './types.js';
 
 export interface ValidationError {
   field: string;

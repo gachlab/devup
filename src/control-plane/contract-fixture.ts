@@ -8,18 +8,24 @@
 import { serializeState } from './socket-server.js';
 import type { ProcessState } from '../process/types.js';
 import type { ServiceConfig } from '../config/types.js';
+import { rewriteServicePort } from '../lazy/classifier.js';
 
 const alwaysOn: ServiceConfig = {
   name: 'configurations-api', cwd: 'configurations/api', cmd: 'node',
   args: ['--watch-path', 'src', 'src/index.js'], type: 'api', port: 2999, phase: 0,
 };
 
-/** As the orchestrator holds a lazy service: `rewriteServicePort` has already
- *  moved `port` to `port + LAZY_PORT_OFFSET` and kept the configured one. */
-const lazy = {
+/** As the orchestrator holds a lazy service — built by the function that does
+ *  it, not by hand.
+ *
+ *  Writing `port: 13002, originalPort: 3002` as literals meant the golden file
+ *  could not notice a change to `LAZY_PORT_OFFSET`: the one test that exists to
+ *  catch wire drift was pinned to numbers rather than to the code that
+ *  produces them. */
+const lazy = rewriteServicePort({
   name: 'authorization-api', cwd: 'authorization/api', cmd: 'node',
-  args: ['app.js'], type: 'api', port: 13002, phase: 1, originalPort: 3002,
-} as ServiceConfig;
+  args: ['app.js'], type: 'api', port: 3002, phase: 1,
+}) as ServiceConfig;
 
 const web: ServiceConfig = {
   name: 'app-web', cwd: 'app/web', cmd: 'npx',

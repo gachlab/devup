@@ -1,6 +1,9 @@
 import type { ServiceConfig, LazyConfig } from '../config/types.js';
+import { LAZY_PORT_OFFSET } from '../config/types.js';
 
-export const LAZY_PORT_OFFSET = 10000;
+// Defined in `config/types.ts` — see the note there. Re-exported so the
+// name stays where every reader already looks for it.
+export { LAZY_PORT_OFFSET };
 export const DEFAULT_LAZY_TIMEOUT = 10;
 
 export interface ClassifiedServices {
