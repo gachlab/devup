@@ -171,6 +171,15 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     }
   }
 
+  // Its own phase loop, not `bootStack`. Three things differ, and none is a
+  // flag: it waits for **webs** too (a caller of `--once` must not have to
+  // wait again, and a front end still compiling is not ready), it reports per
+  // service with `readyAfterMs`, and it aborts the whole run when an install
+  // fails — which the interactive boots ignore. Sharing this would need three
+  // hooks and read worse than two loops that say what they are.
+  //
+  // What it does share is `waitReady`'s bar and the phase ordering; if those
+  // change, they change in both.
   const phases = groupByPhase(localServices);
   const phaseNums = Object.keys(phases).map(Number).sort((a, b) => a - b);
   const deadline = startedAt + cliArgs.onceTimeout * 1000;
