@@ -216,6 +216,17 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       ? `❌ :${listenPort} is already in use — nothing is serving ${envName} here`
       : `❌ proxy on :${listenPort} failed: ${err.message}`);
   });
+  // IPv4 only, and not for want of trying. `localhost` resolves to `::1` first
+  // on macOS, so this misses a client that takes the first address and does
+  // not retry (gachlab/devup#129) — but the obvious fix is worse. Binding with
+  // no host gives a dual-stack `::` listener, and on macOS that does **not**
+  // collide with an existing `0.0.0.0` bind: devup would come up silently
+  // serving IPv6 while whatever holds the IPv4 address serves everyone who
+  // resolves the other way. Two services behind one port, and nothing said.
+  //
+  // Verified on darwin 25.5.0: `listen(p, '0.0.0.0')` then `listen(p)`
+  // succeeds. Serving both families needs two explicit listeners, one per
+  // family, so each collides on its own — see the issue.
   server.listen(listenPort, '0.0.0.0');
 
   /** Reachability, not correctness: an environment answering 401 to an
