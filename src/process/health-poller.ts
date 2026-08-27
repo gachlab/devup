@@ -1,5 +1,6 @@
 import type { ProcessState, ProcessManagerEvents } from './types.js';
 import { checkHealth, deriveHealth } from './health.js';
+import { isRunning } from './liveness.js';
 
 interface HealthPollerOpts {
   state: Map<string, ProcessState>;
@@ -42,8 +43,23 @@ export class HealthPoller {
       // be marked down every round. Its health belongs to the proxy's probe
       // against the upstream — see `createRemoteProxy`.
       if (st.remote) continue;
-      if (!st.pid || st.status === 'idle') {
-        st.health = st.status === 'idle' ? 'idle' : 'down';
+      if (!isRunning(st) || st.status === 'idle') {
+        // `isRunning`, not `!st.pid`: a stopped or crashed service keeps a
+        // dead pid (CLAUDE.md §2), so the pid test is the anti-pattern the
+        // hazard forbids — in the module most exposed to it. `liveness.ts`
+        // exists for exactly this and was adopted at the spawn-race sites but
+        // not here.
+        const next = st.status === 'idle' ? 'idle' : 'down';
+        // Announced, not just written. The idle transition is made from
+        // outside the manager (the lazy proxy's `onIdleStop`), which does not
+        // emit — and this `continue` used to skip the emit at the bottom of
+        // the loop, so nothing ever pushed it. `ctl status` was right because
+        // it re-reads the map; `status.follow` showed a lazy service as
+        // running/up for the rest of the session after it idled out.
+        if (st.health !== next) {
+          st.health = next;
+          this.events.onStateChange(name, st);
+        }
         continue;
       }
       const startPeriodMs = (st.svc.healthCheck?.startPeriod ?? 0) * 1000;

@@ -6,12 +6,21 @@ import type { ServiceConfig } from '../../../src/config/types.js';
 
 const baseSvc: ServiceConfig = { name: 'x', cwd: '.', cmd: 'node', args: [], type: 'api', port: 3000, phase: 0 };
 
+/** Enough of a ChildProcess for `isRunning`: neither exited nor signalled. */
+function liveProc(): NonNullable<ProcessState['proc']> {
+  return { exitCode: null, signalCode: null } as unknown as NonNullable<ProcessState['proc']>;
+}
+
 function mkState(over: Partial<ProcessState>): ProcessState {
   // `Object.assign`, not a Partial spread: spreading a Partial makes every
   // member optional, so a fixture that lags the type still compiles — which
   // is how a fake comes to lag the interface (CLAUDE.md rule 5).
   const base: ProcessState = {
-    svc: baseSvc, proc: null, pid: null, status: 'running', health: 'up',
+    // A live `proc`, not just a pid. The poller reads the child, because a
+    // stopped or crashed service keeps a dead pid (CLAUDE.md §2) — so a
+    // fixture with `pid` and no process is a state the daemon cannot produce,
+    // and it used to stand in for "running" here.
+    svc: baseSvc, proc: liveProc(), pid: 4242, status: 'running', health: 'up',
     errors: 0, restarts: 0, startedAt: null, intentionalStop: false, colorIdx: 0,
     crashLog: null,
   };
@@ -38,9 +47,12 @@ describe('HealthPoller', () => {
     assert.equal(state.get('lazy')!.health, 'idle');
   });
 
-  it('marks pid-less non-idle services as health=down (no probe)', async () => {
+  it('marks a service with no live process as health=down (no probe)', async () => {
+    // `proc: null` is what makes it dead, not `pid: null` — a crashed service
+    // keeps its pid (CLAUDE.md §2), so the pid is the one thing that cannot
+    // answer this. The pid is left set here on purpose, to say so.
     const state = new Map<string, ProcessState>([
-      ['dead', mkState({ svc: { ...baseSvc, name: 'dead' }, status: 'crashed', pid: null, health: 'up' })],
+      ['dead', mkState({ svc: { ...baseSvc, name: 'dead' }, status: 'crashed', proc: null, pid: 4242, health: 'up' })],
     ]);
     const poller = new HealthPoller({ state, events: mkEvents() });
     await poller.checkAll();

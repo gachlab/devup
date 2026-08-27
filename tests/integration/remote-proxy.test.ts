@@ -459,3 +459,30 @@ describe('remote-proxy failure handling', { skip: isWin }, () => {
     }
   });
 });
+
+describe('the lazy proxy answers for its own bind failure', { skip: isWin }, () => {
+  it('reports a port it cannot bind instead of taking the process down', { timeout: 10000 }, async () => {
+    // Same guard the remote proxy has had since 0.18.0, and for the same
+    // reason: without it an EADDRINUSE here is an uncaught exception that
+    // takes the daemon — or the TUI — down. The daemon child skips the
+    // pre-boot port scan on purpose, so anything can take the port in between.
+    const { createLazyProxy } = await import('../../src/lazy/proxy.js');
+    const port = await findFreePort();
+    const squatter = net.createServer();
+    await new Promise<void>(r => squatter.listen(port, '0.0.0.0', r));
+
+    const logs: string[] = [];
+    const proxy = createLazyProxy({
+      listenPort: port, targetPort: await findFreePort(), timeoutMin: 0,
+      onDemandStart: async () => {}, onIdleStop: () => {}, isAlive: () => false,
+      onLog: m => logs.push(m),
+    });
+    try {
+      await new Promise(r => setTimeout(r, 200));
+      assert.ok(logs.some(l => /already in use/.test(l)), logs.join('\n'));
+    } finally {
+      proxy.destroy();
+      await new Promise<void>(r => squatter.close(() => r()));
+    }
+  });
+});
