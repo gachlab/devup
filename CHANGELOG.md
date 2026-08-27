@@ -5,6 +5,24 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] — 2026-08-27
+
+Un bug de 0.18.0 que sale al pedirle a un servicio remoto algo que solo tiene
+sentido para un proceso local.
+
+### Fixed
+- **`ctl restart` sobre un servicio remoto lo dejaba `crashed` y sin marcador.** El puerto lo tiene el proxy de devup, así que el guard de `isPortBindable` del spawner lo veía ocupado y —al no haber `proc` que reconocer como propio— llamaba a `recordCrashedState`, que construye un estado **nuevo** y se lleva `remote` con él. Resultado: un servicio sirviendo QA perfectamente reportado como caído en todos los clientes, y bastaba un `ctl restart` para provocarlo. Con `isRestart: true` era peor todavía: ese guard se salta y el proceso se lanzaba encima del puerto del proxy.
+
+  El arreglo va en `Spawner.start`, no en cada llamador: hay cinco —`start`, `restart`, `debug`, el watcher de config y el timer del restarter— y dos de ellos ya se habían encontrado tapando este agujero de a uno.
+
+### Added
+- **`skippedRemote` en los resultados de `start`, `restart` y `debug`**, que son las tres cosas que un cliente puede pedirle a un servicio sin proceso local. `start` y `restart` responden `ok: true` **con** el campo: el servicio sí está respondiendo, devup simplemente no lanzó nada — y reportarlos como fallo haría que `restart --all` saliera con error en un stack híbrido perfectamente sano. `debug` responde `ok: false`, porque a diferencia de un restart no hay sentido en el que haya funcionado.
+
+  `devup ctl restart --all` ahora imprime `· app-api served from qa — nothing to restart here` en vez de `✗ app-api did not come up`.
+
+### Changed
+- **`CONTRACT_VERSION` es `4`.** El snapshot no cambia; cambian los tres resultados de arriba.
+
 ## [0.18.0] — 2026-08-27
 
 Correr local apuntando a QA, que es lo que faltaba para trabajar en un servicio

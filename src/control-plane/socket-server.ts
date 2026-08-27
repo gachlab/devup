@@ -9,6 +9,7 @@ import type { LogWindow, LogWindowOpts } from '../process/log-reader.js';
 import { CONTRACT_VERSION } from './types.js';
 import type {
   RemoteResult,
+  StartResult,
   ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
 } from './types.js';
 
@@ -50,10 +51,11 @@ export interface RpcContext {
   watchRemoved(onRemoved: (name: string) => void): () => void;
   /** Turn the Node inspector on or off for a service, restarting it. */
   debug(name: string, enable: boolean, port?: number, brk?: boolean): Promise<DebugResult>;
-  /** Start a stopped service. Resolves to whether it is up: the spawner
-   *  returns normally after recording a crash, so "no exception" is not
-   *  success. Already running counts as up. */
-  start(name: string): Promise<boolean>;
+  /** Start a stopped service. `ok` is whether it is up — the spawner returns
+   *  normally after recording a crash, so "no exception" is not success.
+   *  Already running counts as up, and so does a service served from an
+   *  environment, which reports `skippedRemote` to say devup spawned nothing. */
+  start(name: string): Promise<StartResult>;
   /** Per-service CPU/mem stats + system totals. */
   getStats(): Promise<StatsResult>;
   /** Active proxy configuration, or null when no proxy is running. */
@@ -342,7 +344,7 @@ const HANDLER_TABLE = {
     const svc = stringOrThrow(params['svc'] ?? params['service'], 'svc');
     // `ok` reflects the outcome, not merely that the request was accepted —
     // otherwise a client reports success while the service sits crashed.
-    return { ok: await ctx.start(svc) };
+    return await ctx.start(svc);
   },
 
   debug: async (params, ctx) => {

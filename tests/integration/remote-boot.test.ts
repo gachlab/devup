@@ -197,3 +197,46 @@ describe('startRemoteServices reporting an unknown name', { skip: isWin }, () =>
     assert.ok(!lines.some(l => /selected no services/.test(l)), lines.join('\n'));
   });
 });
+
+describe('the spawner and a remote service', { skip: isWin }, () => {
+  const created: RemoteProxy[] = [];
+  after(() => { for (const p of created) p.destroy(); });
+
+  it('refuses to spawn over the proxy, and leaves the state untouched', { timeout: 15000 }, async () => {
+    // The failure this replaces, reachable from `ctl restart` and from the
+    // extension's restart button: the port is held by devup's own proxy, so
+    // `isPortBindable` says taken; there is no `proc` to recognise as ours, so
+    // the guard falls through to `recordCrashedState` — which builds a fresh
+    // state object and drops `remote` with it. A service serving QA perfectly
+    // reported as crashed, everywhere.
+    const port = await findFreePort();
+    const mgr = new ProcessManager({
+      baseCwd: process.cwd(), env: { PATH: process.env['PATH'] ?? '' },
+      platform: await detectPlatform(),
+      events: { onLog: () => {}, onStateChange: () => {} },
+    });
+    const proxies = new Map<string, RemoteProxy>();
+    const set = proxies.set.bind(proxies);
+    proxies.set = (n: string, p: RemoteProxy) => { created.push(p); return set(n, p); };
+
+    const service = svc('app-api', port);
+    startRemoteServices({
+      mgr,
+      classification: classifyRemote([service], [], {
+        envName: 'qa', env: { targets: { 'app-api': 'https://app-api.qa.test' } },
+      }, undefined),
+      proxies, colorIdxStart: 0, onLog: () => {},
+    });
+    const before = mgr.state.get('app-api')!;
+
+    // Straight at the spawner, the way every caller reaches it.
+    await mgr.start(service, 0);
+
+    const after = mgr.state.get('app-api')!;
+    assert.equal(after, before, 'the state object was replaced');
+    assert.equal(after.status, 'running');
+    assert.equal(after.remote?.envName, 'qa');
+    assert.equal(after.crashes ?? 0, 0);
+    assert.equal(after.proc, null);
+  });
+});

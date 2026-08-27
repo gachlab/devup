@@ -16,6 +16,9 @@ export interface DebugResult {
   port: number | null;
   /** False when the restart did not bring the service back up. */
   ok: boolean;
+  /** The environment the service is served from, when that is why the
+   *  inspector could not be turned on. */
+  skippedRemote?: string;
 }
 
 export interface DebugServiceHost extends StartServiceHost {
@@ -44,6 +47,14 @@ export async function debugService(
   if (st.svc.cmd !== 'node') {
     throw new Error(`${name} does not run node (cmd: ${st.svc.cmd}) — nothing to inspect`);
   }
+  // No process here, and none coming while it is remote: the inspector runs
+  // inside the service, and the service is running somewhere else. Reported
+  // rather than thrown, so a client can say *why* rather than surfacing an RPC
+  // error — and `ok: false`, because unlike a restart there is no sense in
+  // which this succeeded.
+  if (st.remote) {
+    return { debug: false, port: null, ok: false, skippedRemote: st.remote.envName };
+  }
 
   const before = st.svc;
   // The object form only when it says something the shorthands cannot: `brk`.
@@ -54,7 +65,7 @@ export async function debugService(
   st.debugPort = null;
 
   host.stop(name);
-  const ok = await startService(host, lazyProxies, name);
+  const { ok } = await startService(host, lazyProxies, name);
   // Only when enabling. Turning the flag *off* is never what makes a service
   // unstartable, and rolling back there would re-arm the inspector the user
   // just disabled — the next restart would bring `--inspect` back.

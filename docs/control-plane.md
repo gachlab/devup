@@ -140,6 +140,27 @@ Fields per service mirror `ProcessState`:
   This is the one case where `pid === null` and `startedAt !== null` together
   are correct.
 
+### `start`, `restart`, `debug` on a service with no process here
+
+A service served from a remote environment has no process to start, restart or
+attach a debugger to. All three say so rather than pretending:
+
+```json
+{ "method": "restart", "params": { "svc": "app-api" } }
+→ { "result": { "ok": true, "skippedIdle": false, "skippedRemote": "qa" } }
+```
+
+`start` and `restart` report `ok: true` **with** `skippedRemote` — the service
+*is* answering on its port, devup simply spawned nothing. That distinction
+matters for batches: `restart --all` on a stack that is half proxied is an
+ordinary thing to do between suites, and reporting those as failures would exit
+non-zero on a healthy stack. `debug` reports `ok: false`, because unlike a
+restart there is no sense in which it succeeded — the inspector runs inside a
+process, and the process is somewhere else.
+
+Sent since 0.19.0. A client that has never heard of the field sees `ok: true`
+and a service that did not visibly change, which is close enough to be safe.
+
 ### `remote`
 
 Move a service between running locally and being served from an environment.

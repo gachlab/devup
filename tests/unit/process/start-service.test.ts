@@ -55,7 +55,7 @@ describe('startService', () => {
   it('is a no-op for a service that is genuinely running', async () => {
     const state = new Map([['api', mkState({ proc: fakeProc(true) as never, status: 'running' })]]);
     const { host, calls } = mkHost(state);
-    assert.equal(await startService(host, undefined, 'api'), true);
+    assert.equal((await startService(host, undefined, 'api')).ok, true);
     assert.equal(calls.started, 0);
   });
 
@@ -64,7 +64,7 @@ describe('startService', () => {
     // recordCrashedState, which drops the daemon's handle on a live process.
     const state = new Map([['api', mkState({ proc: fakeProc(true) as never, intentionalStop: true })]]);
     const { host, calls } = mkHost(state);
-    assert.equal(await startService(host, undefined, 'api'), false);
+    assert.equal((await startService(host, undefined, 'api')).ok, false);
     assert.equal(calls.started, 0, 'it spawned on top of a process that had not exited');
   });
 
@@ -81,7 +81,7 @@ describe('startService', () => {
     const { host, calls } = mkHost(state);
     let ensured = 0;
     const proxies = new Map([['api', { ensureStarted: async () => { ensured++; return true; } }]]);
-    assert.equal(await startService(host, proxies, 'api'), true);
+    assert.equal((await startService(host, proxies, 'api')).ok, true);
     assert.equal(ensured, 1);
     assert.equal(calls.started, 0, 'spawning directly leaves the proxy believing nothing is up');
   });
@@ -91,7 +91,7 @@ describe('startService', () => {
     const { host } = mkHost(state, {
       start: async () => { state.set('api', mkState({ status: 'crashed' })); },
     });
-    assert.equal(await startService(host, undefined, 'api'), false);
+    assert.equal((await startService(host, undefined, 'api')).ok, false);
   });
 
   it('gives up when a config reload removes the service while a stop drains', async () => {
@@ -102,7 +102,7 @@ describe('startService', () => {
     // The reload lands while we are waiting for the old child to exit.
     state.delete('api');
     proc.finish();
-    assert.equal(await started, false);
+    assert.equal((await started).ok, false);
     assert.equal(calls.started, 0, 'it resurrected a service clients were told had gone');
     // The mid-install guard would also return false, so assert on the work
     // that should never have begun — otherwise this test passes without the
@@ -115,7 +115,7 @@ describe('startService', () => {
     const { host, calls } = mkHost(state, {
       install: async () => { state.delete('api'); return true; },
     });
-    assert.equal(await startService(host, undefined, 'api'), false);
+    assert.equal((await startService(host, undefined, 'api')).ok, false);
     assert.equal(calls.started, 0, 'it resurrected a service clients were told had gone');
   });
 });

@@ -31,7 +31,7 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     watchLogs: () => () => {},
     watchStatus: () => () => {},
     watchRemoved: () => () => {},
-    start: async () => true,
+    start: async () => ({ ok: true }),
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
@@ -178,7 +178,7 @@ describe('runCtl', { skip: !isUnix }, () => {
     try {
       let started: string | null = null;
       const states = new Map([['api', mkState({})]]);
-      const handle = await startSocketServer('t', noopCtx({ states: () => states, start: async (n) => { started = n; return true; } }), { path });
+      const handle = await startSocketServer('t', noopCtx({ states: () => states, start: async (n) => { started = n; return { ok: true }; } }), { path });
       const lines: string[] = [];
       try {
         const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
@@ -196,7 +196,7 @@ describe('runCtl', { skip: !isUnix }, () => {
     const path = join(dir, 's.sock');
     try {
       const states = new Map([['api', mkState({})]]);
-      const handle = await startSocketServer('t', noopCtx({ states: () => states, start: async () => false }), { path });
+      const handle = await startSocketServer('t', noopCtx({ states: () => states, start: async () => ({ ok: false }) }), { path });
       const lines: string[] = [];
       try {
         const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
@@ -311,7 +311,7 @@ describe('runCtl wait', { skip: !isUnix }, () => {
     const lines: string[] = [];
     const started: string[] = [];
     const states = new Map([['auth', idleSvc('auth', 13002)]]);
-    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return true; } }), async path => {
+    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return { ok: true }; } }), async path => {
       const code = await runCtl(['wait', '--timeout', '2'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0, lines.join('|'));
       assert.deepEqual(started, []);
@@ -329,7 +329,7 @@ describe('runCtl wait', { skip: !isUnix }, () => {
         started.push(n);
         // The daemon brings it up; the poll after the warm-up must see that.
         states.set(n, upSvc(n, 13002));
-        return true;
+        return { ok: true };
       },
     }), async path => {
       const code = await runCtl(['wait', '--start', '--timeout', '5'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
@@ -625,7 +625,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     const lines: string[] = [];
     await withServer(noopCtx({
       states: () => states,
-      start: async n => { order.push(n); return true; },
+      start: async n => { order.push(n); return { ok: true }; },
     }), async path => {
       const code = await runCtl(['start', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0, lines.join('|'));
@@ -638,7 +638,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     const lines: string[] = [];
     await withServer(noopCtx({
       states: () => states,
-      start: async n => n !== 'web',
+      start: async n => ({ ok: n !== 'web' }),
     }), async path => {
       const code = await runCtl(['start', 'api', 'web'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 1);
@@ -657,7 +657,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     const lines: string[] = [];
     await withServer(noopCtx({
       states: () => states,
-      start: async n => { if (n === 'web') throw new Error('the spawner exploded'); return true; },
+      start: async n => { if (n === 'web') throw new Error('the spawner exploded'); return { ok: true }; },
     }), async path => {
       const code = await runCtl(['start', '--all'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 1);
@@ -675,7 +675,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     const started: string[] = [];
     const states = new Map([['api', svcAt('api', 0)]]);
     const lines: string[] = [];
-    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return true; } }), async path => {
+    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return { ok: true }; } }), async path => {
       const code = await runCtl(['start', '--instance', 'e2e', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0, lines.join('|'));
       assert.deepEqual(started, ['api']);
@@ -689,7 +689,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     const started: string[] = [];
     const states = new Map([['api', svcAt('api', 0)]]);
     const lines: string[] = [];
-    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return true; } }), async path => {
+    await withServer(noopCtx({ states: () => states, start: async n => { started.push(n); return { ok: true }; } }), async path => {
       const code = await runCtl(['start', '--config', './devup.config.ts', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0, lines.join('|'));
       assert.deepEqual(started, ['api']);
@@ -744,7 +744,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
     const lines: string[] = [];
     await withServer(noopCtx({
       states: () => states,
-      start: async n => { started.push(n); return true; },
+      start: async n => { started.push(n); return { ok: true }; },
     }), async path => {
       const code = await runCtl(['start', 'api', 'ghost'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 1);
@@ -756,7 +756,7 @@ describe('runCtl start/restart in batch', { skip: !isUnix }, () => {
   it('still works for a single service, as it always did', async () => {
     const states = new Map([['api', svcAt('api', 0)]]);
     const lines: string[] = [];
-    await withServer(noopCtx({ states: () => states, start: async () => true }), async path => {
+    await withServer(noopCtx({ states: () => states, start: async () => ({ ok: true }) }), async path => {
       const code = await runCtl(['start', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 0);
       assert.deepEqual(lines, ['✓ api started']);
@@ -839,6 +839,48 @@ describe('runCtl remote', { skip: !isUnix }, () => {
       const code = await runCtl(['remote', 'api'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
       assert.equal(code, 1);
       assert.ok(lines.some(l => l.includes('usage')), JSON.stringify(lines));
+    });
+  });
+});
+
+describe('runCtl restart with a remote service in the batch', { skip: !isUnix }, () => {
+  // Local to this block, like the one in the batch suite above.
+  const svcAt = (name: string, phase: number) =>
+    mkState({ svc: { ...svc, name, phase, port: 3000 + phase }, status: 'running', health: 'up', pid: 1 });
+
+  it('reports it as skipped, not as a failure', async () => {
+    // `restart --all` between suites on a stack that is half proxied is an
+    // ordinary thing to do. "did not come up" would be wrong twice over: the
+    // service is up, and the run would exit 1 on a healthy stack.
+    const states = new Map([['api', svcAt('api', 0)], ['auth', svcAt('auth', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      restart: async n => n === 'auth'
+        ? { ok: true, skippedIdle: false, skippedRemote: 'qa' }
+        : { ok: true, skippedIdle: false },
+    }), async path => {
+      const code = await runCtl(['restart', 'api', 'auth'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      const said = lines.join(' ');
+      assert.equal(code, 0, said);
+      assert.match(said, /✓ api restarted/);
+      assert.match(said, /· auth served from qa — nothing to restart here/);
+      assert.ok(!/did not come up/.test(said), said);
+    });
+  });
+
+  it('says the same for start', async () => {
+    const states = new Map([['auth', svcAt('auth', 0)]]);
+    const lines: string[] = [];
+    await withServer(noopCtx({
+      states: () => states,
+      start: async () => ({ ok: true, skippedRemote: 'qa' }),
+    }), async path => {
+      const code = await runCtl(['start', 'auth'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+      assert.equal(code, 0, lines.join(' '));
+      assert.match(lines.join(' '), /· auth served from qa — nothing to start here/);
+      // "started" would claim a spawn that never happened.
+      assert.ok(!/✓ auth started/.test(lines.join(' ')), lines.join(' '));
     });
   });
 });
