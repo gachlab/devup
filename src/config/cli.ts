@@ -275,3 +275,22 @@ export function filterServices(
 
   return result;
 }
+
+/** Whether a boot has genuinely nothing to do.
+ *
+ *  The obvious test — "the local selection is empty" — has been wrong since
+ *  remote environments arrived. `--remote qa` with nothing selected locally is
+ *  a legitimate configuration: the whole stack served from the environment,
+ *  no processes here, which is the first thing anyone tries to check whether
+ *  an environment answers.
+ *
+ *  Emptiness on the remote side is reported by `startRemoteServices`, which
+ *  says when the selection matched nothing and names anything it could not
+ *  resolve a target for. This guard is only about the local half. */
+export function nothingToRun(
+  localServices: readonly unknown[],
+  args: Pick<CliArgs, 'remote'>,
+): boolean {
+  if (localServices.length) return false;
+  return !args.remote;
+}

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCliArgs, filterServices, USAGE } from '../../../src/config/cli.js';
+import { parseCliArgs, filterServices, USAGE, nothingToRun } from '../../../src/config/cli.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 
 const svc = (name: string, type: 'api' | 'web' = 'api'): ServiceConfig => ({
@@ -228,5 +228,30 @@ describe('--remote', () => {
 
   it('is absent when the flag is not given', () => {
     assert.equal(parseCliArgs(['--profile', 'app']).remote, undefined);
+  });
+});
+
+describe('nothingToRun', () => {
+  it('is true for a plain local boot with nothing selected', () => {
+    assert.equal(nothingToRun([], { remote: undefined }), true);
+  });
+
+  it('is false when something was selected', () => {
+    assert.equal(nothingToRun([{}], { remote: undefined }), false);
+  });
+
+  it('is false with --remote, where an empty local selection is the point', () => {
+    // The whole stack served from the environment, no processes here — the
+    // first thing anyone tries to check whether an environment answers, and
+    // the guard used to reject it.
+    assert.equal(nothingToRun([], { remote: 'qa' }), false);
+    assert.equal(nothingToRun([], { remote: 'qa:app-api' }), false);
+  });
+
+  it('still rejects a bare --remote with nothing selected', () => {
+    // index.ts rejects the empty string separately, but this must not be the
+    // thing that lets it through: `--remote` with no value is a mistake, and
+    // treating it as "remote mode" would boot an empty stack in silence.
+    assert.equal(nothingToRun([], { remote: '' }), true);
   });
 });

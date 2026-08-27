@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
-import { parseCliArgs, filterServices, USAGE } from './config/cli.js';
+import { parseCliArgs, filterServices, nothingToRun, USAGE } from './config/cli.js';
 import { qualifyInstance, validateInstance, instanceFlag, describeStack } from './config/instance.js';
 import { detectSubcommand, misplacedSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
@@ -139,7 +139,17 @@ async function main() {
     console.error(`❌ ${e.message}`);
     process.exit(1);
   }
-  if (!services.length) {
+  // `--remote` makes an empty local selection a legitimate configuration: the
+  // whole stack served from an environment, no processes here. This guard
+  // predates remote environments and runs on the *local* selection, so without
+  // the exception it rejects the first thing anyone tries to check whether an
+  // environment answers.
+  //
+  // It stays for a plain local boot, where no services really is nothing to
+  // do. And the remote path is not silent about its own emptiness:
+  // `startRemoteServices` reports a selection that matched nothing, and names
+  // anything it could not resolve a target for.
+  if (nothingToRun(services, cliArgs)) {
     console.error('❌ No services to run after filtering');
     process.exit(1);
   }

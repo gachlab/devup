@@ -5,6 +5,11 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1] — 2026-08-27
+
+### Fixed
+- **Con `--remote`, una selección local vacía ya no se rechaza** (#128). Todo el stack servido desde el ambiente y cero procesos acá es una configuración legítima — y es lo primero que uno intenta para comprobar que un ambiente responde. El guard de `❌ No services to run after filtering` es de antes de los ambientes remotos y corre sobre la selección *local*, así que no sabía nada de `--remote`. Sigue igual para un arranque local, donde cero servicios sí es no tener nada que hacer, y un `--remote` sin valor se sigue rechazando.
+
 ## [0.19.0] — 2026-08-27
 
 Un bug de 0.18.0 que sale al pedirle a un servicio remoto algo que solo tiene
