@@ -84,7 +84,12 @@ function mkState(over: Partial<ProcessState>): ProcessState {
 ```
 
 type-checks with an **incomplete** base. `Object.assign(base, over)` with
-`base` annotated does not. Every fixture helper here uses the second form.
+`base` annotated does not.
+
+The helpers that fake the shapes most likely to gain a field — `RpcContext`,
+`ServiceSnapshot`, `ProcessState` in the poller and lifecycle tests — use the
+second form. Plenty of others still use the spread, and each one is a fixture
+that will not notice its type growing. **Convert the one you touch.**
 
 ## 6. Verify every new test by mutation
 

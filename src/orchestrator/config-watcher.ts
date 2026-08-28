@@ -107,49 +107,76 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       // below was standing in for.
       const st = manager.state.get(next.name);
       const isLazy = lazy?.proxies.has(next.name) ?? false;
-      // The state has to carry the *rewritten* config for a lazy service, or
-      // the snapshot reports a port that no longer matches what its proxy
-      // targets.
-      if (st) st.svc = isLazy ? rewriteServicePort(next) : next;
-      if (isLazy) {
-        // A changed **port** needs a new proxy: the old one bound the old
-        // configured port at creation, and nothing re-binds it. Everything
-        // else reaches the process through `onDemandStart`, which reads the
-        // live config from state.
-        const portChanged = prev !== undefined && prev.svc.originalPort !== next.port;
-        if (portChanged) {
-          // Stop the running child **first**, and wait for it to go.
-          // `registerLazy` replaces the state entry with a fresh idle one, so
-          // an awake service would be orphaned: `Lifecycle.stop` reads the
-          // map, making every later stop a permanent no-op, the close handler
-          // still holds the old state object and would write `crashed` over
-          // the new entry, and the restarter would respawn the *old* rewritten
-          // config. All four are CLAUDE.md §1 rows.
-          if (prev && isRunning(prev)) {
-            manager.stop(next.name);
-            await waitForExit(prev, STOP_GRACE_MS);
-          }
-          manager.cancelPendingRestart(next.name);
-          // The failure streak is per name and would be inherited by the entry
-          // we are about to create — `forget` only runs via `remove()`.
-          manager.forgetHealth(next.name);
-          releaseLazyProxy(lazy!.proxies, next.name);
-          registerLazy(manager, next, ci, lazy!.timeout, lazy!.proxies,
-            msg => log(`[${next.name}] ${msg}`));
-          log(`↻ ${next.name}: port changed, proxy rebound on :${next.port}`);
-          continue;
-        }
-        await restartService(manager, lazy!.proxies, next.name);
-      } else {
+
+      // Read **before** anything writes `st.svc`: `st` and `prev` are the same
+      // object, and `rewriteServicePort` sets `originalPort` to the new port —
+      // so comparing afterwards compares the new port with itself and the
+      // rebind below never ran at all.
+      const previousPort = st?.svc.originalPort ?? st?.svc.port;
+      const portChanged = previousPort !== undefined && previousPort !== next.port;
+
+      if (!isLazy) {
+        // No write to `st.svc` here: the spawner builds a fresh state entry
+        // with this config, so advancing it by hand would only advertise a
+        // config the running — or crashed — process never had.
         manager.stop(next.name);
         // Brief pause so the previous process releases its port before the new one starts.
         await new Promise(r => setTimeout(r, 800));
         await manager.install(next, ci);
         await manager.start(next, ci, true);
+        continue;
       }
+
+      // A lazy service's state has to carry the *rewritten* config, or the
+      // snapshot reports a port that no longer matches what its proxy targets.
+      if (st) st.svc = rewriteServicePort(next);
+
+      // A changed **port** needs a new proxy: the old one bound the old
+      // configured port at creation, and nothing re-binds it. Everything else
+      // reaches the process through `onDemandStart`, which reads the live
+      // config from state.
+      if (portChanged) {
+        // Stop the running child **first**, and wait for it to go.
+        // `registerLazy` replaces the state entry with a fresh idle one, so an
+        // awake service would be orphaned: `Lifecycle.stop` reads the map,
+        // making every later stop a permanent no-op, the close handler still
+        // holds the old state object and would write `crashed` over the new
+        // entry, and the restarter would respawn the *old* rewritten config.
+        // All four are CLAUDE.md §1 rows.
+        if (prev && isRunning(prev)) {
+          manager.stop(next.name);
+          await waitForExit(prev, STOP_GRACE_MS);
+        }
+        manager.cancelPendingRestart(next.name);
+        // The failure streak is per name and would be inherited by the entry
+        // we are about to create — `forget` only runs via `remove()`.
+        manager.forgetHealth(next.name);
+        releaseLazyProxy(lazy!.proxies, next.name);
+        registerLazy(manager, next, ci, lazy!.timeout, lazy!.proxies,
+          msg => log(`[${next.name}] ${msg}`));
+        log(`↻ ${next.name}: port changed, proxy rebound on :${next.port}`);
+        continue;
+      }
+
+      // `ok` is the real outcome — see the note on `restartService`. Dropping
+      // it leaves a service that failed to come back under a cheerful
+      // "config reloaded" and nothing else.
+      const outcome = await restartService(manager, lazy!.proxies, next.name);
+      if (!outcome.ok) log(`⚠ ${next.name} did not come back after the reload`);
     }
     for (const next of diff.added) {
       const ci = colorIdx++;
+      // Lazy mode applies to a service added at runtime too. Starting it
+      // eagerly would put it on its configured port with no proxy and no idle
+      // stop — permanently different from how the same service behaves after a
+      // restart of devup, which is the kind of divergence nobody thinks to
+      // look for.
+      if (lazy && !nextCfg.lazy?.alwaysOn.includes(next.name)) {
+        registerLazy(manager, next, ci, lazy.timeout, lazy.proxies,
+          msg => log(`[${next.name}] ${msg}`));
+        log(`＋ ${next.name}: registered lazy on :${next.port}`);
+        continue;
+      }
       await manager.install(next, ci);
       await manager.start(next, ci);
     }

@@ -87,7 +87,11 @@ Snapshot of every service.
   }
 ```
 
-`proxy` is `null` when no proxy is running. Note that `status.follow` frames
+`proxy` is `null` when **none is configured**. A configured proxy that is
+switched off — the TUI's `p` key — reports `active: false` with its details
+intact, so a client can tell "turned off" from "never set up". **Branch on
+`proxy.active`, not on `proxy != null`**: the second reads a toggled-off proxy
+as on. Since 0.19.2; before it, an off proxy was indistinguishable from none. Note that `status.follow` frames
 carry the **bare array** as `data`, not this wrapper.
 
 Fields per service mirror `ProcessState`:
@@ -265,7 +269,7 @@ Details worth knowing:
 - **A stop in flight is awaited.** `stop` only sends SIGTERM, so a service that drains on shutdown still looks alive; `start` waits up to 5 s for it to exit rather than reporting success and leaving it down.
 - **A queued auto-restart is cancelled first**, or it would spawn a second process for the same name seconds later.
 - **A lazy service is started through its proxy**, not around it, and the proxy confirms something is actually listening rather than trusting its own readiness flag — which an external stop never clears.
-- **An API is "up" when its port answers**, the same bar `bootNormal` uses; a web service is reported started once spawned, as at boot.
+- **An API is "up" when its port answers**, the same bar `bootStack` uses; a web service is reported started once spawned, as at boot.
 - **The restart budget is reset**, so a service that exhausted `MAX_RESTARTS` auto-restarts again after an explicit start.
 
 Added in 0.14.0.

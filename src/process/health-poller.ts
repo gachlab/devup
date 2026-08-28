@@ -83,8 +83,8 @@ export class HealthPoller {
         // pattern gets the startup window to itself.
         //
         // Keyed on `health`, **not** on `status === 'starting'`: boot flips
-        // every web to `running` the moment it is spawned (`bootNormal`,
-        // `bootLazy`, `useBootSequence`), and the poller only starts after
+        // every web to `running` the moment it is spawned (`bootStack`), and
+        // the poller only starts after
         // that — so a status-based guard never fires for the very services it
         // was written for. `health` is still `wait` until something says
         // otherwise, which is exactly the window meant here.

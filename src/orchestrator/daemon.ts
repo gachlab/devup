@@ -21,8 +21,6 @@ import { switchService } from '../remote/switch.js';
 import type { RemoteProxy } from '../remote/proxy.js';
 import { readLogWindow } from '../process/log-reader.js';
 
-/** How long an on-demand start waits for a service that begins suspended under
- *  `--inspect-brk`: as long as it takes someone to attach and hit resume. */
 import { watchConfig } from './config-watcher.js';
 import { findConfigFile } from '../config/loader.js';
 import { instanceFlag, describeStack } from '../config/instance.js';

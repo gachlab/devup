@@ -239,9 +239,19 @@ export async function runStatus(opts: SubOpts): Promise<number> {
       out('');
       fmtStatus(res.services, out);
       return 0;
-    } catch {
-      // Fall through: a socket file can outlive its daemon, and a stale one
-      // must not turn `status` into an error when the poll still has an answer.
+    } catch (e) {
+      // A stale socket file — the daemon died without cleaning up — falls
+      // through to the poll, because the poll still has an answer.
+      //
+      // A **timeout** does not: a busy daemon is a daemon, and printing
+      // "no daemon — polling ports" would then produce exactly the misleading
+      // `✓ up` this path exists to avoid, over the top of a stack that could
+      // have answered properly a second later.
+      const code = (e as NodeJS.ErrnoException)?.code;
+      if (code !== 'ECONNREFUSED' && code !== 'ENOENT') {
+        out(`✗ the daemon did not answer in time — try \`devup ctl status\``);
+        return 1;
+      }
     }
   }
 

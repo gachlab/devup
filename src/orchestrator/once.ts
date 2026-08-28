@@ -273,7 +273,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
  *    `--once` came to return before the front end served. When a web declares
  *    a pattern, that pattern is the bar; the port is ignored.
  *  - **For an API the port answering is the service serving.** That is the bar
- *    `bootNormal` uses, so it stays the bar here — a pattern, when there is
+ *    `bootStack` uses, so it stays the bar here — a pattern, when there is
  *    one, only ever lets it finish sooner.
  *
  *  A web with no pattern has nothing better than its port. That is worse than
