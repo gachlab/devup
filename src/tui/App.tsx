@@ -89,7 +89,13 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     [proxyProvider, proxyOpts],
   );
   const profiles = useMemo(() => config.profiles ?? {}, [config.profiles]);
-  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, remoteProxies, config, env, platform, proxyCtx, profiles, cliArgs.instance);
+  // A ref read through a stable getter, not the boolean: passing the value
+  // would make it a `useControlPlane` effect dependency, and every press of
+  // `p` would tear down and rebuild the socket server — the churn #79 fixed.
+  const proxyEnabledRef = useRef(kb.proxyEnabled);
+  proxyEnabledRef.current = kb.proxyEnabled;
+  const proxyActive = useCallback(() => proxyEnabledRef.current, []);
+  const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, remoteProxies, config, env, platform, proxyCtx, profiles, proxyActive, cliArgs.instance);
 
   const shutdown = useCallback(async () => {
     lazyProxies.current.forEach(p => p.destroy());
@@ -107,7 +113,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     process.exit(0);
   }, [pm, logSink, platform, baseCwd, env, socketServer]);
 
-  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services);
+  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services, lazyProxies);
   useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);

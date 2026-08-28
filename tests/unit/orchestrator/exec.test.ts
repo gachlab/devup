@@ -5,11 +5,15 @@ import { parseCliArgs, flagValue } from '../../../src/config/cli.js';
 import type { ServiceSnapshot } from '../../../src/control-plane/types.js';
 
 function svc(over: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
-  return {
+  // `Object.assign`, not a Partial spread: spreading a Partial makes every
+  // member optional, so a fixture that lags the type still compiles — which
+  // is how a fake comes to lag the interface (CLAUDE.md rule 5).
+  const base: ServiceSnapshot = {
     name: 'app-api', status: 'running', health: 'up', port: 3000, originalPort: 3000,
     type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0, crashes: 0,
-    pid: 1, startedAt: 1, crashLog: null, debugPort: null, ...over,
+    restartPendingIn: null, pid: 1, startedAt: null, crashLog: null, debugPort: null, remote: null,
   };
+  return Object.assign(base, over);
 }
 
 describe('parseExecArgs', () => {

@@ -41,17 +41,6 @@ describe('isPortBindable', () => {
     }
   });
 
-  it('returns false even for a server bound but not yet accepting', async () => {
-    const occupier = net.createServer();
-    occupier.pause?.();
-    await new Promise<void>(r => occupier.listen(0, '0.0.0.0', r));
-    const port = (occupier.address() as net.AddressInfo).port;
-    try {
-      assert.equal(await isPortBindable(port), false);
-    } finally {
-      await new Promise<void>(r => occupier.close(() => r()));
-    }
-  });
 });
 
 describe('waitForPort', () => {
@@ -162,4 +151,32 @@ describe('deriveHealth', () => {
   it('down + starting → wait', () => assert.equal(deriveHealth(false, 'starting'), 'wait'));
   it('down + running → down', () => assert.equal(deriveHealth(false, 'running'), 'down'));
   it('down + crashed → down', () => assert.equal(deriveHealth(false, 'crashed'), 'down'));
+});
+
+describe('isPortBindable is not checkPort', () => {
+  it('says a bound port is unavailable while checkPort says it answers', async () => {
+    // The distinction the two exist for, and the reason `Spawner.start` uses
+    // the first: `checkPort` asks "is something serving here", `isPortBindable`
+    // asks "can I take this port". On a port somebody else holds they give
+    // opposite answers, and swapping them turns the spawn guard into a check
+    // that passes precisely when it should not.
+    //
+    // This replaces a test named "bound but not yet accepting" whose entire
+    // distinguishing setup was `occupier.pause?.()` — `net.Server` has no
+    // `pause`, so the optional call did nothing and the test was the one above
+    // it under another name. A listening socket accepts; the state it claimed
+    // to cover is not reachable, but the distinction it was reaching for is.
+    // `0.0.0.0`, like the services devup spawns: a holder bound only to
+    // `127.0.0.1` does not stop a wildcard bind, so it would not be the
+    // conflict this guard is about.
+    const occupier = net.createServer();
+    await new Promise<void>(r => occupier.listen(0, '0.0.0.0', r));
+    const port = (occupier.address() as net.AddressInfo).port;
+    try {
+      assert.equal(await isPortBindable(port), false, 'the port is taken');
+      assert.equal(await checkPort(port, '127.0.0.1', 1000), true, 'and it answers');
+    } finally {
+      await new Promise<void>(r => occupier.close(() => r()));
+    }
+  });
 });

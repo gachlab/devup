@@ -66,6 +66,12 @@ The summary is logged once per reload (tagged `[devup]` in the panel). `0 added 
 
 - **`external` services are NOT diffed.** Changing the `external` block requires a manual restart of devup. This is current scope — externals have their own lifecycle (docker daemon, stopCmd) that's harder to apply mid-flight.
 - **`lazy.alwaysOn` changes are NOT applied.** Moving a service between always-on and lazy requires a manual restart. (The lazy proxy lifecycle is complicated enough that we err on the side of explicit.)
+- **Editing a lazy service's own fields restarts it through its proxy**, so an
+  asleep one stays asleep and picks up the change on its next request. This
+  used to spawn the process on the *public* port its proxy was holding — the
+  service died with EADDRINUSE and ended `crashed`. Fixed in 0.19.2.
+- **A service served from a remote environment is not restarted.** There is no
+  process here; devup says so and points at `devup ctl remote <svc> --local`.
 - **`proxy.routes` changes ARE applied automatically.** The proxy file is regenerated every 3 s from the live config, so route changes take effect on the next sync without any special handling.
 - **`profiles` changes ARE seen** at next reload, but they only matter at boot (selecting which services exist). If the running set was filtered by `--profile`, that filter still applies to the new config — a profile that no longer exists triggers an error.
 

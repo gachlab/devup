@@ -1,6 +1,6 @@
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { ProcessManager } from '../process/manager.js';
-import type { RemoteInfo } from '../control-plane/types.js';
+import type { RemoteInfo, RemoteResult } from '../control-plane/types.js';
 import { isPortBindable } from '../process/health.js';
 import { startService } from '../process/start-service.js';
 import { releaseLazyProxy } from '../lazy/classifier.js';
@@ -25,12 +25,9 @@ export interface SwitchDeps {
   onLog: (svc: string, msg: string, colorIdx: number) => void;
 }
 
-export interface SwitchResult {
-  ok: boolean;
-  remote: RemoteInfo | null;
-  /** Why it did not happen. Present only when `ok` is false. */
-  error?: string;
-}
+/** The wire shape — see the note on `RestartOutcome`. */
+export type SwitchResult = RemoteResult;
+
 
 /** Move one service between running here and being served from an environment,
  *  without restarting the stack.

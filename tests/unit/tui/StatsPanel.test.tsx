@@ -16,7 +16,7 @@ function createProcessState(name: string, port: number, status: ProcessState['st
     errors: 0,
     restarts: 0,
     startedAt: null,
-    intentionalStop: false,
+    intentionalStop: false, crashLog: null,
     colorIdx: 0,
   };
 }

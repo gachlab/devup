@@ -15,7 +15,7 @@ function createProcessState(name: string, port: number, type: 'api' | 'web' = 'a
     errors: 0,
     restarts: 0,
     startedAt: null,
-    intentionalStop: false,
+    intentionalStop: false, crashLog: null,
     colorIdx: 0,
   };
 }

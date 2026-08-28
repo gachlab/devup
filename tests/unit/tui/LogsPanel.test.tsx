@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { render } from 'ink-testing-library';
 import React from 'react';
+import type { LogEntry } from '../../../src/tui/hooks/useProcessManager.js';
 import { LogsPanel } from '../../../src/tui/LogsPanel.js';
 
 test('LogsPanel - renders with focused border', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Hello' },
-    { ts: Date.now(), svcName: 'web', colorIdx: 1, text: 'World' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Hello', level: 'info' },
+    { ts: Date.now(), svcName: 'web', colorIdx: 1, text: 'World', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -32,8 +33,8 @@ test('LogsPanel - renders with focused border', () => {
 });
 
 test('LogsPanel - renders with unfocused border', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -57,9 +58,9 @@ test('LogsPanel - renders with unfocused border', () => {
 });
 
 test('LogsPanel - filters logs by service', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'API log' },
-    { ts: Date.now(), svcName: 'web', colorIdx: 1, text: 'Web log' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'API log', level: 'info' },
+    { ts: Date.now(), svcName: 'web', colorIdx: 1, text: 'Web log', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -85,9 +86,9 @@ test('LogsPanel - filters logs by service', () => {
 });
 
 test('LogsPanel - searches logs by term', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Error occurred' },
-    { ts: Date.now(), svcName: 'web', colorIdx: 1, text: 'Request received' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Error occurred', level: 'info' },
+    { ts: Date.now(), svcName: 'web', colorIdx: 1, text: 'Request received', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -111,8 +112,8 @@ test('LogsPanel - searches logs by term', () => {
 });
 
 test('LogsPanel - shows paused indicator', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -135,8 +136,8 @@ test('LogsPanel - shows paused indicator', () => {
 });
 
 test('LogsPanel - shows timestamps when enabled', () => {
-  const logs = [
-    { ts: new Date('2024-01-01T12:00:00Z').getTime(), svcName: 'api', colorIdx: 0, text: 'Test' },
+  const logs: LogEntry[] = [
+    { ts: new Date('2024-01-01T12:00:00Z').getTime(), svcName: 'api', colorIdx: 0, text: 'Test', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -162,10 +163,10 @@ test('LogsPanel - shows timestamps when enabled', () => {
 });
 
 test('LogsPanel - shows log count', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Log 1' },
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Log 2' },
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Log 3' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Log 1', level: 'info' },
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Log 2', level: 'info' },
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Log 3', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -188,8 +189,8 @@ test('LogsPanel - shows log count', () => {
 });
 
 test('LogsPanel - shows filter indicator', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -212,8 +213,8 @@ test('LogsPanel - shows filter indicator', () => {
 });
 
 test('LogsPanel - shows search indicator', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'Test', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -236,8 +237,8 @@ test('LogsPanel - shows search indicator', () => {
 });
 
 test('LogsPanel - highlights search matches', () => {
-  const logs = [
-    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'This is an error message' },
+  const logs: LogEntry[] = [
+    { ts: Date.now(), svcName: 'api', colorIdx: 0, text: 'This is an error message', level: 'info' },
   ];
 
   const { stdout } = render(
@@ -283,11 +284,12 @@ test('LogsPanel - handles empty logs', () => {
 });
 
 test('LogsPanel - default (scrollOffset=0) follows the latest lines', () => {
-  const logs = Array.from({ length: 20 }, (_, i) => ({
+  const logs: LogEntry[] = Array.from({ length: 20 }, (_, i) => ({
     ts: Date.now(),
     svcName: 'api',
     colorIdx: 0,
     text: `Log line ${i + 1}`,
+    level: 'info',
   }));
 
   const { stdout } = render(
@@ -311,11 +313,12 @@ test('LogsPanel - default (scrollOffset=0) follows the latest lines', () => {
 });
 
 test('LogsPanel - bottomOffset shifts view backwards', () => {
-  const logs = Array.from({ length: 20 }, (_, i) => ({
+  const logs: LogEntry[] = Array.from({ length: 20 }, (_, i) => ({
     ts: Date.now(),
     svcName: 'api',
     colorIdx: 0,
     text: `Log line ${i + 1}`,
+    level: 'info',
   }));
 
   // height=10 → contentHeight=8. bottomOffset=5 → startIndex = 20 - 8 - 5 = 7
@@ -343,11 +346,12 @@ test('LogsPanel - bottomOffset shifts view backwards', () => {
 });
 
 test('LogsPanel - MAX_SAFE_INTEGER scrolls to the oldest lines', () => {
-  const logs = Array.from({ length: 20 }, (_, i) => ({
+  const logs: LogEntry[] = Array.from({ length: 20 }, (_, i) => ({
     ts: Date.now(),
     svcName: 'api',
     colorIdx: 0,
     text: `Log line ${i + 1}`,
+    level: 'info',
   }));
 
   const { stdout } = render(

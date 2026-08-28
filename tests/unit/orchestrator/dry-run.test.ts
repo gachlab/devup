@@ -7,7 +7,7 @@ import type { CliArgs } from '../../../src/config/cli.js';
 
 const baseCli: CliArgs = {
   skip: [], lazy: true, lazyTimeout: 10, proxy: false, proxyTls: true, proxyEntrypoint: 'websecure',
-  dryRun: true, once: false, onceTimeout: 90, logFile: false,
+  dryRun: true, once: false, onceTimeout: 90, logFile: false, onceJson: false, watchConfig: false, killPortConflicts: false,
 };
 
 function svc(over: Partial<ServiceConfig>): ServiceConfig {

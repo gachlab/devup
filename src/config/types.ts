@@ -33,6 +33,16 @@ export interface ServiceConfig {
    *  first line so the startup path can be debugged too. Only applies when
    *  `cmd` is `node`. */
   debug?: boolean | number | DebugOptions;
+  /** Where the **process** listens once lazy mode has moved it, and the
+   *  configured port it was moved from. Written by `rewriteServicePort`; absent
+   *  on a service that was never rewritten.
+   *
+   *  Declared here rather than left to a widened return type, because that
+   *  type was erased at every boundary and each reader cast it back — three
+   *  casts, one of them `as any`. The type system was hiding hazard 3, which
+   *  is the one hazard entirely about these two numbers not being the same. */
+  realPort?: number;
+  originalPort?: number;
 }
 
 export interface DebugOptions {
@@ -148,6 +158,15 @@ export interface RemoteHealthCheckConfig {
   /** Per-probe timeout in ms. Default: 5000 */
   timeoutMs?: number;
 }
+
+/** How far a lazy service's real port sits from its configured one.
+ *
+ *  Lives here rather than in `lazy/` because the validator needs it to catch a
+ *  service configured on a port that collides with another service's rewritten
+ *  one — and a config module reaching into a feature module for a constant is
+ *  the wrong direction. `lazy/classifier.ts` re-exports it, so every existing
+ *  import keeps working. */
+export const LAZY_PORT_OFFSET = 10000;
 
 export interface LazyConfig {
   alwaysOn: string[];

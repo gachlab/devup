@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startSocketServer, type RpcContext } from '../../../src/control-plane/socket-server.js';
-import { runCtl, resolveTargets } from '../../../src/orchestrator/subcommands.js';
+import { runCtl, resolveTargets, runStatus } from '../../../src/orchestrator/subcommands.js';
 import type { ProcessState } from '../../../src/process/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 import type { DevStackConfig } from '../../../src/config/types.js';
@@ -23,7 +23,11 @@ function mkConfig(name = 'test'): DevStackConfig {
   return { name, services: [svc] };
 }
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
-  return {
+  // `Object.assign`, not `{ ...base, ...over }`: spreading a Partial makes every
+  // member optional, so a base missing a method still type-checks — which is
+  // exactly how a fake comes to lag the interface (CLAUDE.md rule 5). This way
+  // the base is checked as a complete RpcContext.
+  const base: RpcContext = {
     states: () => new Map(),
     restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
@@ -35,12 +39,13 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
+    debug: async () => ({ debug: false, port: null, ok: true }),
     setRemote: async (_n, envName) => ({
       ok: true,
       remote: envName === null ? null : { envName, target: `https://api.${envName}.test`, readOnly: false },
     }),
-    ...over,
   };
+  return Object.assign(base, over);
 }
 
 async function withServer(ctx: RpcContext, fn: (socketPath: string) => Promise<void>): Promise<void> {
@@ -135,10 +140,13 @@ describe('runCtl', { skip: !isUnix }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-ctl-'));
     const path = join(dir, 's.sock');
     try {
-      let removedCb: ((name: string) => void) | null = null;
+      // A no-op default rather than `| null`: TypeScript narrows a `let` that is
+      // only visibly assigned `null` down to `null`, and the assignment that
+      // matters happens inside the subscribe callback, which it cannot see.
+      let removedCb: (name: string) => void = () => {};
       const handle = await startSocketServer('t', noopCtx({
         states: () => new Map([['api', mkState()]]),
-        watchRemoved: (cb) => { removedCb = cb; return () => { removedCb = null; }; },
+        watchRemoved: (cb) => { removedCb = cb; return () => { removedCb = () => {}; }; },
       }), { path });
       const lines: string[] = [];
       try {
@@ -147,7 +155,7 @@ describe('runCtl', { skip: !isUnix }, () => {
         // swallow — the CLI then printed nothing and kept listing the service.
         const run = runCtl(['status', '--follow'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
         await new Promise(r => setTimeout(r, 80));
-        removedCb?.('legacy');
+        removedCb('legacy');
         await new Promise(r => setTimeout(r, 80));
         process.emit('SIGINT');
         await run;
@@ -882,5 +890,64 @@ describe('runCtl restart with a remote service in the batch', { skip: !isUnix },
       // "started" would claim a spawn that never happened.
       assert.ok(!/✓ auth started/.test(lines.join(' ')), lines.join(' '));
     });
+  });
+});
+
+describe('runCtl status prints the port you can connect to', { skip: !isUnix }, () => {
+  it('shows the configured port for a lazy service, not the internal one', async () => {
+    // The whole point of `originalPort`: devup runs a lazy service on
+    // `port + 10000` and keeps the on-demand proxy on the configured one, so
+    // `port` is the number a user cannot reach. `ctl status` printed it,
+    // because the hand-written row type never declared the field.
+    const states = new Map([['auth', mkState({
+      svc: { ...svc, name: 'auth', port: 13002 },
+      status: 'idle', health: 'idle', pid: null,
+    })]]);
+    // As the orchestrator holds a lazy service: the rewrite already happened.
+    states.get('auth')!.svc.originalPort = 3002;
+
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states }), async path => {
+      await runCtl(['status'], { config: mkConfig(), socketPath: path, out: l => lines.push(l) });
+    });
+    const said = lines.join(' ');
+    assert.match(said, /:3002/);
+    assert.ok(!/:13002/.test(said), `printed the internal port: ${said}`);
+  });
+});
+
+describe('devup status', { skip: !isUnix }, () => {
+  const svcAt = (name: string, port: number) =>
+    mkState({ svc: { ...svc, name, port }, status: 'idle', health: 'idle', pid: null });
+
+  it('asks the daemon when there is one, instead of poking ports', async () => {
+    // A lazy service's configured port is held by its on-demand proxy, so a
+    // poll there says `✓ up` for a service that is asleep. The daemon knows
+    // the difference; the port cannot.
+    const states = new Map([['auth', svcAt('auth', 13002)]]);
+    states.get('auth')!.svc.originalPort = 3002;
+    const lines: string[] = [];
+    await withServer(noopCtx({ states: () => states }), async path => {
+      const code = await runStatus({
+        config: mkConfig(), baseCwd: process.cwd(), env: {}, socketPath: path,
+        out: l => lines.push(l),
+      });
+      assert.equal(code, 0);
+    });
+    const said = lines.join(' ');
+    assert.match(said, /idle/, `no daemon answer: ${said}`);
+    assert.ok(!/polling ports/.test(said), 'it fell back to the poll with a daemon up');
+  });
+
+  it('says what the poll cannot tell you when there is no daemon', async () => {
+    // The fallback is fine; presenting it as the same answer is not.
+    const lines: string[] = [];
+    const code = await runStatus({
+      config: mkConfig(), baseCwd: process.cwd(), env: {},
+      socketPath: '/tmp/devup-definitely-not-here.sock',
+      out: l => lines.push(l),
+    });
+    assert.equal(code, 0);
+    assert.match(lines.join(' '), /polling ports/);
   });
 });

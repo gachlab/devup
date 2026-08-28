@@ -171,6 +171,15 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     }
   }
 
+  // Its own phase loop, not `bootStack`. Three things differ, and none is a
+  // flag: it waits for **webs** too (a caller of `--once` must not have to
+  // wait again, and a front end still compiling is not ready), it reports per
+  // service with `readyAfterMs`, and it aborts the whole run when an install
+  // fails — which the interactive boots ignore. Sharing this would need three
+  // hooks and read worse than two loops that say what they are.
+  //
+  // What it does share is `waitReady`'s bar and the phase ordering; if those
+  // change, they change in both.
   const phases = groupByPhase(localServices);
   const phaseNums = Object.keys(phases).map(Number).sort((a, b) => a - b);
   const deadline = startedAt + cliArgs.onceTimeout * 1000;
@@ -264,7 +273,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
  *    `--once` came to return before the front end served. When a web declares
  *    a pattern, that pattern is the bar; the port is ignored.
  *  - **For an API the port answering is the service serving.** That is the bar
- *    `bootNormal` uses, so it stays the bar here — a pattern, when there is
+ *    `bootStack` uses, so it stays the bar here — a pattern, when there is
  *    one, only ever lets it finish sooner.
  *
  *  A web with no pattern has nothing better than its port. That is worse than

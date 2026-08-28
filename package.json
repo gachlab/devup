@@ -55,6 +55,7 @@
     "dev": "tsup --watch",
     "prepack": "npm pkg fix",
     "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit && tsc -p tests/tsconfig.json",
     "test": "node --import tsx --test \"tests/**/*.test.ts\" \"tests/**/*.test.tsx\"",
     "test:unit": "node --import tsx --test --experimental-test-coverage \"tests/unit/**/*.test.ts\" \"tests/unit/**/*.test.tsx\"",
     "test:integration": "node --import tsx --test --experimental-test-coverage \"tests/integration/**/*.test.ts\"",

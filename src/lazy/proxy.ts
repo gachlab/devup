@@ -174,6 +174,16 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
   // Verified on darwin 25.5.0: `listen(p, '0.0.0.0')` then `listen(p)`
   // succeeds. Serving both families needs two explicit listeners, one per
   // family, so each collides on its own — see the issue.
+  // Without this an EADDRINUSE here is an uncaught exception that takes the
+  // whole daemon — or the TUI — down. The daemon child skips the pre-boot port
+  // scan on purpose (the parent already ran it), so anything can take the port
+  // in between. The remote proxy has had this guard since 0.18.0; this one did
+  // not, and the two are the same kind of thing holding the same kind of port.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    onLog?.(err.code === 'EADDRINUSE'
+      ? `❌ :${listenPort} is already in use — this service will not answer on it`
+      : `❌ proxy on :${listenPort} failed: ${err.message}`);
+  });
   server.listen(listenPort, '0.0.0.0');
   scheduleIdleCheck();
 

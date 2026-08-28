@@ -10,13 +10,16 @@ import type { ServiceSnapshot, StatusResult } from '../../../src/control-plane/t
  *  is a state the daemon can actually produce — a fixture that encodes an
  *  impossible pairing teaches the wrong policy. */
 function svc(over: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
-  return {
+  // See the note on `noopCtx`: spreading a Partial makes every member
+  // optional, so a fixture that lags the wire shape still type-checks.
+  const base: ServiceSnapshot = {
     name: 'app-api', status: 'running', health: 'up', port: 3000, originalPort: 3000,
     type: 'api', phase: 0, cmd: 'node', cwd: 'app/api', errors: 0, restarts: 0, crashes: 0,
     restartPendingIn: null,
     pid: 100, startedAt: 1755800000000, crashLog: null, debugPort: null,
-    ...over,
+    remote: null,
   };
+  return Object.assign(base, over);
 }
 
 /** A client that replays a scripted sequence of snapshots, one per `status()`

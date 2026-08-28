@@ -25,7 +25,11 @@ function mkState(over: Partial<ProcessState> = {}): ProcessState {
 }
 
 function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
-  return {
+  // `Object.assign`, not `{ ...base, ...over }`: spreading a Partial makes every
+  // member optional, so a base missing a method still type-checks — which is
+  // exactly how a fake comes to lag the interface (CLAUDE.md rule 5). This way
+  // the base is checked as a complete RpcContext.
+  const base: RpcContext = {
     states: () => new Map(),
     restart: async () => ({ ok: true, skippedIdle: false }),
     stop: () => {},
@@ -38,8 +42,9 @@ function noopCtx(over: Partial<RpcContext> = {}): RpcContext {
     getStats: async () => ({ services: {}, system: { totalMemMB: 0, freeMemMB: 0, cpuCores: 0 } }),
     getProxyInfo: () => null,
     getInfo: () => ({ project: 'test', profiles: {} }),
-    ...over,
+    setRemote: async () => ({ ok: true, remote: null }),
   };
+  return Object.assign(base, over);
 }
 
 /** Run `fn` against a live control plane in a throwaway directory. */
@@ -113,7 +118,7 @@ describe('control-plane client', { skip: !isUnix }, () => {
   it('status() returns both ports typed, without the caller casting', async () => {
     // The point of the export: a consumer reads originalPort off a typed
     // object instead of re-declaring the snapshot shape by hand.
-    const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 } as ServiceConfig;
+    const lazySvc = { ...svc, name: 'auth', port: 13002, originalPort: 3002 };
     const states = new Map([
       ['auth', mkState({ svc: lazySvc, status: 'idle', health: 'idle' })],
       ['api', mkState({ pid: 4242 })],

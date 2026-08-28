@@ -7,7 +7,7 @@ import type { StartResult } from '../control-plane/types.js';
 
 /** How long to let a service finish a graceful shutdown before giving up. */
 const STOP_GRACE_MS = 5_000;
-/** Matches what `bootNormal` allows an API to become reachable. */
+/** Matches what `bootStack` allows an API to become reachable. */
 const READY_TIMEOUT_MS = 45_000;
 
 export interface StartServiceHost {
@@ -77,7 +77,7 @@ export async function startService(
   // flag back, leaving the process suspended while state says debugging is off.
   if (startsSuspended(after.svc)) return { ok: true };
   // And it returns as soon as the child is spawned, so for an API "up" means
-  // the port answers, the same bar `bootNormal` uses. A web service has no
+  // the port answers, the same bar `bootStack` uses. A web service has no
   // equivalent signal at this level; boot treats it as started too.
   if (after.svc.type === 'api') return { ok: await waitForPort(after.svc.port, { timeout: READY_TIMEOUT_MS }) };
   return { ok: true };

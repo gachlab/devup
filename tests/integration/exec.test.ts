@@ -26,7 +26,7 @@ const baseCli: CliArgs = {
   skip: [], lazy: false, lazyTimeout: 10,
   proxy: false, proxyTls: true, proxyEntrypoint: 'websecure',
   dryRun: false, once: false, onceTimeout: 30, logFile: true,
-  watchConfig: false, killPortConflicts: false,
+  watchConfig: false, killPortConflicts: false, onceJson: false,
 };
 
 function findFreePort(): Promise<number> {

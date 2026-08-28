@@ -9,7 +9,7 @@ import type { Platform } from '../../platform/types.js';
 import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import { startSocketServer, type SocketServerHandle } from '../../control-plane/socket-server.js';
 import { calcCpuPercent } from '../../utils.js';
-import { seedServiceStats } from '../../utils/stats.js';
+import { buildProxyInfo, computeServiceStats, seedServiceStats } from '../../utils/stats.js';
 import { systemLoad } from '../../utils/system-load.js';
 import type { RemoteProxy } from '../../remote/proxy.js';
 import type { LazyProxy } from '../../lazy/proxy.js';
@@ -43,6 +43,12 @@ export function useControlPlane(
   platform: Platform,
   proxy: { provider: ProxyConfigProvider; opts: ProxyOpts } | null,
   profiles: Record<string, string[]>,
+  /** Whether proxy-file writing is on right now. A getter, not a value: the
+   *  TUI's `p` key toggles it, and taking the boolean would make it an effect
+   *  dependency — rebuilding the whole socket server on every press, which is
+   *  the churn bug #79 was about. Reported through `info` and `status`, which
+   *  used to claim `active: true` while the toggle was off. */
+  proxyActive: () => boolean,
   /** From `--instance`; reported by `info` so two instances are telling apart. */
   instance?: string,
 ): React.RefObject<SocketServerHandle | null> {
@@ -83,7 +89,16 @@ export function useControlPlane(
               onUpdate(name, state);
             });
           },
-          watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => onRemoved(name)),
+          watchRemoved: (onRemoved) => removedBus.subscribe(({ name }) => {
+            // This map is the third copy of the CPU baseline — the daemon and
+            // `useProcessManager` each release theirs on removal, and this one
+            // had no release path at all. A service re-added under the same
+            // name would be diffed against the dead process's counter and
+            // report a large negative CPU for one sample: the `prevCpuMap` row
+            // of CLAUDE.md §1, verbatim.
+            prevCpuMap.current.delete(name);
+            onRemoved(name);
+          }),
           debug: (name, enable, port, brk) => debugService(manager, lazyProxies.current, name, enable, port, brk),
           start: (name) => startService(manager, lazyProxies.current, name),
           setRemote: (name, envName) => switchService({
@@ -96,14 +111,7 @@ export function useControlPlane(
             const { services, pids, pidToName } = seedServiceStats(manager.state);
             const cores = cpus().length;
             const raw = pids.length ? await platform.getProcessStats(pids) : new Map();
-            for (const [pid, data] of raw) {
-              const name = pidToName.get(pid);
-              if (!name) continue;
-              const prev = prevCpuMap.current.get(name) ?? { time: Date.now(), cpu: 0 };
-              const cpu = calcCpuPercent(data.cpuSeconds, prev.cpu, prev.time);
-              prevCpuMap.current.set(name, { time: Date.now(), cpu: data.cpuSeconds });
-              services[name] = { cpu: Math.round(cpu * 10) / 10, memMB: Math.round((data.rss / 1024) * 10) / 10 };
-            }
+            computeServiceStats(services, raw, pidToName, prevCpuMap.current, calcCpuPercent);
             return {
               services,
               system: {
@@ -114,16 +122,7 @@ export function useControlPlane(
               },
             };
           },
-          getProxyInfo() {
-            if (!proxy) return null;
-            return {
-              active: true,
-              provider: proxy.provider.name,
-              domain: proxy.opts.domain,
-              tls: proxy.opts.tls,
-              routes: proxy.opts.routes,
-            };
-          },
+          getProxyInfo: () => buildProxyInfo(proxy?.provider, proxy?.opts, proxyActive()),
           getInfo() {
             return { project: projectName, ...(instance ? { instance } : {}), profiles };
           },

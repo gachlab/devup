@@ -9,6 +9,7 @@ import type { LogWindow, LogWindowOpts } from '../process/log-reader.js';
 import { CONTRACT_VERSION } from './types.js';
 import type {
   RemoteResult,
+  RestartResult,
   StartResult,
   ServiceSnapshot, ProxyInfo, ProjectInfo, StatsResult, ServiceStatEntry, DebugResult,
 } from './types.js';
@@ -34,7 +35,7 @@ export interface RpcContext {
   states(): Map<string, ProcessState>;
   /** Restart a service by name, through its lazy proxy when it has one.
    *  Reports whether it came back, and whether it was left asleep. */
-  restart(name: string): Promise<{ ok: boolean; skippedIdle: boolean }>;
+  restart(name: string): Promise<RestartResult>;
   /** Stop a service by name. */
   stop(name: string): void;
   /** Read a window out of the service's persistent log — the last N lines, or
@@ -269,7 +270,7 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
     // service there. The configured port — where the on-demand proxy listens,
     // and what clients are actually pointed at — survives as originalPort.
     // Always-on services are never rewritten, so the two coincide.
-    originalPort: (st.svc as { originalPort?: number }).originalPort ?? st.svc.port,
+    originalPort: st.svc.originalPort ?? st.svc.port,
     type: st.svc.type,
     phase: st.svc.phase,
     cmd: st.svc.cmd,
