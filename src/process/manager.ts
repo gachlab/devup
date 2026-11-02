@@ -83,6 +83,12 @@ export class ProcessManager {
     this.lifecycle.stop(name);
   }
 
+  /** SIGKILL a service's process tree — for a stop that will not finish on
+   *  its own while something needs the port. */
+  forceStop(name: string): void {
+    this.lifecycle.forceStop(name);
+  }
+
   /** Cancel a queued auto-restart without removing the service.
    *
    *  Any path that spawns outside the restarter must call this first, or the

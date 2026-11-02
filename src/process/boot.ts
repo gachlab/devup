@@ -3,6 +3,7 @@ import type { ProcessManager } from './manager.js';
 import type { ProcessState } from './types.js';
 import { groupByPhase } from '../utils.js';
 import { waitForPort } from './health.js';
+import { isRunning, waitForExit } from './liveness.js';
 import { startsSuspended } from '../utils/process-args.js';
 import { classifyServices, rewriteServicePort } from '../lazy/classifier.js';
 import { createLazyProxy, type LazyProxy } from '../lazy/proxy.js';
@@ -16,6 +17,11 @@ export const SUSPENDED_READY_TIMEOUT_MS = 10 * 60_000;
 
 /** How long an API gets to open its port before the phase moves on. */
 const READY_TIMEOUT_MS = 45_000;
+/** How long a wake waits for an idle-stop that is still draining. Same budget
+ *  the spawner gives a stop in flight. */
+const STOP_GRACE_MS = 5_000;
+/** After SIGKILL. */
+const KILL_GRACE_MS = 2_000;
 
 export interface BootOpts {
   mgr: ProcessManager;
@@ -118,28 +124,70 @@ export function registerLazy(
       // service changes the snapshot and nothing else.
       //
       // The fallback matters: a service removed mid-flight has no state left.
-      const cfg = mgr.state.get(svc.name)?.svc ?? rewritten;
-      await mgr.install(cfg, ci);
-      await mgr.start(cfg, ci);
+      const prev = mgr.state.get(svc.name);
+      const cfg = prev?.svc ?? rewritten;
+      // A crash with an auto-restart queued: this start replaces it. Left
+      // queued, the timer spawns a second process a few seconds later and the
+      // first drops out of `state`, beyond the reach of `ctl stop`.
+      mgr.cancelPendingRestart(svc.name);
+      if (prev && isRunning(prev)) {
+        if (prev.intentionalStop) {
+          // Woken while the idle-stop is still draining. Starting now races the
+          // dying process for the port: an API reads "port in use" and is
+          // recorded as crashed, a web gets EADDRINUSE or moves to port + 1.
+          //
+          // Bounded, then forced: a service that drains for 8 s (Spring, Nest,
+          // terminus) — or ignores SIGTERM — has closed its listener and will
+          // not reopen it. Waiting it out leaves the request hanging on a port
+          // nobody serves; reusing it leaves a "stopped" process running.
+          if (!await waitForExit(prev, STOP_GRACE_MS)) {
+            onLog?.(`⚠ still draining after ${STOP_GRACE_MS / 1000}s — killing it to serve the request`);
+            mgr.forceStop(svc.name);
+            if (!await waitForExit(prev, KILL_GRACE_MS)) {
+              onLog?.('❌ the previous process survived SIGKILL — not starting a second one');
+              return false;
+            }
+          }
+        }
+        // Otherwise it is already running — a previous wake that outlived its
+        // 45 s wait (a cold `ng serve`), or a restart that got there first.
+        // Starting again would spawn a second copy behind the same row.
+      }
+      if (!isRunning(mgr.state.get(svc.name))) {
+        await mgr.install(cfg, ci);
+        await mgr.start(cfg, ci);
+      }
       const suspended = startsSuspended(cfg);
       const ok = await waitForPort(cfg.realPort ?? rewritten.realPort, {
         timeout: suspended ? SUSPENDED_READY_TIMEOUT_MS : READY_TIMEOUT_MS,
       });
       const st = mgr.state.get(svc.name);
-      if (!st) return;
+      if (!st) return ok;
       if (ok) { st.status = 'running'; st.health = 'up'; }
       // `timeout` is a state nothing comes back from: the health poller skips
       // it, so a suspended start that takes longer than the clock would be
       // marked down for ever even once it serves. It stays `starting`, which
       // is what it is.
       else if (!suspended) st.status = 'timeout';
+      // Announced: the health poller only emits when `health` changes, and by
+      // its next round it already reads `up` — so a `status.follow` client
+      // (the VS Code extension) showed the woken service as `starting` for good.
+      mgr.notifyStateChange(svc.name);
+      return ok;
     },
     onIdleStop: () => {
-      mgr.stop(svc.name);
       const st = mgr.state.get(svc.name);
       if (!st) return;
+      // Switched to an environment since this proxy armed its timer: the row
+      // is the remote's now, not ours to put to sleep.
+      if (st.remote) return;
+      mgr.stop(svc.name);
       st.status = 'idle'; st.health = 'idle';
-      st.pid = null; st.proc = null; st.startedAt = null; st.debugPort = null;
+      // `proc` and `pid` are kept (CLAUDE.md §2): `stop` only sends SIGTERM,
+      // and a service that drains is still alive for a while. Nulling `proc`
+      // hid it from the next wake, which started a second process on top;
+      // nulling `pid` made every later `stop` a no-op on it.
+      st.startedAt = null; st.debugPort = null;
       // Announced, not just written. This is made from outside the manager,
       // and a `status.follow` client has no other way to learn a service went
       // to sleep — the snapshot is right either way, which is what made the

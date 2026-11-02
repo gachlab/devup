@@ -41,7 +41,11 @@ export class Spawner {
   private readonly events: ProcessManagerEvents;
   private readonly lifecycle: Lifecycle;
   private readonly onCrash: SpawnerOpts['onCrash'];
-  private readonly startupTimers = new Map<string, NodeJS.Timeout>();
+  /** Keyed by name, but owned by one state object: a restart spawns the new
+   *  process while the old one may still be draining, and the old one's close
+   *  handler used to clear the *new* process's timer — leaving it `starting`
+   *  for ever if it never became healthy. */
+  private readonly startupTimers = new Map<string, { timer: NodeJS.Timeout; state: ProcessState }>();
   private readonly removals: Map<string, number>;
   /** Set by `close()`. Once shutdown has begun, nothing may spawn: `cleanup`
    *  only kills what is in `procs` when it starts, so a queued restart or a
@@ -65,7 +69,31 @@ export class Spawner {
     this.closing = true;
   }
 
+  /** Starts in flight, by name. A start awaits the port check, a pre-build
+   *  and an install before it spawns, and two callers in that window — a lazy
+   *  wake and an auto-restart whose timer already fired, say — each spawned a
+   *  process: one ended up in `state`, the other only in `procs`, out of reach
+   *  of `ctl stop`. Entries remove themselves when the start settles, so
+   *  nothing here outlives a removal (CLAUDE.md §1). */
+  private readonly starting = new Map<string, Promise<void>>();
+
+  /** Start a service, unless a start for it is already in flight — then wait
+   *  for that one instead. Whichever caller came first wins; a later caller
+   *  wanting a different config (a reload) goes through `stop` + `start` after
+   *  it, as every restart path already does. */
   async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
+    const inFlight = this.starting.get(svc.name);
+    if (inFlight) { await inFlight; return; }
+    const run = this.startNow(svc, colorIdx, isRestart);
+    this.starting.set(svc.name, run);
+    try {
+      await run;
+    } finally {
+      if (this.starting.get(svc.name) === run) this.starting.delete(svc.name);
+    }
+  }
+
+  private async startNow(svc: ServiceConfig, colorIdx: number, isRestart: boolean): Promise<void> {
     if (this.closing) return this.skipForShutdown(svc, colorIdx);
     // Never spawn a process for a service that is served from a remote
     // environment, and never touch its state on the way out.
@@ -216,7 +244,7 @@ export class Spawner {
     const timeoutMs = svc.healthCheck?.startupTimeoutMs ?? STARTUP_TIMEOUT_DEFAULT_MS;
     if (timeoutMs <= 0) return;
     const timer = setTimeout(() => {
-      this.startupTimers.delete(svc.name);
+      if (this.startupTimers.get(svc.name)?.timer === timer) this.startupTimers.delete(svc.name);
       const current = this.state.get(svc.name);
       if (!current || current !== state || current.health === 'up') return;
       current.status = 'timeout';
@@ -224,12 +252,16 @@ export class Spawner {
       this.log(svc.name, `⏱ startup timeout after ${timeoutMs / 1000}s — service never became healthy`, colorIdx);
       this.events.onStateChange(svc.name, current);
     }, timeoutMs);
-    this.startupTimers.set(svc.name, timer);
+    this.startupTimers.set(svc.name, { timer, state });
   }
 
-  private clearStartupTimer(name: string): void {
+  /** Clear a service's startup timer — only if it belongs to `owner`, when
+   *  given. Callers acting for one particular process pass its state. */
+  private clearStartupTimer(name: string, owner?: ProcessState): void {
     const t = this.startupTimers.get(name);
-    if (t) { clearTimeout(t); this.startupTimers.delete(name); }
+    if (!t || (owner && t.state !== owner)) return;
+    clearTimeout(t.timer);
+    this.startupTimers.delete(name);
   }
 
   private wireStdio(proc: ChildProcess, svc: ServiceConfig, state: ProcessState, colorIdx: number): void {
@@ -239,7 +271,7 @@ export class Spawner {
       if (readyRegex.test(line)) {
         state.health = 'up';
         if (state.status === 'starting') state.status = 'running';
-        this.clearStartupTimer(svc.name);
+        this.clearStartupTimer(svc.name, state);
         this.events.onStateChange(svc.name, state);
       }
     };
@@ -304,7 +336,7 @@ export class Spawner {
     proc.on('close', code => {
       this.procs.delete(proc);
       this.lifecycle.stopWatchProc(state);
-      this.clearStartupTimer(svc.name);
+      this.clearStartupTimer(svc.name, state);
       // The inspector went with the process; leaving the port set points a
       // client at a dead endpoint for the whole restart window.
       state.debugPort = null;

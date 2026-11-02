@@ -104,14 +104,32 @@ describe('createLazyProxy', () => {
 
     const proxy = createLazyProxy({
       listenPort, targetPort: 19999, timeoutMin: 0.001,
-      onDemandStart: async () => {},
+      onDemandStart: async () => true,
       onIdleStop: () => { idleStopped = true; },
       isAlive: () => true,
     });
     proxies.push(proxy);
 
+    // The timer is armed by a start, not by creating the proxy.
+    assert.equal(await proxy.ensureStarted(), true);
     await new Promise(r => setTimeout(r, 200));
     assert.equal(idleStopped, true);
+  });
+
+  it('does not idle-stop a service that never started', { timeout: 3000 }, async () => {
+    // It used to: the timer was armed at creation, so every lazy service got
+    // an `onIdleStop` — and a state announcement — before anything ran.
+    const listenPort = await findFreePort();
+    let idleStopped = false;
+    const proxy = createLazyProxy({
+      listenPort, targetPort: 19999, timeoutMin: 0.001,
+      onDemandStart: async () => true,
+      onIdleStop: () => { idleStopped = true; },
+      isAlive: () => true,
+    });
+    proxies.push(proxy);
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(idleStopped, false);
   });
 
   it('does not stop a service that is under the inspector', { timeout: 4000 }, async () => {
@@ -124,12 +142,13 @@ describe('createLazyProxy', () => {
 
     const proxy = createLazyProxy({
       listenPort, targetPort: 19999, timeoutMin: 0.001,
-      onDemandStart: async () => {},
+      onDemandStart: async () => true,
       onIdleStop: () => { idleStopped = true; },
       isAlive: () => true,
       isDebugging: () => debugging,
     });
     proxies.push(proxy);
+    await proxy.ensureStarted();
 
     // Varios periodos de sobra: sin la guarda, el primero ya lo habría parado.
     await new Promise(r => setTimeout(r, 250));

@@ -36,6 +36,15 @@ export class Lifecycle {
     this.stopWatchProc(st);
   }
 
+  /** SIGKILL a service whose stop is taking too long. Same liveness rule as
+   *  `stop`; used when something is waiting on the port it still holds. */
+  forceStop(name: string): void {
+    const st = this.state.get(name);
+    if (!st || !isRunning(st) || !st.pid) return;
+    st.intentionalStop = true;
+    this.platform.killTree(st.pid, 'SIGKILL');
+  }
+
   /** Tears down the side-car `watchBuild` process for a service (if any) and
    *  clears the reference. Safe to call repeatedly. */
   stopWatchProc(state: ProcessState): void {
