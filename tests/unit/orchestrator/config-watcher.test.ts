@@ -562,3 +562,55 @@ describe('applyConfigChange: review of #138', () => {
     }
   });
 });
+
+describe('applyConfigChange: remote services and CommonJS (review of #150)', () => {
+  it('a CommonJS config reloads too: its cache is keyed by file, not URL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      const cfgPath = join(dir, 'devup.config.cjs');
+      const write = (port: number) => writeFileSync(cfgPath,
+        `module.exports = { name: 'W', services: [{ name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api', port: ${port}, phase: 0 }] };`);
+      write(3000);
+      const { loadConfig } = await import('../../../src/config/loader.js');
+      await loadConfig(cfgPath);
+      write(3001);
+      const svcs = [mkSvc('api', 3000)];
+      const { mgr, calls } = mockManager(svcs);
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: svcs, log: () => {} });
+      assert.equal(calls.started[0]?.svc.port, 3001, 'the CommonJS edit was never seen');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('with the real selection, editing routes never removes a remote-served service, and an added one is not started', async () => {
+    // `--profile front --remote qa`: api is served from qa. Re-classifying the
+    // edited config used to drop api (its route gone) — removing it and its
+    // proxy — and to start a newly added service locally.
+    const { managedServices } = await import('../../../src/config/selection.js');
+    const { parseCliArgs } = await import('../../../src/config/cli.js');
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      const cfgPath = join(dir, 'devup.config.json');
+      const web = mkSvc('web', 4000);
+      const cli = parseCliArgs(['--profile', 'front', '--remote', 'qa']);
+      const remoteAtBoot = new Set(['api']);
+      writeFileSync(cfgPath, JSON.stringify({
+        name: 'W', profiles: { front: ['web'] },
+        services: [web, mkSvc('api', 3000), mkSvc('billing', 3005)],
+        environments: { qa: { targets: {} } },
+        proxy: { provider: 'traefik', routes: { web: 'web' } },
+      }));
+      const { mgr, calls } = mockManager([web]);
+      const baseline = [web];
+      await applyConfigChange({
+        configPath: cfgPath, baseCwd: dir, manager: mgr, baseline,
+        select: c => managedServices(c, cli, remoteAtBoot), log: () => {},
+      });
+      assert.deepEqual(calls.removed, []);
+      assert.deepEqual(calls.started.map(c => c.name), []);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

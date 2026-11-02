@@ -21,6 +21,8 @@ export function useHotReload(
   /** The lazy proxies. A reload that respawns a lazy service has to go through
    *  its proxy, or it lands on the public port the proxy is holding. */
   lazyProxies?: React.RefObject<Map<string, LazyProxy>>,
+  /** Services served from a remote environment since boot — never reloaded. */
+  remoteAtBoot: ReadonlySet<string> = new Set(),
 ): void {
   useEffect(() => {
     if (!cliArgs.watchConfig || !manager) return;
@@ -41,8 +43,8 @@ export function useHotReload(
       configPath, baseCwd, manager, envFile: cliArgs.envFile,
       ...lazyOpts,
       baseline: services,
-      select: cfg => managedServices(cfg, cliArgs),
+      select: cfg => managedServices(cfg, cliArgs, remoteAtBoot),
       log: msg => pushLog('devup', msg, msg.startsWith('⚠') ? 5 : 12),
     });
-  }, [cliArgs.watchConfig, cliArgs.configPath, cliArgs.envFile, baseCwd, manager, pushLog, services, lazyProxies]);
+  }, [cliArgs.watchConfig, cliArgs.configPath, cliArgs.envFile, baseCwd, manager, pushLog, services, lazyProxies, remoteAtBoot]);
 }

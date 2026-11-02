@@ -16,3 +16,11 @@ describe('managedServices', () => {
     assert.deepEqual(managedServices(config, parseCliArgs(['--profile', 'front'])).map(s => s.name), ['web']);
   });
 });
+
+describe('managedServices with services served from a remote', () => {
+  it('leaves out what was remote at boot, even when the selection includes it', () => {
+    // `--remote qa:api`: api is in the selection and served from qa.
+    const got = managedServices(config, parseCliArgs(['--remote', 'qa:api']), new Set(['api']));
+    assert.deepEqual(got.map(s => s.name), ['web', 'worker']);
+  });
+});

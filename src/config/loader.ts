@@ -1,7 +1,10 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+
+const requireFromHere = createRequire(import.meta.url);
 import type { DevStackConfig } from './types.js';
 
 const CONFIG_NAMES = [
@@ -102,6 +105,11 @@ export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}):
   if (opts.fresh) {
     const { mtimeMs, size } = statSync(configPath);
     url += `?devup-reload=${mtimeMs}-${size}-${Date.now()}`;
+    // A CommonJS config (`module.exports`, or a `.cjs`) goes through the CJS
+    // loader, which caches by filename and ignores the query: drop its entry.
+    // Keyed by real path — on macOS the temp dir alone is a symlink away.
+    delete requireFromHere.cache[configPath];
+    try { delete requireFromHere.cache[realpathSync(configPath)]; } catch { /* stat above already passed */ }
   }
   const mod = await import(url);
   const config = mod.default ?? mod;
