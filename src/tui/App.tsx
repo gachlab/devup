@@ -145,7 +145,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services, lazyProxies);
   useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
-  useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled, msg => pm.pushLog('devup', msg, 5));
+  useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled, msg => pm.pushLog('devup', msg, 5), lazyProxies);
   useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
     { lazyProxies, remoteProxies, externals, bootAbort }, pm.pushLog);
 
@@ -192,7 +192,9 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     if (st) {
       // The public port (hazard §3): a lazy service's `port` is the internal
       // one, which refuses connections while it sleeps instead of waking it.
-      const url = buildServiceUrl(name, st.svc.originalPort ?? st.svc.port, cliArgs.proxy, proxyOpts);
+      // `kb.proxyEnabled`, not `--proxy`: with sync toggled off the file has
+      // just been cleared, and the domain URL leads to a 404.
+      const url = buildServiceUrl(name, st.svc.originalPort ?? st.svc.port, kb.proxyEnabled, proxyOpts);
       platform.openBrowser(url);
     }
     kb.setModal('none');

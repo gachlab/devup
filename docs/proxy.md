@@ -2,7 +2,7 @@
 
 devup can generate dynamic config for the reverse proxy in front of your stack. Three providers are built in: **Traefik**, **Nginx**, **Caddy**. You can also write your own.
 
-devup updates the generated file every 3 seconds based on the live health state. Services with `health === 'up'` are written; flapping services drop out automatically and re-appear when they recover. Lazy services are always written, routed to their lazy proxy on the public port, so a request by domain wakes them. Writes are atomic (temp file + rename), and a failed write is logged, not fatal. On exit the file is cleared, so the proxy does not keep routing to services that are gone.
+devup updates the generated file every 3 seconds based on the live health state. Services with `health === 'up'` are written; flapping services drop out automatically and re-appear when they recover. Lazy services are always written, routed to their lazy proxy on the public port, so a request by domain wakes them. Writes happen in place (so a single-file Docker bind mount keeps seeing them), a failed write is logged once and retried, and a file rewritten by someone else is put back on the next sync. On exit the file is cleared, so the proxy does not keep routing to services that are gone.
 
 ## Why generate it
 
@@ -60,7 +60,7 @@ Each service in `routes` is mapped to:
 - **Empty string**: `<domain>` (the root domain)
 - **Any string**: `<value>.<domain>`
 
-The `<domain>` itself comes from `proxy.domain` in the config, else the `DOMAIN` env variable, falling back to `localhost`. (`GUESTHUB_DOMAIN` is still read, after those two, with a deprecation warning.) Or set it in your `.env`:
+The `<domain>` itself comes from `proxy.domain` in the config, else the `DOMAIN` env variable, falling back to `localhost`. (`GUESTHUB_DOMAIN` is still read — ahead of `DOMAIN`, as before — with a deprecation warning.) Or set it in your `.env`:
 
 ```ini
 DOMAIN=dev.example.com
@@ -132,7 +132,7 @@ In the TUI, `T` (capital) toggles whether devup writes the proxy file. It starts
 
 ## Lazy mode interaction
 
-When a service is lazy, devup's TCP proxy listens on `svc.port` and the actual service runs on `svc.port + 10000`. The generated reverse-proxy config points to the **real port** (`+ 10000`), not the devup-relayed one. That way the reverse proxy talks directly to the service, avoiding an extra hop.
+When a service is lazy, devup's TCP proxy listens on `svc.port` and the actual service runs on `svc.port + 10000`. The generated reverse-proxy config points to the **public port** — the lazy proxy — and keeps the route while the service sleeps: a request by domain wakes it, and counts as activity for the idle timer. The extra hop is a raw TCP relay. If the lazy proxy could not bind its port (another process holds it), the service is routed only while healthy, like any other.
 
 For services in `lazy.alwaysOn` (no lazy proxy), the public `port` is used as-is.
 
@@ -149,7 +149,7 @@ interface ProxyConfigProvider {
 }
 ```
 
-`generate()` is pure — it takes the current healthy-service snapshot and returns the file content. `write()` is the side-effecting save (`writeAtomic`: `mkdir -p`, a temp file, and a rename). `clear()` is called when the proxy sync is toggled off in the TUI, and on exit.
+`generate()` is pure — it takes the current healthy-service snapshot and returns the file content. `write()` is the side-effecting save (`writeConfigFile`: `mkdir -p` + an in-place write). `clear()` is called when the proxy sync is toggled off in the TUI, and on exit.
 
 There's a draft plugin mechanism in the roadmap (issues #31, #32) for registering custom providers via config without forking. Open if you'd find it useful.
 

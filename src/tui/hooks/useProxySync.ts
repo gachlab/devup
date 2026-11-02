@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import type { ProcessState } from '../../process/types.js';
 import { ProxySync } from '../../proxy-config/sync.js';
@@ -13,6 +13,8 @@ export function useProxySync(
   states: Map<string, ProcessState>,
   enabled: boolean,
   log?: (msg: string) => void,
+  /** To route a lazy service only while its proxy is actually listening. */
+  lazyProxies?: React.RefObject<Map<string, { server: { listening: boolean } }>>,
 ): void {
   const statesRef = useRef(states);
   statesRef.current = states;
@@ -21,12 +23,13 @@ export function useProxySync(
 
   useEffect(() => {
     if (!provider || !opts || !enabled) return;
-    const sync = new ProxySync(provider, opts, () => statesRef.current, msg => logRef.current?.(msg));
+    const sync = new ProxySync(provider, opts, () => statesRef.current, msg => logRef.current?.(msg),
+      name => lazyProxies?.current?.get(name)?.server.listening ?? false);
     sync.sync();
     const id = setInterval(() => sync.sync(), 3000);
     return () => {
       clearInterval(id);
       sync.clear();
     };
-  }, [provider, opts, enabled]);
+  }, [provider, opts, enabled, lazyProxies]);
 }

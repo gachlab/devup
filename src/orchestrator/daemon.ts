@@ -268,7 +268,8 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
 
     // ── Proxy sync (write traefik/nginx/caddy config when state changes) ──
     if (proxyProvider && proxyOpts && cliArgs.proxy) {
-      const proxySync = new ProxySync(proxyProvider, proxyOpts, () => mgr.state, msg => writeDevupLog(msg));
+      const proxySync = new ProxySync(proxyProvider, proxyOpts, () => mgr.state, msg => writeDevupLog(msg),
+        name => lazyProxies.get(name)?.server.listening ?? false);
       proxySync.sync();
       proxyTimer = setInterval(() => proxySync.sync(), 3000);
     }

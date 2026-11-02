@@ -1,4 +1,4 @@
-import { writeAtomic } from './write.js';
+import { writeConfigFile } from './write.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
 
 const EMPTY_CONFIG = '# devup: no healthy services\n';
@@ -49,7 +49,7 @@ export class NginxProvider implements ProxyConfigProvider {
   }
 
   write(content: string, opts: ProxyOpts): void {
-    writeAtomic(opts.confPath, content);
+    writeConfigFile(opts.confPath, content);
   }
 
   clear(opts: ProxyOpts): void {

@@ -1,4 +1,4 @@
-import { writeAtomic } from './write.js';
+import { writeConfigFile } from './write.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
 
 /** A service name as a Traefik router/service key. Lower-cased first: the old
@@ -38,7 +38,7 @@ export class TraefikProvider implements ProxyConfigProvider {
   }
 
   write(content: string, opts: ProxyOpts): void {
-    writeAtomic(opts.confPath, content);
+    writeConfigFile(opts.confPath, content);
   }
 
   clear(opts: ProxyOpts): void {

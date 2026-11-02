@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { ProcessState } from '../process/types.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
 
@@ -10,10 +11,18 @@ import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
  *  service had no route (404 by domain, never woken), and traffic arriving by
  *  domain bypassed the lazy proxy, so it never counted as activity and a
  *  service in use was put to sleep under its users (hazard §3). */
-export function routableStates(states: Map<string, ProcessState>): Map<string, ServiceState> {
+export function routableStates(
+  states: Map<string, ProcessState>,
+  /** Whether a lazy service's proxy is actually listening. One that failed to
+   *  bind (another process holds the port), or was released by a switch that
+   *  then failed, must not be routed "up" for good — the route would send
+   *  domain traffic to whatever holds that port. Falls back to the service's
+   *  own health when false. */
+  lazyServing: (name: string) => boolean = () => true,
+): Map<string, ServiceState> {
   const out = new Map<string, ServiceState>();
   for (const [name, st] of states) {
-    const lazy = st.svc.originalPort !== undefined && !st.remote;
+    const lazy = st.svc.originalPort !== undefined && !st.remote && lazyServing(name);
     out.set(name, {
       port: st.svc.originalPort ?? st.svc.port,
       health: lazy ? 'up' : st.health,
@@ -35,12 +44,21 @@ export class ProxySync {
     private readonly opts: ProxyOpts,
     private readonly read: () => Map<string, ProcessState>,
     private readonly log: (msg: string) => void = () => {},
+    private readonly lazyServing?: (name: string) => boolean,
+    /** Reads the file as it is on disk — injectable for tests. */
+    private readonly readOnDisk: () => string | null = () => {
+      try { return readFileSync(this.opts.confPath, 'utf8'); } catch { return null; }
+    },
   ) {}
 
   /** Regenerate and write if anything changed. Never throws. */
   sync(): void {
-    const content = this.provider.generate(routableStates(this.read()), this.opts);
-    if (content === this.last) return;
+    const content = this.provider.generate(routableStates(this.read(), this.lazyServing), this.opts);
+    // Unchanged *and* still what is on disk. Something else can rewrite the
+    // file — another `--instance` sharing the default path clears it when it
+    // quits — and trusting `last` alone left this stack's routes gone until
+    // some service happened to change health.
+    if (content === this.last && this.readOnDisk() === content) return;
     try {
       this.provider.write(content, this.opts);
       this.last = content;
