@@ -23,6 +23,7 @@ import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
 import type { RemoteResult, ServiceSnapshot } from '../control-plane/types.js';
 import { resolveSpawnCommand } from '../platform/command.js';
+import { projectDirOf, serviceDir } from '../config/paths.js';
 
 const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config', 'exec']);
 
@@ -170,7 +171,7 @@ async function followFile(file: string, out: (l: string) => void, startAt = 0): 
 export async function runInstall(opts: SubOpts & { concurrency?: number }): Promise<number> {
   const out = opts.out ?? ((l: string) => console.log(l));
   const concurrency = opts.concurrency ?? 4;
-  const items = opts.config.services.map(s => ({ name: s.name, cwd: join(opts.baseCwd, s.cwd) }));
+  const items = opts.config.services.map(s => ({ name: s.name, cwd: serviceDir(opts.baseCwd, s.cwd) }));
   const queue = [...items];
   const failed: string[] = [];
   let inFlight = 0;
@@ -745,7 +746,7 @@ export async function runConfig(argv: string[], opts: ConfigSubOpts): Promise<nu
   catch (e: any) { out(`❌ failed to load config: ${e.message}`); return 1; }
 
   if (subcmd === 'validate') {
-    const errors = validateConfig(config, opts.cwd);
+    const errors = validateConfig(config, projectDirOf(cfgPath));
     const warnings = collectWarnings(config);
     if (json) {
       out(JSON.stringify({ valid: errors.length === 0, errors: errors.map(e => `${e.field}: ${e.message}`), warnings: warnings.map(w => `${w.field}: ${w.message}`) }, null, 2));

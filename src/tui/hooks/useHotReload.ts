@@ -37,10 +37,10 @@ export function useHotReload(
       ? { lazyProxies: lazyProxies.current, lazyTimeout: cliArgs.lazyTimeout }
       : {};
     return watchConfig({
-      configPath, baseCwd, manager,
+      configPath, baseCwd, manager, envFile: cliArgs.envFile,
       ...lazyOpts,
       baseline: services,
       log: msg => pushLog('devup', msg, msg.startsWith('⚠') ? 5 : 12),
     });
-  }, [cliArgs.watchConfig, cliArgs.configPath, baseCwd, manager, pushLog, services, lazyProxies]);
+  }, [cliArgs.watchConfig, cliArgs.configPath, cliArgs.envFile, baseCwd, manager, pushLog, services, lazyProxies]);
 }

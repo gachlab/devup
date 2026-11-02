@@ -8,6 +8,7 @@ import { Spawner } from './spawner.js';
 import { Restarter } from './restarter.js';
 import { HealthPoller } from './health-poller.js';
 import { Lifecycle } from './lifecycle.js';
+import { serviceDir } from '../config/paths.js';
 
 // Re-export the helpers + constants so existing imports keep working.
 export { compileReadyPattern, extractWatchPaths } from './internals.js';
@@ -66,7 +67,7 @@ export class ProcessManager {
   }
 
   install(svc: ServiceConfig, colorIdx?: number): Promise<boolean> {
-    const cwd = join(this.baseCwd, svc.cwd);
+    const cwd = serviceDir(this.baseCwd, svc.cwd);
     const idx = colorIdx ?? this.state.get(svc.name)?.colorIdx ?? 0;
     return installService(cwd, this.env, msg => this.events.onLog(svc.name, msg, idx));
   }

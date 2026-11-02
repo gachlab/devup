@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 
 import { findConfigFile, loadConfig } from './config/loader.js';
 import { validateConfig, formatValidationErrors, collectWarnings, formatValidationWarnings } from './config/validator.js';
-import { parseCliArgs, filterServices, nothingToRun, USAGE } from './config/cli.js';
+import { parseCliArgs, applyConfigDefaults, filterServices, nothingToRun, USAGE } from './config/cli.js';
 import { qualifyInstance, validateInstance, instanceFlag, describeStack } from './config/instance.js';
 import { detectSubcommand, misplacedSubcommand, runLogs, runInstall, runStatus, runHelp, runCtl, runDown, runConfig } from './orchestrator/subcommands.js';
 import { runDetached, daemonBody, isDaemonRunning } from './orchestrator/daemon.js';
@@ -25,6 +25,7 @@ import { runOnce } from './orchestrator/once.js';
 import { readVersion } from './utils/version.js';
 import { runExec, ownArgsFor, daemonChildArgs } from './orchestrator/exec.js';
 import type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
+import { projectDirOf } from './config/paths.js';
 
 // Re-export for config files
 export { defineConfig } from './config/types.js';
@@ -71,7 +72,32 @@ async function main() {
   const cwd = process.cwd();
   // `ownArgs` above already stopped at `--` for exec: everything after it
   // belongs to the command. See `execOwnArgs`.
-  const cliArgs = parseCliArgs(ownArgs);
+  let cliArgs = parseCliArgs(ownArgs);
+
+  // `--env` is checked before any config is loaded, because loading one is
+  // what reads the env file: a .ts config evaluates `process.env.DB_URL` at
+  // import time, and it must see the file the user asked for.
+  if (cliArgs.envFile === '') {
+    console.error('❌ --env needs a path');
+    process.exit(1);
+  }
+  const envOverride = cliArgs.envFile ? resolve(cwd, cliArgs.envFile) : undefined;
+  // `parseEnvFile` returns the base environment for a file that is not there,
+  // which is right for the implicit `.env` and wrong for one someone typed:
+  // this is a per-run override, usually pointing at a test database, and a
+  // mistyped path that silently falls back means running the suite against the
+  // development one instead. That is not a convenience worth having.
+  if (envOverride && !existsSync(envOverride)) {
+    console.error(`❌ --env not found: ${envOverride}`);
+    process.exit(1);
+  }
+  // A bare `--remote` must not fall through to an ordinary local boot: the
+  // services it was meant to cover would simply be missing, and what the
+  // developer sees is a frontend failing to connect, minutes from the cause.
+  if (cliArgs.remote === '') {
+    console.error('❌ --remote needs an environment name');
+    process.exit(1);
+  }
 
   if (subcmd) {
     const subArgs = raw.slice(1);
@@ -79,13 +105,13 @@ async function main() {
     let cfgPath: string;
     try { cfgPath = findConfigFile(cwd, cliArgs.configPath); }
     catch (e: any) { console.error(`❌ ${e.message}`); process.exit(1); }
-    const cfg = await loadConfig(cfgPath);
+    const cfg = await loadConfig(cfgPath, { envFile: envOverride });
     if (cliArgs.instance !== undefined) {
       const bad = validateInstance(cliArgs.instance);
       if (bad) { console.error(`❌ ${bad}`); process.exit(1); }
     }
     const subOpts = {
-      config: cfg, baseCwd: cwd, env: process.env as Record<string, string>, logDir: cliArgs.logDir,
+      config: cfg, baseCwd: projectDirOf(cfgPath), env: process.env as Record<string, string>, logDir: cliArgs.logDir,
       instanceName: qualifyInstance(cfg.name, cliArgs.instance),
       instance: cliArgs.instance,
     };
@@ -109,7 +135,16 @@ async function main() {
     process.exit(1);
   }
 
-  const config = await loadConfig(configPath);
+  const config = await loadConfig(configPath, { envFile: envOverride });
+  // Relative paths in the config are relative to the config, not to wherever
+  // the shell happens to be — see `projectDirOf`.
+  const projectDir = projectDirOf(configPath);
+  // A typed flag beats the config, which beats the default. Done once, here,
+  // so every consumer below reads one resolved value.
+  // `configPath` and `envFile` are made absolute here too: they were typed
+  // against the shell's cwd, and the config watcher re-resolves them from the
+  // project dir, which is not the same place under `--config elsewhere/`.
+  cliArgs = { ...applyConfigDefaults(cliArgs, config), configPath, envFile: envOverride };
 
   // The name every path is keyed by: socket, pid file, boot-error file, logs.
   // Qualified once here rather than threaded as a separate argument, because
@@ -122,7 +157,7 @@ async function main() {
   const instanceName = qualifyInstance(config.name, cliArgs.instance);
 
   // Validate
-  const errors = validateConfig(config, cwd);
+  const errors = validateConfig(config, projectDir);
   if (errors.length) {
     console.error(`❌ Config validation failed:\n${formatValidationErrors(errors)}`);
     process.exit(1);
@@ -175,30 +210,9 @@ async function main() {
   // Platform
   const platform = await detectPlatform();
 
-  // Env. `--env-file` wins over the config, which wins over `.env`.
-  if (cliArgs.envFile === '') {
-    console.error('❌ --env needs a path');
-    process.exit(1);
-  }
-  // A bare `--remote` must not fall through to an ordinary local boot: the
-  // services it was meant to cover would simply be missing, and what the
-  // developer sees is a frontend failing to connect, minutes from the cause.
-  if (cliArgs.remote === '') {
-    console.error('❌ --remote needs an environment name');
-    process.exit(1);
-  }
-  const envFile = cliArgs.envFile
-    ? resolve(cwd, cliArgs.envFile)
-    : (config.envFile ? join(cwd, config.envFile) : join(cwd, '.env'));
-  // `parseEnvFile` returns the base environment for a file that is not there,
-  // which is right for the implicit `.env` and wrong for one someone typed:
-  // this is a per-run override, usually pointing at a test database, and a
-  // mistyped path that silently falls back means running the suite against the
-  // development one instead. That is not a convenience worth having.
-  if (cliArgs.envFile && !existsSync(envFile)) {
-    console.error(`❌ --env not found: ${envFile}`);
-    process.exit(1);
-  }
+  // Env. `--env` wins over the config's `envFile`, which wins over `.env`;
+  // both of the latter relative to the config. `--env` was validated above.
+  const envFile = envOverride ?? resolve(projectDir, config.envFile ?? '.env');
   const env = parseEnvFile(envFile, process.env as Record<string, string>);
   if (config.env) {
     for (const [k, v] of Object.entries(config.env)) {
@@ -215,15 +229,15 @@ async function main() {
       host: cliArgs.proxyHost ?? config.proxy.host ?? platform.defaultTraefikHost,
       domain: env['GUESTHUB_DOMAIN'] ?? env['DOMAIN'] ?? 'localhost',
       routes: config.proxy.routes,
-      tls: cliArgs.proxyTls ?? config.proxy.tls ?? true,
-      entrypoint: cliArgs.proxyEntrypoint ?? config.proxy.entrypoint ?? 'websecure',
+      tls: cliArgs.proxyTls,
+      entrypoint: cliArgs.proxyEntrypoint,
       confPath: cliArgs.proxyConf ?? config.proxy.confPath ?? join(homedir(), '.traefik', 'traefik_conf.yaml'),
     };
   }
 
   // --dry-run: imprime plan y sale
   if (cliArgs.dryRun) {
-    runDryRun({ config, services, cliArgs, env, baseCwd: cwd, proxyProvider, proxyOpts });
+    runDryRun({ config, services, cliArgs, env, baseCwd: projectDir, proxyProvider, proxyOpts });
     return;
   }
 
@@ -303,7 +317,7 @@ async function main() {
     const code = await runExec({
       argv: raw.slice(1),
       childArgs: daemonChildArgs(raw),
-      config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts,
+      config, services, cliArgs, platform, env, baseCwd: projectDir, proxyProvider, proxyOpts,
       instanceName, ensurePortsFree,
     });
     await logSink?.close();
@@ -320,7 +334,7 @@ async function main() {
   // --once: arranca, espera ready, sale 0/1 (sin TUI)
   if (cliArgs.once) {
     const code = await runOnce({
-      config, services, cliArgs, platform, env, baseCwd: cwd, logSink,
+      config, services, cliArgs, platform, env, baseCwd: projectDir, logSink,
     });
     await logSink?.close();
     process.exit(code);
@@ -329,7 +343,7 @@ async function main() {
   // Daemon child: spawned by `devup up -d`. Skip Ink/TUI; run the daemon body
   // which stays alive until SIGTERM. The parent process polls for the PID file.
   if (process.env.DEVUP_DAEMON_CHILD === '1') {
-    await daemonBody({ config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts, instanceName });
+    await daemonBody({ config, services, cliArgs, platform, env, baseCwd: projectDir, proxyProvider, proxyOpts, instanceName });
     return; // daemonBody installs its own signal handlers and only exits via process.exit
   }
 
@@ -340,7 +354,7 @@ async function main() {
       process.exit(1);
     }
     process.exit(await runDetached({
-      config, services, cliArgs, platform, env, baseCwd: cwd, proxyProvider, proxyOpts, instanceName,
+      config, services, cliArgs, platform, env, baseCwd: projectDir, proxyProvider, proxyOpts, instanceName,
     }));
   }
 
@@ -348,7 +362,7 @@ async function main() {
   const isInteractive = process.stdin.isTTY ?? false;
   const { waitUntilExit } = render(
     React.createElement(App, {
-      config, services, cliArgs, platform, env, baseCwd: cwd,
+      config, services, cliArgs, platform, env, baseCwd: projectDir,
       proxyProvider, proxyOpts, logSink,
     }),
     { exitOnCtrlC: false, patchConsole: isInteractive, interactive: isInteractive },

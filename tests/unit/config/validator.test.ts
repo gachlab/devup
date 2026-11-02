@@ -357,3 +357,61 @@ describe('collectWarnings', () => {
     assert.ok(out.includes('⚠ b: y'));
   });
 });
+
+describe('validateConfig: port ranges', () => {
+  const withPort = (port: unknown, lazy?: DevStackConfig['lazy']): DevStackConfig => ({
+    name: 'Test', ...(lazy ? { lazy } : {}),
+    services: [{ name: 'api-a', cwd: '.', cmd: 'node', args: [], type: 'api', port, phase: 0 } as never],
+  });
+  const portErrors = (cfg: DevStackConfig) => validateConfig(cfg, tmp).filter(e => e.field.endsWith('.port'));
+
+  it('rejects NaN, which `typeof === number && <= 0` let through', () => {
+    // `port: Number(process.env.API_PORT)` with the variable unset.
+    assert.equal(portErrors(withPort(NaN)).length, 1);
+  });
+
+  it('rejects non-integers and ports above 65535', () => {
+    assert.equal(portErrors(withPort(3000.5)).length, 1);
+    assert.equal(portErrors(withPort(70000)).length, 1);
+    assert.equal(portErrors(withPort(0)).length, 1);
+  });
+
+  it('accepts the edges', () => {
+    assert.deepEqual(portErrors(withPort(1)), []);
+    assert.deepEqual(portErrors(withPort(65535)), []);
+  });
+
+  it('rejects a lazy service whose real port would pass 65535', () => {
+    const errs = portErrors(withPort(60000, { alwaysOn: [] }));
+    assert.equal(errs.length, 1);
+    assert.match(errs[0]!.message, /70000/);
+  });
+
+  it('allows that port when the service is always-on, so it is never offset', () => {
+    assert.deepEqual(portErrors(withPort(60000, { alwaysOn: ['api-a'] })), []);
+  });
+
+  it('rejects a non-integer phase', () => {
+    const cfg = withPort(3000);
+    (cfg.services[0] as { phase: number }).phase = NaN;
+    assert.equal(validateConfig(cfg, tmp).filter(e => e.field.endsWith('.phase')).length, 1);
+  });
+});
+
+describe('validateConfig: settings a flag can also set', () => {
+  const base = (over: Partial<DevStackConfig>): DevStackConfig => ({ ...minimal(), ...over });
+  const fieldErrors = (cfg: DevStackConfig, field: string) => validateConfig(cfg, tmp).filter(e => e.field === field);
+
+  it('rejects a NaN lazy.timeout, which would idle-stop every lazy service at once', () => {
+    assert.equal(fieldErrors(base({ lazy: { alwaysOn: [], timeout: NaN } }), 'lazy.timeout').length, 1);
+    assert.equal(fieldErrors(base({ lazy: { alwaysOn: [], timeout: -1 } }), 'lazy.timeout').length, 1);
+    assert.deepEqual(fieldErrors(base({ lazy: { alwaysOn: [], timeout: 0 } }), 'lazy.timeout'), []);
+  });
+
+  it('rejects a non-boolean proxy.tls and an empty entrypoint', () => {
+    const proxy = { provider: 'traefik', routes: {} };
+    assert.equal(fieldErrors(base({ proxy: { ...proxy, tls: 'false' as never } }), 'proxy.tls').length, 1);
+    assert.equal(fieldErrors(base({ proxy: { ...proxy, entrypoint: '  ' } }), 'proxy.entrypoint').length, 1);
+    assert.deepEqual(fieldErrors(base({ proxy: { ...proxy, tls: false, entrypoint: 'web' } }), 'proxy.tls'), []);
+  });
+});
