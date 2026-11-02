@@ -5,7 +5,10 @@ export interface LazyProxyOpts {
   listenPort: number;
   targetPort: number;
   timeoutMin: number;
-  onDemandStart: () => Promise<void>;
+  /** Start the service. May resolve to whether it became reachable, having
+   *  already waited for it; otherwise the proxy waits for the port itself.
+   *  Waiting twice doubled the time a dead start took to fail: 45 s + 45 s. */
+  onDemandStart: () => Promise<boolean | void>;
   onIdleStop: () => void;
   isAlive: () => boolean;
   /** Whether a debugger is attached (or waiting to be) — the service's
@@ -36,6 +39,9 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
   let serviceReady = false;
   let pendingConns: net.Socket[] = [];
   const activeConns = new Set<net.Socket>();
+  /** Our side of every relayed connection, so `destroy()` closes those too —
+   *  it used to leave them open, holding the service's sockets. */
+  const targetConns = new Set<net.Socket>();
 
   function bumpActivity() {
     lastActivity = Date.now();
@@ -47,7 +53,10 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
     const periodMs = timeoutMin * 60_000;
     idleTimer = setTimeout(() => {
       const elapsed = Date.now() - lastActivity;
-      if (activeConns.size > 0 || elapsed < periodMs) {
+      // A start in progress, and connections queued behind it, are activity:
+      // a service slower to boot than the timeout used to be killed while it
+      // was still starting, and its waiting clients dropped.
+      if (activeConns.size > 0 || startInFlight || pendingConns.length > 0 || elapsed < periodMs) {
         // Aún activa o tráfico reciente — re-agenda
         scheduleIdleCheck();
         return;
@@ -77,22 +86,30 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
   function pipeToTarget(client: net.Socket) {
     const target = net.createConnection({ port: targetPort, host: '127.0.0.1', allowHalfOpen: true });
     activeConns.add(client);
+    targetConns.add(target);
 
+    // Either side closing closes the other. A client that vanished without an
+    // 'end' or 'error' used to leave the target socket open for good.
     const cleanup = () => {
       activeConns.delete(client);
+      targetConns.delete(target);
+      if (!client.destroyed) client.destroy();
+      if (!target.destroyed) target.destroy();
       bumpActivity();
     };
-
-    target.on('error', () => { client.destroy(); cleanup(); });
-    client.on('error', () => { target.destroy(); cleanup(); });
+    target.on('error', cleanup);
+    client.on('error', cleanup);
     client.on('close', cleanup);
     target.on('close', cleanup);
 
     target.on('connect', () => {
-      target.on('data', (chunk) => { bumpActivity(); if (!client.destroyed) client.write(chunk); });
-      client.on('data', (chunk) => { bumpActivity(); if (!target.destroyed) target.write(chunk); });
-      target.on('end', () => { if (!client.destroyed) client.end(); });
-      client.on('end', () => { if (!target.destroyed) target.end(); });
+      // `pipe`, not `write` by hand: it pauses the fast side when the slow one
+      // is full, instead of buffering an upload or a download without bound.
+      // It also forwards each half-close, which `allowHalfOpen` relies on.
+      client.on('data', bumpActivity);
+      target.on('data', bumpActivity);
+      client.pipe(target);
+      target.pipe(client);
     });
   }
 
@@ -116,8 +133,10 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
         onLog?.('⚡ on-demand start');
         let ok = false;
         try {
-          await onDemandStart();
-          ok = await waitForPort(targetPort, { timeout: 45000, interval: 500 });
+          const started = await onDemandStart();
+          ok = typeof started === 'boolean'
+            ? started
+            : await waitForPort(targetPort, { timeout: 45000, interval: 500 });
           if (ok) {
             serviceReady = true;
             // Re-arm: scheduleIdleCheck stops rescheduling itself once it fires
@@ -185,7 +204,9 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
       : `❌ proxy on :${listenPort} failed: ${err.message}`);
   });
   server.listen(listenPort, '0.0.0.0');
-  scheduleIdleCheck();
+  // No idle timer until something has started: it used to be armed here and
+  // fire an `onIdleStop` — and a state announcement — for a service that had
+  // never run. `ensureStarted` arms it on every successful start.
 
   return {
     server,
@@ -195,6 +216,7 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
       if (idleTimer) clearTimeout(idleTimer);
       pendingConns.forEach(s => s.destroy());
       activeConns.forEach(s => s.destroy());
+      targetConns.forEach(s => s.destroy());
       server.close();
     },
   };

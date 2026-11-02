@@ -162,10 +162,13 @@ createLazyProxy({ listenPort, targetPort, ... })
   net.Server on listenPort
     on connection:
       bumpActivity()
-      if (serviceReady && isAlive) → pipeToTarget()
-      else queue + onDemandStart() + waitForPort() + drain queue
-  scheduleIdleCheck on a timer
-    if activeConns.size === 0 && elapsed > periodMs → onIdleStop()
+      if (serviceReady && isAlive) → pipeToTarget()   client.pipe(target), target.pipe(client)
+      else queue + ensureStarted() + drain queue
+  ensureStarted: one start at a time; onDemandStart() may report readiness
+    itself, else waitForPort(); a success arms scheduleIdleCheck
+    (no timer before the first start)
+  idle check: nothing active, no start in flight, nothing queued,
+    elapsed > periodMs → onIdleStop()  (keeps `proc`; a wake waits for the drain)
 ```
 
 ### Reverse-proxy file generation
