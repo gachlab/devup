@@ -24,7 +24,10 @@ describe('useProcessManager', () => {
     }
     const r = render(<Probe />);
     try {
-      await sleep(20);
+      // Polled, not a fixed sleep: a loaded CI runner takes longer than 20 ms
+      // to run the effect. Without the fix it never appears at all.
+      const end = Date.now() + 2000;
+      while (!seen && Date.now() < end) await sleep(10);
       assert.ok(seen, 'manager still null after mount');
     } finally {
       r.unmount();
