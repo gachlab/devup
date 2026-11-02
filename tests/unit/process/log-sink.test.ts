@@ -88,3 +88,33 @@ describe('LogSink', () => {
     }
   });
 });
+
+describe('LogSink: review of #141', () => {
+  it('rotation keeps the buffered lines and logs no write errors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'devup-sink-'));
+    const sink = new LogSink({ projectName: 'rot', rootDir: root, maxLogBytes: 2000 });
+    for (let i = 0; i < 200; i++) sink.write('svc', `line ${i}`);
+    await sink.close();
+    const dir = join(root, 'rot');
+    const cur = readFileSync(join(dir, 'svc.log'), 'utf8').trim().split('\n');
+    const prev = readFileSync(join(dir, 'svc.log.prev'), 'utf8').trim().split('\n').filter(Boolean);
+    assert.ok(prev.length > 0, 'the burst crossing the limit vanished from .prev');
+    assert.match(cur.at(-1)!, /line 199$/);
+    // Contiguous: the last line of .prev is the one right before the first of .log.
+    const n = (l: string) => Number(/line (\d+)$/.exec(l)![1]);
+    assert.equal(n(prev.at(-1)!), n(cur[0]!) - 1);
+    assert.equal(existsSync(join(dir, 'devup.log')), false, 'write errors were logged');
+  });
+
+  it('a write after close() is dropped, not a reopen that rotates the session away', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'devup-sink-'));
+    const sink = new LogSink({ projectName: 'late', rootDir: root });
+    sink.write('ext:db', 'session line');
+    await sink.close();
+    sink.write('ext:db', 'late line');
+    await new Promise(r => setTimeout(r, 50));
+    const dir = join(root, 'late');
+    assert.match(readFileSync(join(dir, 'ext_db.log'), 'utf8'), /session line/);
+    assert.equal(existsSync(join(dir, 'ext_db.log.prev')), false);
+  });
+});

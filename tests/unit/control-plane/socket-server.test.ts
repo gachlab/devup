@@ -967,3 +967,61 @@ describe('remote', { skip: !isUnix }, () => {
     } finally { await close(); }
   });
 });
+
+describe('socket server: review of #141', { skip: !isUnix }, () => {
+  it('a follow whose client left during the replay does not keep a subscription', async () => {
+    let live = 0;
+    const ctx = noopCtx({
+      tailLogs: async () => { await new Promise(r => setTimeout(r, 200)); return { lines: ['old'], oldestRetained: null, truncated: false }; },
+      watchLogs: () => { live++; return () => { live--; }; },
+    });
+    const srv = await tmpServer(ctx);
+    try {
+      const c = createConnection(srv.path);
+      await new Promise(r => c.once('connect', r));
+      c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: { svc: 'api', tail: 10 } }) + '\n');
+      c.destroy();
+      await new Promise(r => setTimeout(r, 400));
+      assert.equal(live, 0, 'a listener stayed on every log line for good');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a follower that stops reading is dropped instead of buffered without limit', async () => {
+    const sub: { emit: ((svc: string, line: string) => void) | null } = { emit: null };
+    const ctx = noopCtx({ watchLogs: (_s, onLine) => { sub.emit = onLine; return () => { sub.emit = null; }; } });
+    const srv = await tmpServer(ctx);
+    try {
+      const c = createConnection(srv.path);
+      await new Promise(r => c.once('connect', r));
+      c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: {} }) + '\n');
+      await new Promise(r => setTimeout(r, 100));
+      c.pause();
+      const line = 'x'.repeat(64 * 1024);
+      for (let i = 0; i < 400 && sub.emit; i++) sub.emit('api', line); // ~25 MB
+      // A paused client does not see the close until it reads again; the
+      // server side is what matters — it dropped the client and its listener.
+      await new Promise(r => setTimeout(r, 200));
+      assert.equal(sub.emit, null, 'the slow follower is still being buffered for');
+      c.destroy();
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('refuses to take over a socket another devup is still serving', async () => {
+    const srv = await tmpServer(noopCtx());
+    try {
+      let err: unknown = null;
+      // Closed if it wrongly succeeds, so a regression fails instead of hanging.
+      const dup = await startSocketServer('dup', noopCtx(), { path: srv.path }).catch(e => { err = e; return null; });
+      if (dup) await dup.close();
+      assert.match(String(err), /already serving/);
+      const pong = await rpcCall(srv.path, { id: 1, method: 'ping' });
+      assert.equal(pong.result.ok, true, 'the first server lost its socket');
+    } finally {
+      await srv.close();
+    }
+  });
+});
