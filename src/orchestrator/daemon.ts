@@ -35,6 +35,7 @@ import { restartService } from '../process/restart-service.js';
 import { debugService } from '../process/debug-service.js';
 import { onFatal } from '../process/teardown.js';
 import { ProxySync } from '../proxy-config/sync.js';
+import { managedServices } from '../config/selection.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
 const sanitize = (n: string) => n.replace(SAFE, '_').replace(/^_+|_+$/g, '') || 'devup';
@@ -190,10 +191,14 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
     // from an environment must not also be spawned here, and must not be given
     // a lazy proxy on the port the remote proxy is about to bind.
     let localServices = services;
+    // Fixed for the run: which services are remote is decided here, at boot,
+    // and a config reload does not re-decide it (see `managedServices`).
+    const remoteAtBoot = new Set<string>();
     if (cliArgs.remote) {
       const selection = parseRemoteSelection(cliArgs.remote, config.environments);
       const classification = classifyRemote(config.services, services, selection, config.proxy?.routes);
       localServices = classification.local;
+      for (const s of services) if (!localServices.includes(s)) remoteAtBoot.add(s.name);
       startRemoteServices({
         mgr, classification, proxies: remoteProxies,
         colorIdxStart: config.services.length,
@@ -282,7 +287,8 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         stopConfigWatcher = watchConfig({
           configPath, baseCwd, manager: mgr, lazyProxies, envFile: cliArgs.envFile,
           lazyTimeout: cliArgs.lazyTimeout,
-          baseline: config.services,
+          baseline: localServices,
+          select: cfg => managedServices(cfg, cliArgs, remoteAtBoot),
           log: msg => writeDevupLog(msg),
         });
       } catch (e: any) {

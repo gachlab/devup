@@ -1,7 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+
+const requireFromHere = createRequire(import.meta.url);
 import type { DevStackConfig } from './types.js';
 
 const CONFIG_NAMES = [
@@ -67,6 +70,13 @@ export interface LoadConfigOpts {
    *  one thing `--env` exists to prevent. A `.ts` config reading
    *  `process.env.DB_URL` now sees the test value too. */
   envFile?: string;
+  /** Bypass Node's module cache. `import()` of a URL it has seen returns the
+   *  first module for the life of the process, so every `--watch-config`
+   *  reload of a `.ts`/`.js` config evaluated the original file — edits were
+   *  diffed against themselves and silently did nothing. Each fresh load keeps
+   *  one more module alive; a reload per save is a small price. Modules the
+   *  config imports itself are still cached. */
+  fresh?: boolean;
 }
 
 export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}): Promise<DevStackConfig> {
@@ -91,7 +101,16 @@ export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}):
     return JSON.parse(raw) as DevStackConfig;
   }
 
-  const url = pathToFileURL(configPath).href;
+  let url = pathToFileURL(configPath).href;
+  if (opts.fresh) {
+    const { mtimeMs, size } = statSync(configPath);
+    url += `?devup-reload=${mtimeMs}-${size}-${Date.now()}`;
+    // A CommonJS config (`module.exports`, or a `.cjs`) goes through the CJS
+    // loader, which caches by filename and ignores the query: drop its entry.
+    // Keyed by real path — on macOS the temp dir alone is a symlink away.
+    delete requireFromHere.cache[configPath];
+    try { delete requireFromHere.cache[realpathSync(configPath)]; } catch { /* stat above already passed */ }
+  }
   const mod = await import(url);
   const config = mod.default ?? mod;
 

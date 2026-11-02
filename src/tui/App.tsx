@@ -26,6 +26,7 @@ import type { LazyProxy } from '../lazy/proxy.js';
 import { stopExternals, type ExternalProc } from '../process/external.js';
 import { onFatal } from '../process/teardown.js';
 import { restartService } from '../process/restart-service.js';
+import { resolveRemote } from '../remote/classifier.js';
 
 /** Builds the URL to open in the browser when the user picks a service.
  *  Honors the proxy + TLS settings: if --proxy is active and the service has
@@ -142,7 +143,18 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   teardownRef.current = teardown;
   useEffect(() => onFatal(() => teardownRef.current()), []);
 
-  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services, lazyProxies);
+  // The run's own selection, not the whole file: a reload that diffs the file
+  // starts what `--skip` / `--profile` left out. The remote split is decided
+  // once, here, the way the boot decides it — index.ts has already exited on
+  // a `--remote` that does not resolve, so this cannot throw.
+  const { managed, remoteAtBoot } = useMemo(() => {
+    const local = resolveRemote(config, services, cliArgs.remote)?.local ?? services;
+    return {
+      managed: local,
+      remoteAtBoot: new Set(services.filter(s => !local.includes(s)).map(s => s.name)),
+    };
+  }, [config, services, cliArgs.remote]);
+  useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, managed, lazyProxies, remoteAtBoot);
   useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled, msg => pm.pushLog('devup', msg, 5), lazyProxies);
