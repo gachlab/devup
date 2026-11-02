@@ -11,6 +11,13 @@ const platform: Platform = {
 };
 const env = {};
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** Polls until `get()` matches or `ms` passes; returns the last value. */
+async function waitFor(get: () => string, want: RegExp, ms: number): Promise<string> {
+  const end = Date.now() + ms;
+  let v = get();
+  while (!want.test(v) && Date.now() < end) { await sleep(5); v = get(); }
+  return v;
+}
 
 describe('useProcessManager', () => {
   it('exposes the manager after mount without waiting for an unrelated update', async () => {
@@ -77,18 +84,23 @@ describe('pause and the flush queue', () => {
     }
     const r = render(<Probe />);
     try {
-      await sleep(10);
+      const end = Date.now() + 2000;
+      while (!api && Date.now() < end) await sleep(10);
       api!.pushLog('svc', 'A');
       api!.setPaused(true);
-      await sleep(5);
-      assert.match(r.lastFrame() ?? '', /^A$/, 'A was queued before the pause and must be on screen');
+      // Bounded below the flush interval: without the synchronous flush, A
+      // would only show up once its own timer fired.
+      const frame = () => r.lastFrame() ?? '';
+      assert.match(await waitFor(frame, /^A$/, LOG_FLUSH_MS - 10), /^A$/,
+        'A was queued before the pause and must be on screen');
       api!.pushLog('svc', 'B');
       await sleep(LOG_FLUSH_MS * 2);
       assert.match(r.lastFrame() ?? '', /^A$/, 'nothing lands while paused');
       api!.setPaused(false);
       api!.pushLog('svc', 'C');
-      await sleep(LOG_FLUSH_MS * 2);
-      assert.equal(r.lastFrame(), 'A,B,C');
+      // Polled: C rides the flush timer, which a loaded runner can delay well
+      // past two intervals.
+      assert.equal(await waitFor(frame, /^A,B,C$/, 2000), 'A,B,C');
     } finally {
       r.unmount();
     }
