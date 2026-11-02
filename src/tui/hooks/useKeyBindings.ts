@@ -61,10 +61,13 @@ export function useKeyBindings(opts: {
   onQuit: () => void;
   onClearLogs: () => void;
   onToggleProxy: () => void;
+  /** Whether proxy sync starts on. `devup --proxy` means "write the file":
+   *  the TUI used to wait for `T` while the daemon wrote at once. */
+  initialProxyEnabled?: boolean;
 }) {
   const [state, setState] = useState<KeyState>({
     panel: 'logs', modal: 'none', logFilter: null, searchTerm: null,
-    logsPaused: false, showTimestamps: false, sortIdx: 0, proxyEnabled: false,
+    logsPaused: false, showTimestamps: false, sortIdx: 0, proxyEnabled: opts.initialProxyEnabled ?? false,
     logsScrollOffset: 0, statsScrollOffset: 0, levelFilter: 'all', verboseStats: false,
   });
 

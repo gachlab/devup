@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { LAZY_PORT_OFFSET, type DevStackConfig } from './types.js';
+import { routerName } from '../proxy-config/traefik.js';
 
 export interface ValidationError {
   field: string;
@@ -212,6 +213,25 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
   }
   if (config.proxy?.tls !== undefined && typeof config.proxy.tls !== 'boolean') {
     errors.push({ field: 'proxy.tls', message: `Invalid tls: ${String(config.proxy.tls)} (must be true or false)` });
+  }
+  for (const key of ['domain', 'certResolver'] as const) {
+    const v = config.proxy?.[key];
+    if (v !== undefined && !(typeof v === 'string' && v.trim())) {
+      errors.push({ field: `proxy.${key}`, message: `Invalid ${key}: ${String(v)} (must be a non-empty string)` });
+    }
+  }
+  // Two services that become the same Traefik router: one would silently
+  // overwrite the other's route.
+  if (config.proxy?.provider === 'traefik' && config.proxy.routes) {
+    const seen = new Map<string, string>();
+    for (const name of Object.keys(config.proxy.routes)) {
+      const key = routerName(name);
+      const other = seen.get(key);
+      if (other !== undefined) {
+        errors.push({ field: 'proxy.routes', message: `"${other}" and "${name}" both become Traefik router "${key}" — rename one` });
+      }
+      seen.set(key, name);
+    }
   }
   const entrypoint = config.proxy?.entrypoint;
   if (entrypoint !== undefined && !(typeof entrypoint === 'string' && entrypoint.trim())) {

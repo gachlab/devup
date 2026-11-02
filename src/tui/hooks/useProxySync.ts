@@ -1,36 +1,32 @@
 import { useEffect, useRef } from 'react';
-import type { ProxyConfigProvider, ProxyOpts, ServiceState } from '../../proxy-config/types.js';
+import type { ProxyConfigProvider, ProxyOpts } from '../../proxy-config/types.js';
 import type { ProcessState } from '../../process/types.js';
+import { ProxySync } from '../../proxy-config/sync.js';
 
+/** Keeps the proxy config file in step while sync is enabled, and clears it
+ *  when sync is turned off, so the proxy does not keep routing to a stack
+ *  nobody is maintaining routes for. Clearing on exit is the App's teardown —
+ *  `process.exit` does not run effect cleanups. */
 export function useProxySync(
   provider: ProxyConfigProvider | null,
   opts: ProxyOpts | null,
   states: Map<string, ProcessState>,
   enabled: boolean,
-) {
+  log?: (msg: string) => void,
+): void {
   const statesRef = useRef(states);
-  const lastContentRef = useRef<string | null>(null);
   statesRef.current = states;
+  const logRef = useRef(log);
+  logRef.current = log;
 
   useEffect(() => {
     if (!provider || !opts || !enabled) return;
-
-    const sync = () => {
-      const svcStates = new Map<string, ServiceState>();
-      for (const [name, st] of statesRef.current) {
-        svcStates.set(name, { port: st.svc.port, health: st.health, realPort: st.svc.realPort });
-      }
-      const content = provider.generate(svcStates, opts);
-      if (content === lastContentRef.current) return;
-      lastContentRef.current = content;
-      provider.write(content, opts);
-    };
-
-    sync();
-    const id = setInterval(sync, 3000);
+    const sync = new ProxySync(provider, opts, () => statesRef.current, msg => logRef.current?.(msg));
+    sync.sync();
+    const id = setInterval(() => sync.sync(), 3000);
     return () => {
       clearInterval(id);
-      lastContentRef.current = null;
+      sync.clear();
     };
   }, [provider, opts, enabled]);
 }

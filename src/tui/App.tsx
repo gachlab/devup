@@ -76,6 +76,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     onQuit: () => { void shutdown(); },
     onClearLogs: pm.clearLogs,
     onToggleProxy: () => {},
+    initialProxyEnabled: !!proxyProvider && !!proxyOpts,
   });
 
   // Both memoised because they are `useControlPlane` effect deps, and a fresh
@@ -118,10 +119,15 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         });
         externals.current = [];
       }
+      // Routes to a stack that is going away. `process.exit` skips effect
+      // cleanups, so useProxySync's own clear never runs on quit.
+      if (proxyProvider && proxyOpts && proxyEnabledRef.current) {
+        try { proxyProvider.clear(proxyOpts); } catch { /* best-effort on the way out */ }
+      }
       await logSink?.close();
     })();
     return teardownRun.current;
-  }, [pm, logSink, platform, baseCwd, env, socketServer]);
+  }, [pm, logSink, platform, baseCwd, env, socketServer, proxyProvider, proxyOpts]);
 
   const shutdown = useCallback(async () => {
     await teardown();
@@ -139,7 +145,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services, lazyProxies);
   useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
-  useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
+  useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled, msg => pm.pushLog('devup', msg, 5));
   useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
     { lazyProxies, remoteProxies, externals, bootAbort }, pm.pushLog);
 

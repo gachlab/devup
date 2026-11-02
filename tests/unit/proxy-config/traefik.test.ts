@@ -52,10 +52,21 @@ describe('TraefikProvider', () => {
     assert.ok(yaml.includes('http://127.0.0.1:3000'));
   });
 
-  it('uses realPort when available', () => {
-    const services = new Map<string, ServiceState>([['app-api', { port: 3000, health: 'up', realPort: 13000 }]]);
+  it('routes to the port it is given — routableStates decides which one', () => {
+    const services = new Map<string, ServiceState>([['app-api', { port: 3000, health: 'up' }]]);
     const yaml = provider.generate(services, baseOpts);
-    assert.ok(yaml.includes(':13000'));
+    assert.ok(yaml.includes(':3000'));
+  });
+
+  it('lower-cases router names instead of turning capitals into dashes', () => {
+    const yaml = provider.generate(new Map([['Api', { port: 3000, health: 'up' }]]), { ...baseOpts, routes: { Api: 'api' } });
+    assert.match(yaml, /^ {4}api:$/m);
+    assert.doesNotMatch(yaml, /-pi:/);
+  });
+
+  it('uses the configured certResolver', () => {
+    const yaml = provider.generate(new Map([['app-web', svc('up', 4201)]]), { ...baseOpts, tls: true, certResolver: 'internal' });
+    assert.ok(yaml.includes('certResolver: internal'));
   });
 
   it('includes TLS when enabled', () => {

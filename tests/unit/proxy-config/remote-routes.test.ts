@@ -34,11 +34,10 @@ describe('reverse-proxy routes for a remote service', () => {
   });
 
   it('never applies the lazy port offset to a remote service', () => {
-    // A remote service is not rewritten, so `realPort` is undefined and `port`
-    // is already the real one. If it ever carried an offset the generated
-    // upstream would point at a port nothing is listening on.
+    // The remote proxy listens on the service's own port. If the upstream
+    // ever carried an offset it would point at a port nothing listens on.
     const states = new Map<string, ServiceState>([
-      ['check-in-api', { port: 3050, health: 'up', realPort: undefined }],
+      ['check-in-api', { port: 3050, health: 'up' }],
     ]);
     const out = new TraefikProvider().generate(states, opts);
     assert.ok(!out.includes('13050'), out);

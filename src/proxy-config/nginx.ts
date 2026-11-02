@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { writeAtomic } from './write.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
 
 const EMPTY_CONFIG = '# devup: no healthy services\n';
@@ -18,7 +17,7 @@ export class NginxProvider implements ProxyConfigProvider {
       if (sub === undefined) continue;
 
       const serverName = sub ? `${sub}.${opts.domain}` : opts.domain;
-      const port = st.realPort ?? st.port;
+      const port = st.port;
       const listen = opts.tls ? '443 ssl' : '80';
 
       const tlsBlock = opts.tls
@@ -50,9 +49,7 @@ export class NginxProvider implements ProxyConfigProvider {
   }
 
   write(content: string, opts: ProxyOpts): void {
-    const dir = dirname(opts.confPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(opts.confPath, content);
+    writeAtomic(opts.confPath, content);
   }
 
   clear(opts: ProxyOpts): void {

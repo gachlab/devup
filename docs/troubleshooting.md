@@ -93,7 +93,7 @@ If services ARE healthy but the file is still empty:
 
 - Confirm `--proxy` is passed (without it, devup never writes the file).
 - Confirm `proxy.routes` includes the services you expect.
-- Confirm the project root has `DOMAIN` (or `GUESTHUB_DOMAIN`) in env or `.env`. devup falls back to `localhost` otherwise.
+- Confirm `proxy.domain` is set in the config, or `DOMAIN` in the env / `.env`. devup falls back to `localhost` otherwise. (`GUESTHUB_DOMAIN` is still read, with a deprecation warning.)
 
 ### Browser opens to `http://localhost:<port>` instead of `https://<sub>.<domain>`
 

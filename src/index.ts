@@ -26,6 +26,7 @@ import { readVersion } from './utils/version.js';
 import { runExec, ownArgsFor, daemonChildArgs } from './orchestrator/exec.js';
 import type { ProxyConfigProvider, ProxyOpts } from './proxy-config/types.js';
 import { projectDirOf } from './config/paths.js';
+import { resolveProxyDomain } from './proxy-config/domain.js';
 
 // Re-export for config files
 export { defineConfig } from './config/types.js';
@@ -227,11 +228,12 @@ async function main() {
     proxyProvider = detectProxyProvider(config.proxy.provider);
     proxyOpts = {
       host: cliArgs.proxyHost ?? config.proxy.host ?? platform.defaultTraefikHost,
-      domain: env['GUESTHUB_DOMAIN'] ?? env['DOMAIN'] ?? 'localhost',
+      domain: resolveProxyDomain(config.proxy, env),
       routes: config.proxy.routes,
       tls: cliArgs.proxyTls,
       entrypoint: cliArgs.proxyEntrypoint,
       confPath: cliArgs.proxyConf ?? config.proxy.confPath ?? join(homedir(), '.traefik', 'traefik_conf.yaml'),
+      certResolver: config.proxy.certResolver,
     };
   }
 

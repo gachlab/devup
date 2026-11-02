@@ -103,4 +103,4 @@ If `svc.port + 10000` collides with another service's port, devup catches it at 
 
 ## Programmatic implications
 
-When devup writes the reverse-proxy config (Traefik, Nginx, Caddy), lazy services use their **real port** (`port + 10000`) as the upstream so the proxy talks directly to the service, not through devup's TCP relay. devup's TCP proxy stays bound on the public port for local clients that don't go through the reverse proxy.
+When devup writes the reverse-proxy config (Traefik, Nginx, Caddy), a lazy service is routed to its **public port** — devup's lazy proxy — and is always routed, asleep or awake. A request by domain wakes it, and domain traffic counts as activity for the idle timer. (Before 0.20.0 the upstream was the real port, `port + 10000`, and only while healthy: a sleeping service got a 404 by domain and never woke, and a service used only through its domain was put to sleep while in use.)
