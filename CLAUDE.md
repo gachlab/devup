@@ -61,6 +61,7 @@ because it trusted it.
 The types are now public as `@gachlab/devup/client`, so the extension's copy
 *could* go away — until it does, it is still a copy, and still drifts.
 
+The `"."` export is `src/lib.ts` — side-effect free; keep the CLI out of it.
 A new subpath export needs **two** edits, not one: the `exports` map in
 `package.json` *and* an entry in `tsup.config.ts`. `tsc --emitDeclarationOnly`
 writes a `.d.ts` for every file under `src/`, but tsup only bundles the entries

@@ -24,7 +24,9 @@ export default defineConfig([
     // Published as `@gachlab/devup/client`. Keep the output path in step with
     // the `exports` map in package.json and with `tsc --emitDeclarationOnly`,
     // which puts the .d.ts alongside it.
+    // `lib` is the package's "." entry (see src/lib.ts). A new subpath export
+    // needs an entry here *and* in package.json's `exports` (CLAUDE.md §4).
     ...shared,
-    entry: { 'control-plane/client': 'src/control-plane/client.ts' },
+    entry: { lib: 'src/lib.ts', 'control-plane/client': 'src/control-plane/client.ts' },
   },
 ]);

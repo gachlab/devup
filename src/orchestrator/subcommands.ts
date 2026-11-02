@@ -722,6 +722,9 @@ export async function runCtl(argv: string[], opts: CtlOpts): Promise<number> {
 interface ConfigSubOpts {
   cwd: string;
   configPath?: string;
+  /** `--env`, absolute: `config show` and `validate` must see the config as
+   *  the run would — evaluated against the same env file. */
+  envFile?: string;
   out?: (line: string) => void;
 }
 
@@ -742,8 +745,13 @@ export async function runConfig(argv: string[], opts: ConfigSubOpts): Promise<nu
   catch (e: any) { out(`❌ ${e.message}`); return 1; }
 
   let config: DevStackConfig;
-  try { config = await loadConfig(cfgPath); }
-  catch (e: any) { out(`❌ failed to load config: ${e.message}`); return 1; }
+  try { config = await loadConfig(cfgPath, { envFile: opts.envFile }); }
+  catch (e: any) {
+    // `--json` promises JSON, broken config or not: a pipeline parses it.
+    if (subcmd === 'validate' && json) out(JSON.stringify({ valid: false, errors: [`failed to load config: ${e.message}`], warnings: [] }, null, 2));
+    else out(`❌ failed to load config: ${e.message}`);
+    return 1;
+  }
 
   if (subcmd === 'validate') {
     const errors = validateConfig(config, projectDirOf(cfgPath));

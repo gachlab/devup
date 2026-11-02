@@ -5,6 +5,7 @@ import type { ServiceState } from '../proxy-config/types.js';
 import { groupByPhase, buildProcessArgs, buildProcessEnv } from '../utils.js';
 import { classifyServices, rewriteServicePort, getLazyRealPort } from '../lazy/classifier.js';
 import { classifyRemote, parseRemoteSelection, type RemoteClassification } from '../remote/classifier.js';
+import { redactSecrets } from '../utils/redact.js';
 
 export interface DryRunOpts {
   config: DevStackConfig;
@@ -115,8 +116,9 @@ function formatService(svc: ServiceConfig, env: Record<string, string>, isLazy: 
   const args = buildProcessArgs(svc);
   const cmdLine = [svc.cmd, ...args].join(' ');
   const built = buildProcessEnv(svc, env);
+  // Redacted, like `devup config show`: a dry run is what ends up in a CI log.
   const extraEnv = Object.keys(svc.extraEnv ?? {}).length
-    ? '  env=' + Object.entries(svc.extraEnv!).map(([k, v]) => `${k}=${v}`).join(' ')
+    ? '  env=' + Object.entries(redactSecrets(svc.extraEnv)).map(([k, v]) => `${k}=${v}`).join(' ')
     : '';
   const memTag = svc.maxMem ? ` mem=${svc.maxMem}MB` : '';
   const hc = svc.healthCheck;
