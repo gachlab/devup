@@ -49,7 +49,9 @@ export class LogSink {
 
     const stream = this.streamFor(svcName);
     stream.write(entry, err => {
-      if (err && svcName !== 'devup') {
+      // Not after close: reporting it would reopen `devup.log` as if new,
+      // rotating the session's log away — the very thing `closed` prevents.
+      if (err && svcName !== 'devup' && !this.closed) {
         // Surface write errors (disk full, permissions) without infinite recursion.
         this.streamFor('devup').write(
           `${new Date().toISOString()} ⚠ log write error for "${svcName}": ${err.message}\n`,

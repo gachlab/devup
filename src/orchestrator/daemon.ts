@@ -10,7 +10,7 @@ import { calcCpuPercent } from '../utils.js';
 import { Broadcaster } from '../utils/broadcaster.js';
 import { systemLoad } from '../utils/system-load.js';
 import { buildProxyInfo, computeServiceStats, seedServiceStats } from '../utils/stats.js';
-import { startSocketServer, type SocketServerHandle } from '../control-plane/socket-server.js';
+import { defaultSocketPath, startSocketServer, socketAnswers, type SocketServerHandle } from '../control-plane/socket-server.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
 import { releaseLazyProxy } from '../lazy/classifier.js';
 import type { LazyProxy } from '../lazy/proxy.js';
@@ -173,6 +173,15 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   });
 
   try {
+    // Before anything is spawned: a TUI for the same stack writes no pid file,
+    // so the parent's pid guard cannot see it, and finding out at the control
+    // plane — after every external and service had been started and had
+    // fought the TUI for its ports — was the expensive way.
+    const sockPath = defaultSocketPath(projectName);
+    if (await socketAnswers(sockPath)) {
+      throw new Error(`another devup is already serving ${sockPath} — stop it, or use --instance <name>`);
+    }
+
     // ── Externals (DBs, queues) — must be healthy before phase 0 ──
     if (config.external?.length) {
       writeDevupLog(`▶ externals (${config.external.length})`);

@@ -12,7 +12,7 @@ devup exposes a local JSON-RPC server over a Unix-domain socket. It's the founda
 
 The project name is sanitised (`/`, spaces, etc. replaced with `_`). The socket is created when devup boots and deleted when devup exits cleanly. A stale socket left by a crashed previous run is removed before the new server binds; one that still answers belongs to a live devup, and the new server refuses to take it (use `--instance` for a second stack).
 
-A streaming client that stops reading is disconnected once more than 8 MB is waiting for it; reconnect and replay with `since`.
+A `logs.follow` client that stops reading keeps its connection: once more than 8 MB of live lines is waiting for it, further lines are skipped, and when it catches up it receives one ordinary `log` frame (`svc: "devup"`) saying how many. The replay is paced to the client instead.
 
 If `listen()` fails (perms, missing parent directory, port-already-in-use on the inode), devup logs a single warning and keeps running without the control plane.
 

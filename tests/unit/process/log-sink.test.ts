@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LogSink } from '../../../src/process/log-sink.js';
@@ -116,5 +116,21 @@ describe('LogSink: review of #141', () => {
     const dir = join(root, 'late');
     assert.match(readFileSync(join(dir, 'ext_db.log'), 'utf8'), /session line/);
     assert.equal(existsSync(join(dir, 'ext_db.log.prev')), false);
+  });
+});
+
+describe('LogSink: a write that fails while closing', () => {
+  it('is not reported into a reopened devup.log, which would rotate the session away', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'devup-sink-'));
+    const sink = new LogSink({ projectName: 'p', rootDir: root });
+    sink.write('devup', 'session line');
+    const dir = join(root, 'p');
+    // A log path that cannot be opened: its write fails asynchronously.
+    symlinkSync('/nonexistent-devup-dir/x', join(dir, 'bad.log'));
+    sink.write('bad', 'hello');
+    await sink.close();
+    await new Promise(r => setTimeout(r, 200));
+    assert.match(readFileSync(join(dir, 'devup.log'), 'utf8'), /session line/);
+    assert.equal(existsSync(join(dir, 'devup.log.prev')), false);
   });
 });

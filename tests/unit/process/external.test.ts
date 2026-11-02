@@ -137,7 +137,8 @@ describe('external output', { skip: !isUnix }, () => {
       baseCwd: process.cwd(), env: { ...process.env as Record<string, string> },
       platform: new LinuxPlatform(), onLog: (_svc, msg) => logs.push(msg),
     });
-    await new Promise(r => setTimeout(r, 300));
+    const end = Date.now() + 10000;
+    while (!(logs.includes('one') && logs.includes('two')) && Date.now() < end) await new Promise(r => setTimeout(r, 50));
     assert.ok(logs.includes('one') && logs.includes('two'), logs.join(' | '));
     await stopExternals(result.procs, new LinuxPlatform(), { baseCwd: process.cwd(), env: {} });
   });

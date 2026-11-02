@@ -229,13 +229,15 @@ async function handleFollow(
       for (const l of lines) {
         // `svc` on the replay too: a client routing by frame.svc would drop or
         // misattribute the whole tail otherwise.
-        respond(socket, { id: req.id, event: 'log', data: l, svc: svcName });
+        // Paced: up to 1000 lines of any length go out at once, faster than
+        // any socket drains, so the replay waits for the client rather than
+        // piling up — it is bounded, and the client is reading.
+        await respondPaced(socket, { id: req.id, event: 'log', data: l, svc: svcName });
+        if (socket.destroyed) return;
       }
     }
 
-    const unsub = ctx.watchLogs(svcName, (svc, line) => {
-      respond(socket, { id: req.id, event: 'log', data: line, svc });
-    });
+    const unsub = ctx.watchLogs(svcName, logFeed(socket, req.id));
     keep(unsub);
 
   } else if (req.method === 'status.follow') {
@@ -311,19 +313,42 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
   };
 }
 
-/** How much may sit unsent for one client before it is dropped. */
+/** How much live log output may sit unsent for one follower. */
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 
 function respond(socket: Socket, payload: object): void {
-  if (!socket.writable) return;
-  // A follower that stops reading — `devup ctl logs -f | less` while paused, a
-  // hung extension — made the daemon buffer every line for it, without limit.
-  // Dropped instead: it can reconnect and replay with `--since`.
-  if (socket.writableLength > MAX_BUFFERED_BYTES) {
-    socket.destroy();
-    return;
-  }
-  socket.write(JSON.stringify(payload) + '\n');
+  if (socket.writable) socket.write(JSON.stringify(payload) + '\n');
+}
+
+/** Write, then wait until the socket can take more. */
+function respondPaced(socket: Socket, payload: object): Promise<void> {
+  if (!socket.writable) return Promise.resolve();
+  if (socket.write(JSON.stringify(payload) + '\n')) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => { socket.off('drain', done); socket.off('close', done); resolve(); };
+    socket.once('drain', done);
+    socket.once('close', done);
+  });
+}
+
+/** The live half of `logs.follow`. A follower that stops reading — `devup ctl
+ *  logs -f | less` while paused, a hung extension — made the daemon buffer
+ *  every line for it, without limit. Past the cap, lines are skipped instead,
+ *  and once the client catches up it is told how many, as an ordinary `log`
+ *  frame. The connection stays: the VS Code extension does not reconnect a
+ *  closed log stream, and dropping it would end the user's log view. */
+function logFeed(socket: Socket, id: unknown): (svc: string, line: string) => void {
+  let dropped = 0;
+  const onDrain = () => {
+    if (!dropped) return;
+    respond(socket, { id, event: 'log', data: `[devup] ${dropped} line(s) dropped: this client fell behind`, svc: 'devup' });
+    dropped = 0;
+  };
+  socket.on('drain', onDrain);
+  return (svc, line) => {
+    if (socket.writableLength > MAX_BUFFERED_BYTES) { dropped++; return; }
+    respond(socket, { id, event: 'log', data: line, svc });
+  };
 }
 
 /** The RPC methods this daemon serves.
@@ -515,7 +540,7 @@ function stringOrThrow(v: unknown, paramName: string): string {
 }
 
 /** Whether something is listening on a unix socket path. */
-function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
+export function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
   return new Promise(resolve => {
     const c = connect(path);
     const done = (v: boolean) => { clearTimeout(t); c.destroy(); resolve(v); };
