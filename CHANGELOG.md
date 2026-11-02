@@ -5,7 +5,16 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.0] — 2026-11-02
+
+The ten findings of a correctness review (#135–#144), each one adversarially
+reviewed before merge. The sharpest: a missing `cmd` crashed devup and
+orphaned every child, closing the terminal or a CI SIGTERM left the whole stack
+running, and `--env` could not override a key the config's `envFile` also set.
+
+The CLI is now strict — an unknown flag or a bad value fails instead of being
+ignored — and the package root (`@gachlab/devup`) is a side-effect-free library
+entry; the binary is unchanged. See **Changed**.
 
 ### Fixed
 - **A `cmd` that does not exist crashed devup and orphaned the stack** (#135). The main spawn had no `'error'` listener: an ENOENT was an uncaught exception that took down the TUI or the daemon, and every detached child kept running with its port. The service now ends up `crashed` with the error in its `crashLog`, and is not retried: a missing binary will not appear in 2 s.
