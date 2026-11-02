@@ -129,3 +129,17 @@ describe('startExternals: into and signal', { skip: !isUnix }, () => {
     await stopExternals(result.procs, new LinuxPlatform(), { baseCwd: process.cwd(), env: {} });
   });
 });
+
+describe('external output', { skip: !isUnix }, () => {
+  it('is logged line by line, not chunk by chunk', async () => {
+    const logs: string[] = [];
+    const result = await startExternals([{ name: 'chatty', cmd: "printf 'one\\ntwo\\n'" }], {
+      baseCwd: process.cwd(), env: { ...process.env as Record<string, string> },
+      platform: new LinuxPlatform(), onLog: (_svc, msg) => logs.push(msg),
+    });
+    const end = Date.now() + 10000;
+    while (!(logs.includes('one') && logs.includes('two')) && Date.now() < end) await new Promise(r => setTimeout(r, 50));
+    assert.ok(logs.includes('one') && logs.includes('two'), logs.join(' | '));
+    await stopExternals(result.procs, new LinuxPlatform(), { baseCwd: process.cwd(), env: {} });
+  });
+});

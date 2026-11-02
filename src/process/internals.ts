@@ -1,10 +1,16 @@
+import { StringDecoder } from 'node:string_decoder';
+
 /** Buffered line splitter. Calls `onLine` for every newline-terminated chunk,
  *  preserves leftover for the next push. `flush()` emits any remaining tail. */
 export function lineBuffer(onLine: (line: string) => void) {
   let buf = '';
+  // A pipe hands over chunks, not characters: a multi-byte UTF-8 character can
+  // be split across two, and decoding each on its own printed `��`. The
+  // decoder holds the partial bytes until the rest arrives.
+  const decoder = new StringDecoder('utf8');
   return {
     push(chunk: Buffer) {
-      buf += chunk.toString();
+      buf += decoder.write(chunk);
       let idx;
       while ((idx = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, idx).replace(/\r$/, '');
@@ -13,6 +19,7 @@ export function lineBuffer(onLine: (line: string) => void) {
       }
     },
     flush() {
+      buf += decoder.end();
       if (buf.length) { onLine(buf); buf = ''; }
     },
   };

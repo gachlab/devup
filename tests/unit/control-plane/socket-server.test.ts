@@ -967,3 +967,88 @@ describe('remote', { skip: !isUnix }, () => {
     } finally { await close(); }
   });
 });
+
+describe('socket server: review of #141', { skip: !isUnix }, () => {
+  it('a follow whose client left during the replay does not keep a subscription', async () => {
+    let live = 0;
+    const ctx = noopCtx({
+      tailLogs: async () => { await new Promise(r => setTimeout(r, 200)); return { lines: ['old'], oldestRetained: null, truncated: false }; },
+      watchLogs: () => { live++; return () => { live--; }; },
+    });
+    const srv = await tmpServer(ctx);
+    try {
+      const c = createConnection(srv.path);
+      await new Promise(r => c.once('connect', r));
+      c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: { svc: 'api', tail: 10 } }) + '\n');
+      c.destroy();
+      await new Promise(r => setTimeout(r, 400));
+      assert.equal(live, 0, 'a listener stayed on every log line for good');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a follower that stops reading has lines skipped, not the connection, and is told how many', async () => {
+    // Disconnecting it ended the user's log view: the VS Code extension does
+    // not reconnect a closed log stream.
+    const sub: { emit: ((svc: string, line: string) => void) | null } = { emit: null };
+    const ctx = noopCtx({ watchLogs: (_s, onLine) => { sub.emit = onLine; return () => { sub.emit = null; }; } });
+    const srv = await tmpServer(ctx);
+    try {
+      const c = createConnection(srv.path);
+      await new Promise(r => c.once('connect', r));
+      c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: {} }) + '\n');
+      await new Promise(r => setTimeout(r, 100));
+      c.pause();
+      const line = 'x'.repeat(64 * 1024);
+      for (let i = 0; i < 400 && sub.emit; i++) sub.emit('api', line); // ~25 MB
+      assert.ok(sub.emit, 'the follower was disconnected');
+      let notice = false;
+      const rl = createInterface({ input: c });
+      rl.on('line', l => { if (/line\(s\) dropped/.test(l)) notice = true; });
+      c.resume();
+      const end = Date.now() + 5000;
+      while (!notice && Date.now() < end) await new Promise(r => setTimeout(r, 50));
+      assert.ok(notice, 'never told how many lines were skipped');
+      c.destroy();
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a replay of long lines reaches a client that reads normally, in full', async () => {
+    // 1000 replayed lines went out in one loop; with ~9 KB lines that passed
+    // the cap before any drained, and a healthy client was cut mid-frame.
+    const lines = Array.from({ length: 1000 }, (_, i) => `${i} ${'y'.repeat(9000)}`);
+    const ctx = noopCtx({ tailLogs: async () => ({ lines, oldestRetained: null, truncated: false }), watchLogs: () => () => {} });
+    const srv = await tmpServer(ctx);
+    try {
+      const c = createConnection(srv.path);
+      await new Promise(r => c.once('connect', r));
+      let got = 0;
+      createInterface({ input: c }).on('line', l => { if (JSON.parse(l).event === 'log') got++; });
+      c.write(JSON.stringify({ id: 1, method: 'logs.follow', params: { svc: 'api', tail: 1000 } }) + '\n');
+      const end = Date.now() + 10000;
+      while (got < 1000 && Date.now() < end && !c.destroyed) await new Promise(r => setTimeout(r, 50));
+      assert.equal(got, 1000);
+      c.destroy();
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('refuses to take over a socket another devup is still serving', async () => {
+    const srv = await tmpServer(noopCtx());
+    try {
+      let err: unknown = null;
+      // Closed if it wrongly succeeds, so a regression fails instead of hanging.
+      const dup = await startSocketServer('dup', noopCtx(), { path: srv.path }).catch(e => { err = e; return null; });
+      if (dup) await dup.close();
+      assert.match(String(err), /already serving/);
+      const pong = await rpcCall(srv.path, { id: 1, method: 'ping' });
+      assert.equal(pong.result.ok, true, 'the first server lost its socket');
+    } finally {
+      await srv.close();
+    }
+  });
+});

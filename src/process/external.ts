@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { ExternalService } from '../config/types.js';
 import type { Platform } from '../platform/types.js';
 import { checkHealth } from './health.js';
+import { lineBuffer } from './internals.js';
 import { shellCommand } from '../platform/command.js';
 import { serviceDir } from '../config/paths.js';
 
@@ -108,8 +109,14 @@ function spawnExternal(svc: ExternalService, opts: StartExternalsOpts): ChildPro
   const child = spawn(sh.file, sh.args, {
     cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  child.stdout?.on('data', (d: Buffer) => opts.onLog?.(svc.name, d.toString().trimEnd()));
-  child.stderr?.on('data', (d: Buffer) => opts.onLog?.(svc.name, d.toString().trimEnd()));
+  // Line by line, like services: a chunk is not a line, and one chunk used to
+  // be one log entry — several lines glued together, or half of one.
+  const out = lineBuffer(line => opts.onLog?.(svc.name, line));
+  const err = lineBuffer(line => opts.onLog?.(svc.name, line));
+  child.stdout?.on('data', (d: Buffer) => out.push(d));
+  child.stderr?.on('data', (d: Buffer) => err.push(d));
+  child.stdout?.on('end', () => out.flush());
+  child.stderr?.on('end', () => err.flush());
   child.on('error', err => opts.onLog?.(svc.name, `❌ spawn error: ${err.message}`));
   return child;
 }

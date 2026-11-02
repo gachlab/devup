@@ -1,4 +1,4 @@
-import { createServer, type Server, type Socket } from 'node:net';
+import { connect, createServer, type Server, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
 import { existsSync, unlinkSync, chmodSync, mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -84,12 +84,19 @@ export async function startSocketServer(
   const path = opts.path ?? defaultSocketPath(projectName);
   mkdirSync(dirname(path), { recursive: true });
 
-  // Stale socket from a crashed previous run.
+  // A socket file from a run that crashed is stale and goes; one that still
+  // answers belongs to a live devup — a second TUI for the same project, say.
+  // Unlinking that one took its control plane away, and whichever of the two
+  // exited first then deleted the other's socket.
   if (existsSync(path)) {
-    try {
-      const st = statSync(path);
-      if (st.isSocket()) unlinkSync(path);
-    } catch { /* ignore — listen() will surface the real error */ }
+    let isSocket = false;
+    try { isSocket = statSync(path).isSocket(); } catch { /* listen() will say */ }
+    if (isSocket) {
+      if (await socketAnswers(path)) {
+        throw new Error(`another devup is already serving ${path} — use --instance <name> to run a second stack`);
+      }
+      try { unlinkSync(path); } catch { /* listen() will surface the real error */ }
+    }
   }
 
   // Track every active client socket so `close()` can destroy them. Without
@@ -138,6 +145,7 @@ function handleClient(socket: Socket, ctx: RpcContext): void {
     unsubs.clear();
   });
 
+
   rl.on('line', async (line: string) => {
     if (!line.trim()) return;
     let req: { id?: unknown; method?: unknown; params?: unknown };
@@ -177,6 +185,14 @@ async function handleFollow(
   ctx: RpcContext,
   unsubs: Set<() => void>,
 ): Promise<void> {
+  // A subscription made after the client already left — `logs.follow` awaits
+  // a replay of up to 10 MB first — would never be released: 'close' has
+  // fired. Each abandoned follow (the extension reconnecting) used to leave a
+  // listener running on every log line for the life of the daemon.
+  const keep = (unsub: () => void) => {
+    if (socket.destroyed) unsub();
+    else unsubs.add(unsub);
+  };
   if (req.method === 'logs.follow') {
     const rawSvc = params['svc'] ?? params['service'];
     const svcName = rawSvc != null ? stringOrThrow(rawSvc, 'svc') : null;
@@ -213,14 +229,16 @@ async function handleFollow(
       for (const l of lines) {
         // `svc` on the replay too: a client routing by frame.svc would drop or
         // misattribute the whole tail otherwise.
-        respond(socket, { id: req.id, event: 'log', data: l, svc: svcName });
+        // Paced: up to 1000 lines of any length go out at once, faster than
+        // any socket drains, so the replay waits for the client rather than
+        // piling up — it is bounded, and the client is reading.
+        await respondPaced(socket, { id: req.id, event: 'log', data: l, svc: svcName });
+        if (socket.destroyed) return;
       }
     }
 
-    const unsub = ctx.watchLogs(svcName, (svc, line) => {
-      respond(socket, { id: req.id, event: 'log', data: line, svc });
-    });
-    unsubs.add(unsub);
+    const unsub = ctx.watchLogs(svcName, logFeed(socket, req.id));
+    keep(unsub);
 
   } else if (req.method === 'status.follow') {
     respond(socket, { id: req.id, result: { ok: true } });
@@ -237,12 +255,12 @@ async function handleFollow(
     const unsub = ctx.watchStatus((name, state) => {
       respond(socket, { id: req.id, event: 'status', data: [serializeState(name, state)] });
     });
-    unsubs.add(unsub);
+    keep(unsub);
 
     const unsubRemoved = ctx.watchRemoved(name => {
       respond(socket, { id: req.id, event: 'removed', data: [name] });
     });
-    unsubs.add(unsubRemoved);
+    keep(unsubRemoved);
 
   } else {
     // `handleClient` routes here off STREAM_METHODS, so a name added there and
@@ -295,8 +313,42 @@ export function serializeState(name: string, st: ProcessState): ServiceSnapshot 
   };
 }
 
+/** How much live log output may sit unsent for one follower. */
+const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
 function respond(socket: Socket, payload: object): void {
   if (socket.writable) socket.write(JSON.stringify(payload) + '\n');
+}
+
+/** Write, then wait until the socket can take more. */
+function respondPaced(socket: Socket, payload: object): Promise<void> {
+  if (!socket.writable) return Promise.resolve();
+  if (socket.write(JSON.stringify(payload) + '\n')) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => { socket.off('drain', done); socket.off('close', done); resolve(); };
+    socket.once('drain', done);
+    socket.once('close', done);
+  });
+}
+
+/** The live half of `logs.follow`. A follower that stops reading — `devup ctl
+ *  logs -f | less` while paused, a hung extension — made the daemon buffer
+ *  every line for it, without limit. Past the cap, lines are skipped instead,
+ *  and once the client catches up it is told how many, as an ordinary `log`
+ *  frame. The connection stays: the VS Code extension does not reconnect a
+ *  closed log stream, and dropping it would end the user's log view. */
+function logFeed(socket: Socket, id: unknown): (svc: string, line: string) => void {
+  let dropped = 0;
+  const onDrain = () => {
+    if (!dropped) return;
+    respond(socket, { id, event: 'log', data: `[devup] ${dropped} line(s) dropped: this client fell behind`, svc: 'devup' });
+    dropped = 0;
+  };
+  socket.on('drain', onDrain);
+  return (svc, line) => {
+    if (socket.writableLength > MAX_BUFFERED_BYTES) { dropped++; return; }
+    respond(socket, { id, event: 'log', data: line, svc });
+  };
 }
 
 /** The RPC methods this daemon serves.
@@ -485,4 +537,15 @@ function stringOrThrow(v: unknown, paramName: string): string {
     throw new Error(`param "${paramName}" must be a non-empty string`);
   }
   return v;
+}
+
+/** Whether something is listening on a unix socket path. */
+export function socketAnswers(path: string, timeoutMs = 500): Promise<boolean> {
+  return new Promise(resolve => {
+    const c = connect(path);
+    const done = (v: boolean) => { clearTimeout(t); c.destroy(); resolve(v); };
+    const t = setTimeout(() => done(false), timeoutMs);
+    c.once('connect', () => done(true));
+    c.once('error', () => done(false));
+  });
 }
