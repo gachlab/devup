@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
 import type { Platform } from '../platform/types.js';
 import type { DevStackConfig, ServiceConfig } from '../config/types.js';
@@ -24,6 +24,7 @@ import { switchService } from '../remote/switch.js';
 import { bootEnvName, resolveToggle } from '../remote/toggle.js';
 import type { LazyProxy } from '../lazy/proxy.js';
 import { stopExternals, type ExternalProc } from '../process/external.js';
+import { onFatal } from '../process/teardown.js';
 
 /** Builds the URL to open in the browser when the user picks a service.
  *  Honors the proxy + TLS settings: if --proxy is active and the service has
@@ -68,6 +69,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const remoteProxies = useRef<Map<string, RemoteProxy>>(new Map());
   const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies, remoteProxies);
   const externals = useRef<ExternalProc[]>([]);
+  const bootAbort = useRef(new AbortController());
 
   const kb = useKeyBindings({
     onQuit: () => { void shutdown(); },
@@ -97,28 +99,48 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const proxyActive = useCallback(() => proxyEnabledRef.current, []);
   const socketServer = useControlPlane(pm.manager, config.name, logSink, pm.pushLog, pm.logBus, pm.stateBus, pm.removedBus, lazyProxies, remoteProxies, config, env, platform, proxyCtx, profiles, proxyActive, cliArgs.instance);
 
-  const shutdown = useCallback(async () => {
-    lazyProxies.current.forEach(p => p.destroy());
-    remoteProxies.current.forEach(p => p.destroy());
-    await socketServer.current?.close();
-    await pm.cleanup();
-    if (externals.current.length) {
-      await stopExternals(externals.current, platform, {
-        baseCwd, env,
-        onLog: (svc, msg) => pm.pushLog(`ext:${svc}`, msg, 12),
-      });
-      externals.current = [];
-    }
-    await logSink?.close();
-    process.exit(0);
+  // One teardown, however many ways in: `q`, Ctrl+C, a signal and a crash can
+  // all arrive close together, and running it twice destroys proxies and
+  // closes the log sink under the first run.
+  const teardownRun = useRef<Promise<void> | null>(null);
+  const teardown = useCallback((): Promise<void> => {
+    teardownRun.current ??= (async () => {
+      bootAbort.current.abort();
+      lazyProxies.current.forEach(p => p.destroy());
+      remoteProxies.current.forEach(p => p.destroy());
+      await socketServer.current?.close();
+      await pm.cleanup();
+      if (externals.current.length) {
+        await stopExternals(externals.current, platform, {
+          baseCwd, env,
+          onLog: (svc, msg) => pm.pushLog(`ext:${svc}`, msg, 12),
+        });
+        externals.current = [];
+      }
+      await logSink?.close();
+    })();
+    return teardownRun.current;
   }, [pm, logSink, platform, baseCwd, env, socketServer]);
+
+  const shutdown = useCallback(async () => {
+    await teardown();
+    process.exit(0);
+  }, [teardown]);
+
+  // Ink only sees Ctrl+C as a key while stdin is a raw TTY. Closing the
+  // terminal (SIGHUP), a `kill` (SIGTERM), SIGINT without a TTY, or a throw
+  // anywhere in the app all bypassed `shutdown` — and every service, detached
+  // in its own process group, kept running with its port.
+  const teardownRef = useRef(teardown);
+  teardownRef.current = teardown;
+  useEffect(() => onFatal(() => teardownRef.current()), []);
 
   useHotReload(pm.manager, cliArgs, baseCwd, pm.pushLog, config.services, lazyProxies);
   useLogsPause(pm.setPaused, kb.logsPaused, kb.logsScrollOffset);
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
   useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
-    { lazyProxies, remoteProxies, externals }, pm.pushLog);
+    { lazyProxies, remoteProxies, externals, bootAbort }, pm.pushLog);
 
   const handleFilterSelect = useCallback((name: string) => kb.setFilter(name), [kb]);
   const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);

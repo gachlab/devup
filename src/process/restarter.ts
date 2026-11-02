@@ -77,6 +77,12 @@ export class Restarter {
     this.events.onStateChange(svc.name, state);
   }
 
+  /** Cancel every queued auto-restart. Shutdown calls this first: a timer that
+   *  fires during the cleanup grace period would spawn a child nobody kills. */
+  cancelAll(): void {
+    for (const name of [...this.pending.keys()]) this.cancel(name);
+  }
+
   /** Cancel a queued auto-restart. Safe to call for a service with none. */
   cancel(name: string): void {
     this.clearPending(name);

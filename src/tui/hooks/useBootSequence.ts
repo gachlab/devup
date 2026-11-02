@@ -15,6 +15,9 @@ interface BootRefs {
   lazyProxies: React.RefObject<Map<string, LazyProxy>>;
   remoteProxies: React.RefObject<Map<string, RemoteProxy>>;
   externals: React.RefObject<ExternalProc[]>;
+  /** Aborted by the App's teardown, so a boot still waiting on an external
+   *  stops waiting and spawns nothing more. */
+  bootAbort: React.RefObject<AbortController>;
 }
 
 /** Orchestrates the boot:
@@ -51,8 +54,10 @@ export function useBootSequence(
         const result = await startExternals(config.external, {
           baseCwd, env, platform,
           onLog: (svc, msg) => pushLog(`ext:${svc}`, msg, 12),
+          // The App's own array, filled as each one is spawned: its teardown
+          // must be able to stop a database that is still starting.
+          into: refs.externals.current!, signal: refs.bootAbort.current!.signal,
         });
-        refs.externals.current = result.procs;
         if (!result.allHealthy) {
           pushLog('devup', `❌ external(s) failed: ${result.failed.join(', ')}. Aborting boot.`, 5);
           return;
@@ -86,10 +91,11 @@ export function useBootSequence(
         onLog: (svc, msg) => pushLog(svc, msg, 5),
       });
     })().catch((e: unknown) => {
-      // Nothing else catches this. There is no `unhandledRejection` handler in
-      // the process, so a throw here killed the foreground TUI with a raw
-      // stack trace over Ink's alternate screen — losing the very message the
-      // throw exists to deliver. `--remote qq` says which environments do
+      // Caught here, not left to `onFatal`'s `unhandledRejection` handler:
+      // that one tears the whole stack down and exits, with the message
+      // printed over Ink's alternate screen — losing the very text the throw
+      // exists to deliver, and a boot error is something to read and fix
+      // without losing the services that did start. `--remote qq` says which environments do
       // exist; a missing `${VAR}` in `headers.set` names the environment and
       // the header. Both are useless printed into a torn-down terminal.
       //

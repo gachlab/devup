@@ -76,6 +76,9 @@ export class ProcessManager {
   }
 
   stop(name: string): void {
+    // A crashed service with a restart queued has nothing to kill, but it will
+    // be back in a few seconds — which is not what `ctl stop` asked for.
+    this.restarter.cancel(name);
     this.lifecycle.stop(name);
   }
 
@@ -134,7 +137,14 @@ export class ProcessManager {
     return this.healthPoller.checkAll();
   }
 
+  /** Stop everything for good. The manager spawns nothing after this: queued
+   *  restarts are cancelled and any start still in flight — a lazy wake, a
+   *  later boot phase — returns before its `spawn`. Otherwise those land
+   *  inside the grace period, after `lifecycle.cleanup` has taken its list of
+   *  processes, and outlive devup holding their ports. */
   cleanup(opts: { gracePeriodMs?: number } = {}): Promise<void> {
+    this.spawner.close();
+    this.restarter.cancelAll();
     return this.lifecycle.cleanup(opts);
   }
 }

@@ -5,6 +5,16 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A `cmd` that does not exist crashed devup and orphaned the stack** (#135). The main spawn had no `'error'` listener: an ENOENT was an uncaught exception that took down the TUI or the daemon, and every detached child kept running with its port. The service now ends up `crashed` with the error in its `crashLog`, and is not retried: a missing binary will not appear in 2 s.
+- **Shutdown did not wait for queued restarts.** A crash, its auto-restart at 2 s and a `q` in between: the timer fired during `cleanup`'s grace period, spawned, and the child outlived devup. `cleanup` cancels the timers and the spawner launches nothing once shutdown has begun — not a lazy wake or a late boot phase either, and it says so in the log.
+- **`ctl stop` on a crashed service brought it back** two seconds later, and signalled its dead pid's process group. `stop` cancels the pending restart and decides with `isRunning`, not `pid` (hazard §2).
+- **A stopped service kept reading `running`.** The close handler returned early on an intentional stop; it now becomes `stopped`/`down`, unless the state no longer belongs to that process (a restart, a switch to a remote, a lazy service put to sleep).
+- **Closing the terminal, a `kill`, or a CI SIGTERM left the stack running.** The TUI only exited from the keyboard and `--once` had no handler at all. The TUI, `--once` and the daemon handle SIGINT/SIGTERM/SIGHUP and uncaught errors with one teardown, which runs once however many ways in. Externals are tracked as they spawn, so a signal while a database is still starting stops it too, and a `--once` that throws tears down as well.
+- **Windows: `npm install` and services with `cmd: 'npm' | 'npx'` did not start.** Node refuses to spawn `.cmd` shims without a shell since 18.20.2 / 20.12.2 (CVE-2024-27980). They are resolved on `PATH` (quoted entries included) and run through `cmd.exe` with their arguments quoted. Detached processes no longer open a console window each (`windowsHide`), and every shell hook uses the same `ComSpec`.
+
 ## [0.19.2] — 2026-08-27
 
 Los doce hallazgos de una revisión de arquitectura contra los propios

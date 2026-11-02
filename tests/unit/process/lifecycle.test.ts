@@ -41,7 +41,7 @@ describe('Lifecycle.stop', () => {
   });
 
   it('marks intentionalStop and kills tree when proc + pid exist', () => {
-    const fakeProc = { pid: 999, killed: false } as any;
+    const fakeProc = { pid: 999, killed: false, exitCode: null, signalCode: null } as any;
     const state = new Map<string, ProcessState>([
       ['x', mkState({ proc: fakeProc, pid: 999 })],
     ]);
@@ -50,6 +50,19 @@ describe('Lifecycle.stop', () => {
     lifecycle.stop('x');
     assert.equal(state.get('x')!.intentionalStop, true);
     assert.deepEqual(platform.kills, [999]);
+  });
+
+  it('does not signal a dead pid\'s group: a crashed service keeps its pid (CLAUDE.md §2)', () => {
+    // `kill(-pid)` on a pid that already exited reaches whatever group the OS
+    // has since given that number.
+    const deadProc = { pid: 999, killed: false, exitCode: 1, signalCode: null } as any;
+    const state = new Map<string, ProcessState>([
+      ['x', mkState({ proc: deadProc, pid: 999, status: 'crashed', health: 'down' })],
+    ]);
+    const platform = mkFakePlatform();
+    new Lifecycle({ state, procs: new Set(), platform }).stop('x');
+    assert.deepEqual(platform.kills, []);
+    assert.equal(state.get('x')!.intentionalStop, false);
   });
 
   it('stopWatchProc kills the side-car and clears the reference', () => {

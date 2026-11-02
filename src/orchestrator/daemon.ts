@@ -33,6 +33,7 @@ import type { ProcessState } from '../process/types.js';
 import { startService } from '../process/start-service.js';
 import { restartService } from '../process/restart-service.js';
 import { debugService } from '../process/debug-service.js';
+import { onFatal } from '../process/teardown.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
 const sanitize = (n: string) => n.replace(SAFE, '_').replace(/^_+|_+$/g, '') || 'devup';
@@ -102,7 +103,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   const lazyProxies = new Map<string, LazyProxy>();
   const remoteProxies = new Map<string, RemoteProxy>();
   const prevCpuMap = new Map<string, { time: number; cpu: number }>();
-  let externals: ExternalProc[] = [];
+  // Filled by `startExternals` as each is spawned, so a signal during the wait
+  // for a slow database still finds it; aborted first thing on teardown.
+  const externals: ExternalProc[] = [];
+  const bootAbort = new AbortController();
   let socket: SocketServerHandle | null = null;
   let healthTimer: NodeJS.Timeout | null = null;
   let proxyTimer: NodeJS.Timeout | null = null;
@@ -137,6 +141,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   });
 
   const cleanup = async (): Promise<void> => {
+    bootAbort.abort();
     if (healthTimer) clearInterval(healthTimer);
     if (proxyTimer) clearInterval(proxyTimer);
     if (stopConfigWatcher) { try { stopConfigWatcher(); } catch { /* ignore */ } }
@@ -157,14 +162,13 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
     if (existsSync(pidPath)) { try { unlinkSync(pidPath); } catch { /* ignore */ } }
   };
 
-  let shuttingDown = false;
-  const onSignal = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    cleanup().then(() => process.exit(0), () => process.exit(1));
-  };
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
+  // SIGTERM is how `devup down` stops the daemon, so a signal exits 0. SIGHUP
+  // and a crash in the daemon's own code take the same path: before, a throw
+  // here left every child it had spawned running, holding its port.
+  onFatal(cleanup, {
+    signalExitCode: () => 0,
+    report: (err) => writeDevupLog(`❌ ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
+  });
 
   try {
     // ── Externals (DBs, queues) — must be healthy before phase 0 ──
@@ -173,8 +177,8 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       const result = await startExternals(config.external, {
         baseCwd, env, platform,
         onLog: (svc, msg) => { logSink.write(`ext:${svc}`, msg); logBus.emit({ svc: `ext:${svc}`, text: msg }); },
+        into: externals, signal: bootAbort.signal,
       });
-      externals = result.procs;
       if (!result.allHealthy) {
         throw new Error(`externals failed: ${result.failed.join(', ')}`);
       }
@@ -361,6 +365,7 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
   // Preserve any node-level args (e.g. --loader tsx in dev) so the child can be re-executed.
   const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, ...filteredArgs], {
     detached: true,
+    windowsHide: true,
     stdio: 'ignore',
     env: { ...process.env, DEVUP_DAEMON_CHILD: '1' },
     cwd: opts.baseCwd,

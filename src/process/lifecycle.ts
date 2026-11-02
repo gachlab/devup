@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import type { Platform } from '../platform/types.js';
 import type { ProcessState } from './types.js';
+import { isRunning } from './liveness.js';
 
 interface LifecycleOpts {
   state: Map<string, ProcessState>;
@@ -26,7 +27,10 @@ export class Lifecycle {
    *  side-car watchBuild process if any. */
   stop(name: string): void {
     const st = this.state.get(name);
-    if (!st?.proc || !st.pid) return;
+    // Liveness from the process, not from `pid` (CLAUDE.md §2): a crashed
+    // service keeps its dead pid, and `kill(-pid)` on it signals whatever
+    // process group has since been given that number.
+    if (!st || !isRunning(st) || !st.pid) return;
     st.intentionalStop = true;
     this.platform.killTree(st.pid);
     this.stopWatchProc(st);
