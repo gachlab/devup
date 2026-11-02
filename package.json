@@ -3,19 +3,21 @@
   "version": "0.19.2",
   "description": "Dev stack runner with TUI, lazy proxy, and reverse proxy support",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/lib.js",
+  "types": "dist/lib.d.ts",
   "bin": {
     "devup": "dist/index.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/lib.d.ts",
+      "import": "./dist/lib.js",
+      "default": "./dist/lib.js"
     },
     "./client": {
       "types": "./dist/control-plane/client.d.ts",
-      "import": "./dist/control-plane/client.js"
+      "import": "./dist/control-plane/client.js",
+      "default": "./dist/control-plane/client.js"
     },
     "./contract/status-snapshot.json": "./contract/status-snapshot.json"
   },
@@ -69,14 +71,13 @@
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
-    "@types/jest": "^30.0.0",
     "@types/node": "22.15.3",
     "@types/react": "19.2.14",
     "ink-testing-library": "^4.0.0",
     "react-dom": "^19.2.5",
     "tsup": "8.5.1",
     "tsx": "4.19.4",
-    "typescript": "^7.0.2"
+    "typescript": "~7.0.2"
   },
   "engines": {
     "node": ">=22"

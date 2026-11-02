@@ -48,6 +48,14 @@ export interface CliArgs {
    *  `lazy.timeout` in a config were silently ignored. `applyConfigDefaults`
    *  reads this to decide who wins. */
   given?: ReadonlySet<ConfigurableFlag>;
+  /** Flags this parser does not know. Only an error on the plain boot path —
+   *  a subcommand parses its own flags out of the same argv. */
+  unknown?: string[];
+  /** Malformed flags: a value missing (`--config` as the last argument, or
+   *  followed by another flag) or not a number. Always fatal: each used to
+   *  mean something else in silence — auto-discover the config, run every
+   *  service, swallow the next flag, or a 10-minute timeout. */
+  errors?: string[];
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
@@ -187,6 +195,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
   };
   const given = new Set<ConfigurableFlag>();
   args.given = given;
+  const unknown: string[] = [];
+  const errors: string[] = [];
+  args.unknown = unknown;
+  args.errors = errors;
 
   for (let i = 0; i < argv.length; i++) {
     let arg = argv[i]!;
@@ -203,26 +215,53 @@ export function parseCliArgs(argv: string[]): CliArgs {
       if (arg.startsWith(`${f}=`)) { next = arg.slice(f.length + 1); arg = f; i--; break; }
     }
 
+    /** The flag's value, or an error when there is none. A following flag is
+     *  not a value: `--config --no-lazy` used to swallow `--no-lazy`. */
+    const value = (): string | undefined => {
+      if (next === undefined || next.startsWith('-')) { errors.push(`${arg} needs a value`); return undefined; }
+      i++;
+      return next;
+    };
+    const minutes = (min: number): number | undefined => {
+      const v = value();
+      if (v === undefined) return undefined;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < min) { errors.push(`${arg} needs a whole number${min > 0 ? ` of at least ${min}` : ' (0 or more)'}, got "${v}"`); return undefined; }
+      return n;
+    };
+
     switch (arg) {
-      case '--config':     args.configPath = next; i++; break;
-      case '--only':       args.only = next; i++; break;
-      case '--skip':       args.skip = next?.split(',') ?? []; i++; break;
-      case '--services':   args.services = next?.split(','); i++; break;
-      case '--profile':    args.profile = next; i++; break;
+      case '--config':     args.configPath = value(); break;
+      case '--only':       args.only = value(); break;
+      case '--skip':       args.skip = value()?.split(',') ?? []; break;
+      case '--services':   args.services = value()?.split(','); break;
+      case '--profile':    args.profile = value(); break;
       case '--lazy':       args.lazy = true; break;
       case '--no-lazy':    args.lazy = false; break;
-      case '--timeout':    args.lazyTimeout = parseInt(next ?? '', 10) || DEFAULT_LAZY_TIMEOUT; given.add('lazyTimeout'); i++; break;
+      case '--timeout': {
+        const n = minutes(0);
+        if (n !== undefined) { args.lazyTimeout = n; given.add('lazyTimeout'); }
+        break;
+      }
       case '--proxy':      args.proxy = true; break;
-      case '--proxy-host':       args.proxyHost = next; i++; break;
-      case '--proxy-conf':       args.proxyConf = next; i++; break;
+      case '--proxy-host':       args.proxyHost = value(); break;
+      case '--proxy-conf':       args.proxyConf = value(); break;
       case '--proxy-tls':        args.proxyTls = true; given.add('proxyTls'); break;
       case '--no-proxy-tls':     args.proxyTls = false; given.add('proxyTls'); break;
-      case '--proxy-entrypoint': args.proxyEntrypoint = next ?? 'websecure'; given.add('proxyEntrypoint'); i++; break;
+      case '--proxy-entrypoint': {
+        const v = value();
+        if (v !== undefined) { args.proxyEntrypoint = v; given.add('proxyEntrypoint'); }
+        break;
+      }
       case '--dry-run':          args.dryRun = true; break;
       case '--once':             args.once = true; break;
-      case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
+      case '--once-timeout': {
+        const n = minutes(1);
+        if (n !== undefined) args.onceTimeout = n;
+        break;
+      }
       case '--no-log-file':      args.logFile = false; break;
-      case '--log-dir':          args.logDir = next; i++; break;
+      case '--log-dir':          args.logDir = value(); break;
       // Same shape as `--env`, and for a sharper reason: a bare
       // `--instance` — value forgotten, or eaten by an empty shell variable —
       // used to fall through to the default stack, so `devup down --instance`
@@ -261,7 +300,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--json':             args.onceJson = true; break;
       case '--watch-config':     args.watchConfig = true; break;
       case '--kill-port-conflicts': args.killPortConflicts = true; break;
+      default:
+        if (arg.startsWith('-')) unknown.push(arg);
     }
+  }
+
+  // `--profile` wins in `filterServices`, so the other two were ignored.
+  if (args.profile !== undefined && (args.services || args.only)) {
+    errors.push('--profile cannot be combined with --services or --only');
   }
 
   return args;

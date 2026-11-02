@@ -90,3 +90,14 @@ describe('renderDryRun', () => {
     assert.match(out, /redis.*docker compose/);
   });
 });
+
+describe('renderDryRun: secrets', () => {
+  it('redacts secret-looking extraEnv values, like `devup config show`', async () => {
+    const { renderDryRun } = await import('../../../src/orchestrator/dry-run.js');
+    const { parseCliArgs } = await import('../../../src/config/cli.js');
+    const config = { name: 'x', services: [{ name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api' as const, port: 3000, phase: 0, extraEnv: { DB_PASSWORD: 'hunter2', MODE: 'dev' } }] };
+    const out = renderDryRun({ config, services: config.services, cliArgs: { ...parseCliArgs(['--no-lazy']) }, env: {}, baseCwd: '.', proxyProvider: null, proxyOpts: null });
+    assert.doesNotMatch(out, /hunter2/);
+    assert.match(out, /MODE=dev/);
+  });
+});

@@ -15,13 +15,16 @@ The TUI is just one consumer of the underlying machinery. That separation is int
 
 ```
 src/
-  index.ts                   CLI entry; argv parsing, config loading, dispatch
+  index.ts                   CLI entry (the `devup` bin); argv parsing, config loading, dispatch
+  lib.ts                     library entry ("." export): defineConfig + types, no side effects
   config/
     types.ts                 DevStackConfig, ServiceConfig, ExternalService
     loader.ts                find + load + dynamic-import config files
     validator.ts             validateConfig (errors) + collectWarnings
     cli.ts                   parseCliArgs + filterServices + USAGE
     diff.ts                  diffServices (used by --watch-config)
+    paths.ts                 projectDirOf, serviceDir: paths relative to the config file
+    selection.ts             managedServices: what a config reload diffs
   process/
     types.ts                 ProcessState, ProcessStatus, HealthStatus
     manager.ts               ProcessManager: facade over spawner/restarter/
@@ -61,6 +64,9 @@ src/
     command.ts               resolveSpawnCommand: .cmd shims via cmd.exe on Windows
   proxy-config/
     types.ts                 ProxyConfigProvider, ProxyOpts, ServiceState
+    sync.ts                  ProxySync + routableStates, shared by daemon and TUI
+    write.ts                 writeConfigFile (in place)
+    domain.ts                resolveProxyDomain
     detect.ts                registry: 'traefik' / 'nginx' / 'caddy'
     traefik.ts / nginx.ts / caddy.ts
   control-plane/

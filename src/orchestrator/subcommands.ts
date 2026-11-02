@@ -743,7 +743,12 @@ export async function runConfig(argv: string[], opts: ConfigSubOpts): Promise<nu
 
   let config: DevStackConfig;
   try { config = await loadConfig(cfgPath); }
-  catch (e: any) { out(`❌ failed to load config: ${e.message}`); return 1; }
+  catch (e: any) {
+    // `--json` promises JSON, broken config or not: a pipeline parses it.
+    if (subcmd === 'validate' && json) out(JSON.stringify({ valid: false, errors: [`failed to load config: ${e.message}`], warnings: [] }, null, 2));
+    else out(`❌ failed to load config: ${e.message}`);
+    return 1;
+  }
 
   if (subcmd === 'validate') {
     const errors = validateConfig(config, projectDirOf(cfgPath));

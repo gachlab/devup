@@ -16,6 +16,12 @@ devup --help
 
 ## Flags
 
+An option devup does not know is an error (`devup --watch-confg` used to boot
+without hot reload and say nothing). So is a flag that needs a value and has
+none — `--config` as the last argument, or followed by another flag — and a
+`--timeout` / `--once-timeout` that is not a whole number. `--profile` cannot
+be combined with `--services` or `--only`.
+
 ### Service selection
 
 | Flag | Description |

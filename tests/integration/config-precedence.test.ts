@@ -112,3 +112,23 @@ describe('--config from another directory', () => {
     assert.doesNotMatch(r.out, /Directory not found/);
   });
 });
+
+describe('CLI hygiene', () => {
+  const ok = JSON.stringify({ name: 'h', services: [{ name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api', port: 41020, phase: 0 }] });
+
+  it('an unknown option on the boot path is an error, not ignored', () => {
+    const r = dryRun(project({ 'devup.config.json': ok }), ['--watch-confg']);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /unknown option: --watch-confg/);
+  });
+
+  it('`config validate --json` answers in JSON even when the config does not load', () => {
+    const dir = project({ 'devup.config.js': 'export default {', 'package.json': '{"type":"module"}' });
+    const env: NodeJS.ProcessEnv = { ...process.env, NODE_NO_WARNINGS: '1' };
+    const r = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), entry, 'config', 'validate', '--json'], { cwd: dir, env, encoding: 'utf8', timeout: 30_000 });
+    assert.equal(r.status, 1, `${r.stdout}${r.stderr}`);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.valid, false);
+    assert.match(parsed.errors[0], /failed to load config/);
+  });
+});

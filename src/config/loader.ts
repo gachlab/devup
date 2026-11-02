@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 
 const requireFromHere = createRequire(import.meta.url);
 import type { DevStackConfig } from './types.js';
+import { parseEnvContent } from '../utils/env.js';
 
 const CONFIG_NAMES = [
   'devup.config.ts',
@@ -45,15 +46,9 @@ function extractEnvFilePath(configPath: string, raw: string): string | null {
 function loadEnvFile(envFilePath: string): void {
   if (!existsSync(envFilePath)) return;
   try {
-    const content = readFileSync(envFilePath, 'utf8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq < 1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      const val = trimmed.slice(eq + 1).trim().replace(/^(['"`])(.*)\1$/, '$2');
-      // Don't override existing env vars — config file is lower priority.
+    // Same parser as `parseEnvFile`; existing env vars win — the file is lower
+    // priority.
+    for (const [key, val] of parseEnvContent(readFileSync(envFilePath, 'utf8'))) {
       if (!(key in process.env)) process.env[key] = val;
     }
   } catch { /* ignore unreadable env file */ }
@@ -111,7 +106,18 @@ export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}):
     delete requireFromHere.cache[configPath];
     try { delete requireFromHere.cache[realpathSync(configPath)]; } catch { /* stat above already passed */ }
   }
-  const mod = await import(url);
+  let mod: { default?: any; [k: string]: any };
+  try {
+    mod = await import(url);
+  } catch (e) {
+    // A `.ts` config is loaded by Node itself, which strips types only from
+    // 22.18 / 23.6 on (and only erasable syntax). Older Node says
+    // "Unknown file extension .ts" — true, and no help.
+    if ((e as NodeJS.ErrnoException).code === 'ERR_UNKNOWN_FILE_EXTENSION' && configPath.endsWith('.ts')) {
+      throw new Error(`cannot load ${configPath}: this Node (${process.version}) does not run TypeScript. Use Node >= 22.18, or a devup.config.js / .json`);
+    }
+    throw e;
+  }
   const config = mod.default ?? mod;
 
   if (!config || typeof config !== 'object' || !Array.isArray(config.services)) {

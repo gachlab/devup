@@ -6,7 +6,10 @@ Every field of `devup.config.ts`.
 
 devup looks for, in order:
 
-1. `devup.config.ts` — TypeScript with full type checking (recommended)
+1. `devup.config.ts` — TypeScript with full type checking (recommended). Loaded
+   by Node itself, so it needs **Node ≥ 22.18** (or 23.6) and erasable syntax
+   only — no `enum`, no `namespace`, no parameter properties. On an older Node
+   devup says so; use `.js` there.
 2. `devup.config.js` — JavaScript (ESM or CJS)
 3. `devup.config.json` — JSON (no functions or imports)
 
