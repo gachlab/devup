@@ -72,8 +72,9 @@ The summary is logged once per reload (tagged `[devup]` in the panel). `0 added 
   service died with EADDRINUSE and ended `crashed`. Fixed in 0.19.2.
 - **A service served from a remote environment is not restarted.** There is no
   process here; devup says so and points at `devup ctl remote <svc> --local`.
-- **`proxy.routes` changes ARE applied automatically.** The proxy file is regenerated every 3 s from the live config, so route changes take effect on the next sync without any special handling.
-- **`profiles` changes ARE seen** at next reload, but they only matter at boot (selecting which services exist). If the running set was filtered by `--profile`, that filter still applies to the new config — a profile that no longer exists triggers an error.
+- **`proxy` changes (routes, domain, TLS) are NOT applied.** The proxy file is regenerated every 3 s from the live *service states*, but the routes and options are read once at boot. Restart devup after editing them.
+- **The run's selection is kept.** A reload diffs only the services this run manages — the `--profile` / `--services` / `--only` / `--skip` selection, re-applied to the new config. Editing a skipped service does not start it, and a service added to the file starts only if the selection includes it. A profile that no longer exists, or a `--remote` that no longer resolves, fails the reload and leaves the running set untouched.
+- **`.ts` and `.js` configs reload** — each reload imports the file fresh. Modules the config itself imports (a shared `services.ts`, say) are still cached by Node: edit the config file itself to pick up their changes, or restart devup.
 
 ## When you should NOT use --watch-config
 

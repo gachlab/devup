@@ -35,6 +35,7 @@ import { restartService } from '../process/restart-service.js';
 import { debugService } from '../process/debug-service.js';
 import { onFatal } from '../process/teardown.js';
 import { ProxySync } from '../proxy-config/sync.js';
+import { managedServices } from '../config/selection.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
 const sanitize = (n: string) => n.replace(SAFE, '_').replace(/^_+|_+$/g, '') || 'devup';
@@ -282,7 +283,8 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         stopConfigWatcher = watchConfig({
           configPath, baseCwd, manager: mgr, lazyProxies, envFile: cliArgs.envFile,
           lazyTimeout: cliArgs.lazyTimeout,
-          baseline: config.services,
+          baseline: managedServices(config, cliArgs),
+          select: cfg => managedServices(cfg, cliArgs),
           log: msg => writeDevupLog(msg),
         });
       } catch (e: any) {

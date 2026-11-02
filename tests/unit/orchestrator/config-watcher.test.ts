@@ -504,3 +504,61 @@ describe('applyConfigChange when a service is added', () => {
     }
   });
 });
+
+describe('applyConfigChange: review of #138', () => {
+  it('sees edits to a .js config, which Node would otherwise serve from its module cache', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
+      const cfgPath = join(dir, 'devup.config.js');
+      const write = (port: number) => writeFileSync(cfgPath,
+        `export default { name: 'W', services: [{ name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api', port: ${port}, phase: 0 }] };`);
+      write(3000);
+      const { loadConfig } = await import('../../../src/config/loader.js');
+      await loadConfig(cfgPath); // warm the cache the way boot does
+      write(3001);
+      const svcs = [mkSvc('api', 3000)];
+      const { mgr, calls } = mockManager(svcs);
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: svcs, log: () => {} });
+      assert.equal(calls.started.length, 1, 'the edit was never seen');
+      assert.equal(calls.started[0]!.svc.port, 3001);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not start a service the run excluded when its entry changes', async () => {
+    // `devup --skip worker --watch-config`, then edit worker.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      const cfgPath = join(dir, 'devup.config.json');
+      const api = mkSvc('api', 3000);
+      writeConfig(cfgPath, [api, mkSvc('worker', 3001, { args: ['--edited'] })]);
+      const { mgr, calls } = mockManager([api]);
+      const select = (cfg: { services: ServiceConfig[] }) => cfg.services.filter(s => s.name !== 'worker');
+      await applyConfigChange({ configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: [api], select, log: () => {} });
+      assert.deepEqual(calls.started.map(c => c.name), []);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a JSON config with `lazy: {}` reloads instead of failing half-way', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devup-cw-'));
+    try {
+      const cfgPath = join(dir, 'devup.config.json');
+      writeFileSync(cfgPath, JSON.stringify({ name: 'W', lazy: {}, services: [mkSvc('api', 3000), mkSvc('extra', 3002)] }));
+      const { mgr } = mockManager([mkSvc('api', 3000)]);
+      const lazyProxies = new Map();
+      const logs: string[] = [];
+      await applyConfigChange({
+        configPath: cfgPath, baseCwd: dir, manager: mgr, baseline: [mkSvc('api', 3000)],
+        lazyProxies, lazyTimeout: 10, log: l => logs.push(l),
+      });
+      assert.ok(!logs.some(l => l.includes('reload error')), logs.join('\n'));
+      for (const p of lazyProxies.values()) (p as { destroy(): void }).destroy();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -3,7 +3,7 @@ import { loadConfig } from '../config/loader.js';
 import { validateConfig, formatValidationErrors } from '../config/validator.js';
 import { diffServices, summariseDiff } from '../config/diff.js';
 import type { ProcessManager } from '../process/manager.js';
-import type { ServiceConfig } from '../config/types.js';
+import type { DevStackConfig, ServiceConfig } from '../config/types.js';
 import type { LazyProxy } from '../lazy/proxy.js';
 import { rewriteServicePort } from '../lazy/classifier.js';
 import { restartService } from '../process/restart-service.js';
@@ -48,6 +48,10 @@ export type ConfigWatchOpts = LazyWatchOpts & {
    *
    *  Updated in place after each successful reload. */
   baseline: ServiceConfig[];
+  /** The services this run manages out of a config — see `managedServices`.
+   *  Applied to every reloaded config before diffing, and the baseline must
+   *  have been built the same way. Default: every service in the file. */
+  select?: (config: DevStackConfig) => ServiceConfig[];
 };
 
 /** Re-loads the config, validates it, diffs against the running set, and
@@ -62,13 +66,18 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
   // only a number on the arm where `lazyProxies` exists.
   const lazy = opts.lazyProxies ? { proxies: opts.lazyProxies, timeout: opts.lazyTimeout } : null;
   try {
-    const nextCfg = await loadConfig(configPath, { envFile: opts.envFile });
+    const nextCfg = await loadConfig(configPath, { envFile: opts.envFile, fresh: true });
     const errs = validateConfig(nextCfg, baseCwd);
     if (errs.length) {
       log(`⚠ config reload failed:\n${formatValidationErrors(errs)}`);
       return;
     }
-    const diff = diffServices(opts.baseline, nextCfg.services);
+    // Everything that can throw is worked out before anything is applied: a
+    // throw half-way through used to leave removals and restarts applied and
+    // the baseline stale, so the next save diffed against the wrong thing.
+    const nextServices = (opts.select ?? (c => c.services))(nextCfg);
+    const alwaysOn = new Set(nextCfg.lazy?.alwaysOn ?? []);
+    const diff = diffServices(opts.baseline, nextServices);
     if (!diff.added.length && !diff.removed.length && !diff.changed.length) return;
 
     for (const name of diff.removed) {
@@ -175,7 +184,7 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       // stop — permanently different from how the same service behaves after a
       // restart of devup, which is the kind of divergence nobody thinks to
       // look for.
-      if (lazy && !nextCfg.lazy?.alwaysOn.includes(next.name)) {
+      if (lazy && !alwaysOn.has(next.name)) {
         registerLazy(manager, next, ci, lazy.timeout, lazy.proxies,
           msg => log(`[${next.name}] ${msg}`));
         log(`＋ ${next.name}: registered lazy on :${next.port}`);
@@ -184,7 +193,7 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
       await manager.install(next, ci);
       await manager.start(next, ci);
     }
-    opts.baseline = nextCfg.services;
+    opts.baseline = nextServices;
     log(`🔁 config reloaded: ${summariseDiff(diff)}`);
   } catch (e: any) {
     log(`⚠ config reload error: ${e.message}`);

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -67,6 +67,13 @@ export interface LoadConfigOpts {
    *  one thing `--env` exists to prevent. A `.ts` config reading
    *  `process.env.DB_URL` now sees the test value too. */
   envFile?: string;
+  /** Bypass Node's module cache. `import()` of a URL it has seen returns the
+   *  first module for the life of the process, so every `--watch-config`
+   *  reload of a `.ts`/`.js` config evaluated the original file — edits were
+   *  diffed against themselves and silently did nothing. Each fresh load keeps
+   *  one more module alive; a reload per save is a small price. Modules the
+   *  config imports itself are still cached. */
+  fresh?: boolean;
 }
 
 export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}): Promise<DevStackConfig> {
@@ -91,7 +98,11 @@ export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}):
     return JSON.parse(raw) as DevStackConfig;
   }
 
-  const url = pathToFileURL(configPath).href;
+  let url = pathToFileURL(configPath).href;
+  if (opts.fresh) {
+    const { mtimeMs, size } = statSync(configPath);
+    url += `?devup-reload=${mtimeMs}-${size}-${Date.now()}`;
+  }
   const mod = await import(url);
   const config = mod.default ?? mod;
 

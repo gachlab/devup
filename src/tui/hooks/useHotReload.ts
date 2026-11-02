@@ -6,6 +6,7 @@ import type { CliArgs } from '../../config/cli.js';
 import { findConfigFile } from '../../config/loader.js';
 import { watchConfig, type LazyWatchOpts } from '../../orchestrator/config-watcher.js';
 import type { ServiceConfig } from '../../config/types.js';
+import { managedServices } from '../../config/selection.js';
 
 /** Watches the resolved config file when --watch-config is on. Bridge between
  *  React's lifecycle and the pure `watchConfig` helper used by the daemon. */
@@ -14,8 +15,8 @@ export function useHotReload(
   cliArgs: CliArgs,
   baseCwd: string,
   pushLog: (svc: string, msg: string, colorIdx?: number) => void,
-  /** Services as the config file declares them right now — the baseline the
-   *  reload diffs against. See ConfigWatchOpts.baseline. */
+  /** The services this run manages right now (`managedServices`) — the
+   *  baseline the reload diffs against. See ConfigWatchOpts.baseline. */
   services: ServiceConfig[],
   /** The lazy proxies. A reload that respawns a lazy service has to go through
    *  its proxy, or it lands on the public port the proxy is holding. */
@@ -40,6 +41,7 @@ export function useHotReload(
       configPath, baseCwd, manager, envFile: cliArgs.envFile,
       ...lazyOpts,
       baseline: services,
+      select: cfg => managedServices(cfg, cliArgs),
       log: msg => pushLog('devup', msg, msg.startsWith('⚠') ? 5 : 12),
     });
   }, [cliArgs.watchConfig, cliArgs.configPath, cliArgs.envFile, baseCwd, manager, pushLog, services, lazyProxies]);
