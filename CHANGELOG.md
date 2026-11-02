@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Paths in a config are relative to the config file**, not the shell's cwd: service and external `cwd`, and `envFile`. Running from the directory that holds the config — the default — behaves exactly as before; `--config ../stack/devup.config.ts` now finds what the file describes.
+- **`--env` replaces the config's `envFile`; it no longer layers on top of it.** That is what `docs/cli.md` always said, but the old loading order let keys that only the config's `envFile` defined leak into an `--env` run. A test env file now has to carry every key its run needs — which is the point of pointing a run at a separate file. Hot reload uses the same file.
+- **`devup exec -- <cmd>` runs `<cmd>` in the shell's cwd**, also with `--config` elsewhere; the daemon child `up -d` spawns starts from the shell's cwd too, so a relative `--config`, `--env` or `--log-dir` means the same thing to both.
 
 ## [0.19.2] — 2026-08-27
 

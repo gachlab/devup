@@ -288,7 +288,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
         const configPath = findConfigFile(baseCwd, cliArgs.configPath);
         writeDevupLog(`👀 watching ${configPath}`);
         stopConfigWatcher = watchConfig({
-          configPath, baseCwd, manager: mgr, lazyProxies,
+          configPath, baseCwd, manager: mgr, lazyProxies, envFile: cliArgs.envFile,
           lazyTimeout: cliArgs.lazyTimeout,
           baseline: config.services,
           log: msg => writeDevupLog(msg),
@@ -368,7 +368,12 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
     windowsHide: true,
     stdio: 'ignore',
     env: { ...process.env, DEVUP_DAEMON_CHILD: '1' },
-    cwd: opts.baseCwd,
+    // The shell's cwd, not the project dir: the child re-runs the parent's
+    // argv, and `--config`, `--env` and `--log-dir` in it were typed relative
+    // to where the user is. From the project dir they resolve elsewhere, the
+    // child exits before it can write a boot-error file, and the parent waits
+    // 90 s to say only that the daemon never became ready.
+    cwd: process.cwd(),
   });
   child.unref();
 

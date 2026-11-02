@@ -397,3 +397,21 @@ describe('validateConfig: port ranges', () => {
     assert.equal(validateConfig(cfg, tmp).filter(e => e.field.endsWith('.phase')).length, 1);
   });
 });
+
+describe('validateConfig: settings a flag can also set', () => {
+  const base = (over: Partial<DevStackConfig>): DevStackConfig => ({ ...minimal(), ...over });
+  const fieldErrors = (cfg: DevStackConfig, field: string) => validateConfig(cfg, tmp).filter(e => e.field === field);
+
+  it('rejects a NaN lazy.timeout, which would idle-stop every lazy service at once', () => {
+    assert.equal(fieldErrors(base({ lazy: { alwaysOn: [], timeout: NaN } }), 'lazy.timeout').length, 1);
+    assert.equal(fieldErrors(base({ lazy: { alwaysOn: [], timeout: -1 } }), 'lazy.timeout').length, 1);
+    assert.deepEqual(fieldErrors(base({ lazy: { alwaysOn: [], timeout: 0 } }), 'lazy.timeout'), []);
+  });
+
+  it('rejects a non-boolean proxy.tls and an empty entrypoint', () => {
+    const proxy = { provider: 'traefik', routes: {} };
+    assert.equal(fieldErrors(base({ proxy: { ...proxy, tls: 'false' as never } }), 'proxy.tls').length, 1);
+    assert.equal(fieldErrors(base({ proxy: { ...proxy, entrypoint: '  ' } }), 'proxy.entrypoint').length, 1);
+    assert.deepEqual(fieldErrors(base({ proxy: { ...proxy, tls: false, entrypoint: 'web' } }), 'proxy.tls'), []);
+  });
+});

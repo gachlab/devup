@@ -30,6 +30,10 @@ export type LazyWatchOpts =
 
 export type ConfigWatchOpts = LazyWatchOpts & {
   configPath: string;
+  /** `--env`, absolute. Every reload evaluates the config again, and without
+   *  it the config's own `envFile` comes back into `process.env` — adding the
+   *  development keys `--env` exists to keep out. */
+  envFile?: string;
   baseCwd: string;
   manager: ProcessManager;
   /** Receives status lines: success, validation errors, reload errors. */
@@ -58,7 +62,7 @@ export async function applyConfigChange(opts: ConfigWatchOpts): Promise<void> {
   // only a number on the arm where `lazyProxies` exists.
   const lazy = opts.lazyProxies ? { proxies: opts.lazyProxies, timeout: opts.lazyTimeout } : null;
   try {
-    const nextCfg = await loadConfig(configPath);
+    const nextCfg = await loadConfig(configPath, { envFile: opts.envFile });
     const errs = validateConfig(nextCfg, baseCwd);
     if (errs.length) {
       log(`⚠ config reload failed:\n${formatValidationErrors(errs)}`);

@@ -293,7 +293,9 @@ export async function runExec(opts: ExecOpts): Promise<number> {
     out(`▶ ${flags.command.join(' ')}`);
     const result = opts.spawnCommand
       ? await opts.spawnCommand(flags.command[0]!, flags.command.slice(1))
-      : await runCommand(flags.command[0]!, flags.command.slice(1), opts.baseCwd, opts.env, c => { child = c; });
+      // In the user's cwd, not the project dir: `devup exec --config ../../devup.config.ts
+      // -- npx playwright test` from `apps/web` means apps/web's playwright config.
+      : await runCommand(flags.command[0]!, flags.command.slice(1), process.cwd(), opts.env, c => { child = c; });
 
     exitCode = result.signal
       ? SIGNAL_BASE + (signalNumber(result.signal) ?? 0)

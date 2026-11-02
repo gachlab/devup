@@ -202,6 +202,22 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
   }
 
   // Lazy refs
+  // Settings a flag can also set. Before precedence was fixed the CLI default
+  // always won, so a bad value here was dead; now it takes effect. A NaN
+  // timeout (`Number(process.env.LAZY_MIN)` unset) idle-stopped every lazy
+  // service the moment its last connection closed.
+  const lazyTimeout = config.lazy?.timeout;
+  if (lazyTimeout !== undefined && !(typeof lazyTimeout === 'number' && Number.isFinite(lazyTimeout) && lazyTimeout >= 0)) {
+    errors.push({ field: 'lazy.timeout', message: `Invalid timeout: ${lazyTimeout} (minutes, a number >= 0)` });
+  }
+  if (config.proxy?.tls !== undefined && typeof config.proxy.tls !== 'boolean') {
+    errors.push({ field: 'proxy.tls', message: `Invalid tls: ${String(config.proxy.tls)} (must be true or false)` });
+  }
+  const entrypoint = config.proxy?.entrypoint;
+  if (entrypoint !== undefined && !(typeof entrypoint === 'string' && entrypoint.trim())) {
+    errors.push({ field: 'proxy.entrypoint', message: `Invalid entrypoint: ${String(entrypoint)} (must be a non-empty string)` });
+  }
+
   if (config.lazy?.alwaysOn) {
     for (const ref of config.lazy.alwaysOn) {
       if (!names.has(ref)) {

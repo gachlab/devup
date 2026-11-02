@@ -91,6 +91,13 @@ async function main() {
     console.error(`❌ --env not found: ${envOverride}`);
     process.exit(1);
   }
+  // A bare `--remote` must not fall through to an ordinary local boot: the
+  // services it was meant to cover would simply be missing, and what the
+  // developer sees is a frontend failing to connect, minutes from the cause.
+  if (cliArgs.remote === '') {
+    console.error('❌ --remote needs an environment name');
+    process.exit(1);
+  }
 
   if (subcmd) {
     const subArgs = raw.slice(1);
@@ -134,7 +141,10 @@ async function main() {
   const projectDir = projectDirOf(configPath);
   // A typed flag beats the config, which beats the default. Done once, here,
   // so every consumer below reads one resolved value.
-  cliArgs = applyConfigDefaults(cliArgs, config);
+  // `configPath` and `envFile` are made absolute here too: they were typed
+  // against the shell's cwd, and the config watcher re-resolves them from the
+  // project dir, which is not the same place under `--config elsewhere/`.
+  cliArgs = { ...applyConfigDefaults(cliArgs, config), configPath, envFile: envOverride };
 
   // The name every path is keyed by: socket, pid file, boot-error file, logs.
   // Qualified once here rather than threaded as a separate argument, because
