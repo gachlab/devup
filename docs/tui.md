@@ -81,7 +81,7 @@ H Service          Port  Status    CPU    Mem   Err Rst   Up
 - **H (Health)**: `●` (filled) for running, `○` (hollow) for idle/lazy, `✖` (bold red) for crash-looped.
 - **Status**: `starting`, `running`, `stopped`, `crashed`, `idle`, `timeout`, `looping` (when restarts exhausted).
 - **Port**: the public port. Lazy services listen here but the real service runs on `port + 10000`.
-- **CPU / Mem**: refreshed every 3 s via platform-native `ps` (Unix) or `wmic` (Windows).
+- **CPU / Mem**: refreshed every 3 s via platform-native `ps` (Unix) or CIM (Windows), summed over the service's whole process tree — the server under an `npm run dev` wrapper, not the wrapper. Stopped and crashed services show nothing.
 - **Err / Rst**: cumulative errors / restarts since spawn.
 - **Up**: uptime since the current spawn (resets on restart).
 

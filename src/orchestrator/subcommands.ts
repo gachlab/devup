@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { checkHealth } from '../process/health.js';
-import { needsInstall, writeInstallStamp } from '../utils.js';
+import { installService } from '../process/installer.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
 import {
   waitForServices, selectServices, forEachInPhaseOrder, DEFAULT_WAIT_TIMEOUT_MS,
@@ -22,7 +22,6 @@ import { validateConfig, formatValidationErrors, collectWarnings, formatValidati
 import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
 import type { RemoteResult, ServiceSnapshot } from '../control-plane/types.js';
-import { resolveSpawnCommand } from '../platform/command.js';
 import { projectDirOf, serviceDir } from '../config/paths.js';
 
 const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config', 'exec']);
@@ -201,20 +200,10 @@ export async function runInstall(opts: SubOpts & { concurrency?: number }): Prom
   return 0;
 }
 
+/** The same install the boot runs — one implementation, so `devup install`
+ *  and a boot agree on what "installed" means and where it happens. */
 function installOne(cwd: string, env: Record<string, string>): Promise<boolean> {
-  if (!existsSync(cwd)) return Promise.resolve(false);
-  if (!needsInstall(cwd)) return Promise.resolve(true);
-  return new Promise(resolve => {
-    const command = resolveSpawnCommand('npm', ['install'], { env, cwd });
-    const proc = spawn(command.file, command.args, {
-      cwd, env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
-      windowsVerbatimArguments: command.windowsVerbatimArguments,
-    });
-    proc.on('close', code => {
-      if (code === 0) { writeInstallStamp(cwd); resolve(true); } else resolve(false);
-    });
-    proc.on('error', () => resolve(false));
-  });
+  return installService(cwd, env);
 }
 
 // ── devup status ──

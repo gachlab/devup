@@ -9,7 +9,7 @@ When you launch with lazy mode (the default if `lazy` is set in your config), fo
 1. devup binds a TCP listener on the service's **public port** (`svc.port`).
 2. The actual service is spawned later, on demand, on **`svc.port + 10000`** (the "real port").
 3. On the first incoming connection to the public port:
-   - devup runs `npm install` if needed.
+   - devup installs dependencies if needed (see `devup install`).
    - Spawns the service on the real port.
    - Waits for it to listen.
    - Pipes the pending connection (and any others queued during boot) through to the real port.

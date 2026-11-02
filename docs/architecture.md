@@ -220,7 +220,9 @@ Three implementations of `Platform`:
 
 - **LinuxPlatform** uses `ps` for stats, `kill -<pid>` for kill-tree (negative pid = process group).
 - **DarwinPlatform** extends Linux with macOS-specific quirks (mostly browser opening with `open`).
-- **Win32Platform** uses `wmic` for stats, `taskkill /T /F` for kill-tree, `cmd /c start` for browser.
+- **Win32Platform** uses CIM (`Get-CimInstance Win32_Process` via PowerShell) for stats, `taskkill /T /F` for kill-tree, `cmd /c start` for browser.
+
+Stats are summed over each service's whole process tree (`platform/tree.ts`): a service started through `npm`, `npx` or a Windows shim is mostly its children.
 
 Integration tests are skipped on Windows where they'd rely on Unix-specific shell behavior (sleep, single-quote strings). Shell hooks (`preBuild`, `watchBuild`, externals) run through `cmd /c`; a service `cmd` that resolves to a `.cmd`/`.bat` shim on `PATH` (`npm`, `npx`, `pnpm`) goes through `cmd.exe /d /s /c` with its arguments quoted (`platform/command.ts`), because Node refuses to spawn shims without a shell since CVE-2024-27980. Only the test fixtures are awkward to write cross-platform.
 

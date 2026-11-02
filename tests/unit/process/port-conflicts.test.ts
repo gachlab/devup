@@ -181,3 +181,25 @@ describe('resolvePortConflicts', () => {
     }
   });
 });
+
+describe('killing port holders: review of #143', () => {
+  it('a holder that is already gone counts as killed', async () => {
+    const { killHolder } = await import('../../../src/process/port-conflicts.js');
+    assert.equal(await killHolder(2_147_483_000), true);
+  });
+
+  it('one process holding two ports is killed once and reported fine for both', async () => {
+    const { resolvePortConflicts } = await import('../../../src/process/port-conflicts.js');
+    const { spawn } = await import('node:child_process');
+    const p = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    await new Promise(r => setTimeout(r, 200));
+    const holder = { pid: p.pid!, command: 'node' };
+    const lines: string[] = [];
+    const ok = await resolvePortConflicts(
+      [{ service: 'a', port: 1, holder }, { service: 'b', port: 2, holder }],
+      { autoKill: true, out: l => lines.push(l) },
+    );
+    assert.equal(ok, true, lines.join('\n'));
+    assert.equal(lines.filter(l => l.includes('survived')).length, 0);
+  });
+});

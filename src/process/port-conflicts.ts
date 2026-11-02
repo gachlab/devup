@@ -105,7 +105,8 @@ export async function scanPortConflicts(services: ServiceConfig[]): Promise<Port
 
 /** SIGTERM with grace, falling back to SIGKILL after `graceMs`. */
 export async function killHolder(pid: number, graceMs = 3000): Promise<boolean> {
-  try { process.kill(pid, 'SIGTERM'); } catch { return false; }
+  // Already gone is a success: the port is free, which is what was asked.
+  try { process.kill(pid, 'SIGTERM'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ESRCH'; }
   const deadline = Date.now() + graceMs;
   while (Date.now() < deadline) {
     if (!pidAlive(pid)) return true;
@@ -213,13 +214,19 @@ export async function resolvePortConflicts(
 
 async function killAll(conflicts: PortConflict[], out: (l: string) => void): Promise<boolean> {
   let allOk = true;
+  // One kill per process. A leftover holding two configured ports used to be
+  // killed on the first and then reported as "survived SIGKILL" on the second
+  // — aborting a boot whose ports were both free by then.
+  const results = new Map<number, Promise<boolean>>();
   for (const c of conflicts) {
     if (!c.holder) {
       out(`✗ :${c.port} ${c.service}: holder unknown, cannot kill — skipped`);
       allOk = false;
       continue;
     }
-    const ok = await killHolder(c.holder.pid);
+    let pending = results.get(c.holder.pid);
+    if (!pending) { pending = killHolder(c.holder.pid); results.set(c.holder.pid, pending); }
+    const ok = await pending;
     if (ok) {
       out(`✓ :${c.port} ${c.service}: killed pid=${c.holder.pid}`);
     } else {

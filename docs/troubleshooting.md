@@ -155,7 +155,7 @@ The persistent log hasn't been created yet. Either:
 
 ### `devup install` fails for one service
 
-The exit-1 service's `cwd` probably has a broken `package.json`. devup runs `npm install` directly with the service's cwd as the working directory — try `cd <cwd> && npm install` to see the real error.
+The exit-1 service's `cwd` probably has a broken `package.json`. devup runs the install in the service's `cwd` — or at its workspace root, for a workspace member — with the package manager its lockfile names (npm, pnpm, yarn or bun). The log line says which and where; run the same command there to see the real error.
 
 ### `devup status` shows everything `down`
 

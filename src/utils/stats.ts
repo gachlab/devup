@@ -52,7 +52,11 @@ export function nextRamBannerVisibility(
  *  else starts at zero, because a service that is running but whose pid the
  *  platform could not sample this round is a different thing from one that has
  *  no pid to sample. */
-export function seedServiceStats<T extends { pid: number | null; remote?: unknown }>(
+export function seedServiceStats<T extends {
+  pid: number | null;
+  remote?: unknown;
+  proc?: { exitCode: number | null; signalCode: unknown } | null;
+}>(
   states: Iterable<[string, T]>,
 ): { services: Record<string, { cpu: number; memMB: number }>; pids: number[]; pidToName: Map<number, string> } {
   const services: Record<string, { cpu: number; memMB: number }> = {};
@@ -61,7 +65,13 @@ export function seedServiceStats<T extends { pid: number | null; remote?: unknow
   for (const [name, st] of states) {
     if (st.remote) continue;
     services[name] = { cpu: 0, memMB: 0 };
-    if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
+    // Only a live process (CLAUDE.md §2): a stopped or crashed service keeps
+    // its dead pid, and once the OS reuses it this reported somebody else's
+    // memory under the service's name.
+    const live = st.proc === undefined
+      ? true
+      : !!st.proc && st.proc.exitCode === null && st.proc.signalCode === null;
+    if (st.pid && live) { pids.push(st.pid); pidToName.set(st.pid, name); }
   }
   return { services, pids, pidToName };
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ProcessManager } from '../../process/manager.js';
+import { isRunning } from '../../process/liveness.js';
 import type { ProcessState } from '../../process/types.js';
 import type { Platform } from '../../platform/types.js';
 import type { ServiceConfig } from '../../config/types.js';
@@ -123,7 +124,8 @@ export function useProcessManager(
       const pids: number[] = [];
       const pidMap = new Map<number, string>();
       for (const [name, st] of mgr.state) {
-        if (st.pid) { pids.push(st.pid); pidMap.set(st.pid, name); }
+        // Live processes only — a dead pid may belong to someone else by now.
+        if (st.pid && isRunning(st)) { pids.push(st.pid); pidMap.set(st.pid, name); }
       }
       if (pids.length) {
         const raw = await platform.getProcessStats(pids);

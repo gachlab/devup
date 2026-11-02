@@ -97,3 +97,14 @@ describe('computeServiceStats', () => {
     assert.deepEqual(out, { 'app-api': { cpu: 0, memMB: 0 } });
   });
 });
+
+describe('seedServiceStats: dead processes', () => {
+  it('does not sample the dead pid of a stopped service', async () => {
+    const { seedServiceStats } = await import('../../../src/utils/stats.js');
+    type S = { pid: number; proc: { exitCode: number | null; signalCode: null } };
+    const dead: S = { pid: 123, proc: { exitCode: 0, signalCode: null } };
+    const live: S = { pid: 456, proc: { exitCode: null, signalCode: null } };
+    const { pids } = seedServiceStats([['a', dead], ['b', live]]);
+    assert.deepEqual(pids, [456]);
+  });
+});

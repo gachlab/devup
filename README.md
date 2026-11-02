@@ -20,7 +20,7 @@ Built with TypeScript 6, Ink (React for terminals), and zero test dependencies (
 - **Auto-restart with backoff** — crashed services restart automatically with exponential backoff (2s → 4s → 8s), max 3 attempts; manual restart resets the counter; crash-loop badge surfaces services that need attention.
 - **Pre-flight validation** — `--watch-path` arguments are checked against disk before spawn so a stale config after a rebase fails loudly instead of silently.
 - **Port-conflict detection** — refuses to boot when ports collide, including lazy-mode `port + 10000` clashes.
-- **npm install management** — automatic dependency installation with hash-based stamps to skip redundant installs.
+- **Dependency installs** — automatic, with the package manager your lockfile names (npm, pnpm, yarn, bun), at the workspace root for workspace members, skipped when `package.json` and the lockfile are unchanged.
 
 ### Readiness
 - **TCP or HTTP health checks** — per-service `healthCheck` with configurable path, status codes, timeout, and `startPeriod` grace window.
