@@ -13,7 +13,7 @@ function fakeHost(): FatalHost & EventEmitter & { exits: number[] } {
 const tick = () => new Promise(r => setImmediate(r));
 
 describe('onFatal', () => {
-  it('corre el teardown en SIGTERM y sale con 128 + 15', async () => {
+  it('runs the teardown on SIGTERM and exits 128 + 15', async () => {
     const host = fakeHost();
     let runs = 0;
     onFatal(async () => { runs++; }, { host, report: () => {} });
@@ -23,7 +23,7 @@ describe('onFatal', () => {
     assert.deepEqual(host.exits, [143]);
   });
 
-  it('SIGHUP también: cerrar la terminal no puede dejar el stack vivo', async () => {
+  it('handles SIGHUP too: closing the terminal must not leave the stack alive', async () => {
     const host = fakeHost();
     let runs = 0;
     onFatal(async () => { runs++; }, { host, report: () => {} });
@@ -33,7 +33,7 @@ describe('onFatal', () => {
     assert.deepEqual(host.exits, [129]);
   });
 
-  it('una segunda señal durante el teardown no lo repite ni sale antes', async () => {
+  it('a second signal during teardown neither repeats it nor exits early', async () => {
     const host = fakeHost();
     let runs = 0;
     let release!: () => void;
@@ -43,13 +43,13 @@ describe('onFatal', () => {
     host.emit('SIGTERM');
     await tick();
     assert.equal(runs, 1);
-    assert.deepEqual(host.exits, [], 'salir antes de terminar es lo que deja huérfanos');
+    assert.deepEqual(host.exits, [], 'exiting before it finishes is what orphans children');
     release();
     await tick();
     assert.deepEqual(host.exits, [130]);
   });
 
-  it('una excepción no capturada se reporta, limpia y sale con 1', async () => {
+  it('an uncaught exception is reported, cleaned up, and exits 1', async () => {
     const host = fakeHost();
     const reported: unknown[] = [];
     let runs = 0;
@@ -62,7 +62,7 @@ describe('onFatal', () => {
     assert.deepEqual(host.exits, [1]);
   });
 
-  it('un rechazo no manejado también', async () => {
+  it('so is an unhandled rejection', async () => {
     const host = fakeHost();
     let runs = 0;
     onFatal(async () => { runs++; }, { host, report: () => {} });
@@ -72,7 +72,7 @@ describe('onFatal', () => {
     assert.deepEqual(host.exits, [1]);
   });
 
-  it('signalExitCode permite al daemon salir con 0', async () => {
+  it('signalExitCode lets the daemon exit 0', async () => {
     const host = fakeHost();
     onFatal(async () => {}, { host, report: () => {}, signalExitCode: () => 0 });
     host.emit('SIGTERM');
@@ -80,7 +80,7 @@ describe('onFatal', () => {
     assert.deepEqual(host.exits, [0]);
   });
 
-  it('el disposer quita todos los listeners', () => {
+  it('the disposer removes every listener', () => {
     const host = fakeHost();
     const dispose = onFatal(async () => {}, { host, report: () => {} });
     for (const ev of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) {
@@ -90,5 +90,26 @@ describe('onFatal', () => {
     for (const ev of ['SIGINT', 'SIGTERM', 'SIGHUP', 'uncaughtException', 'unhandledRejection']) {
       assert.equal(host.listenerCount(ev), 0, ev);
     }
+  });
+
+  it('a throwing report breaks nothing and the teardown still runs', async () => {
+    // A throw inside an 'uncaughtException' listener kills the process on the
+    // spot, mid-teardown.
+    const host = fakeHost();
+    let runs = 0;
+    onFatal(async () => { runs++; }, { host, report: () => { throw new Error('EPIPE'); } });
+    assert.doesNotThrow(() => host.emit('uncaughtException', new Error('boom')));
+    await tick();
+    assert.equal(runs, 1);
+    assert.deepEqual(host.exits, [1]);
+  });
+
+  it('reports with a budget: a closed terminal does not become an error loop', async () => {
+    const host = fakeHost();
+    let reports = 0;
+    onFatal(() => new Promise<void>(() => {}), { host, report: () => { reports++; } });
+    for (let i = 0; i < 50; i++) host.emit('uncaughtException', new Error(`write EIO ${i}`));
+    await tick();
+    assert.equal(reports, 3);
   });
 });

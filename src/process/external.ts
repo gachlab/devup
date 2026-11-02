@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { ExternalService } from '../config/types.js';
 import type { Platform } from '../platform/types.js';
 import { checkHealth } from './health.js';
+import { shellCommand } from '../platform/command.js';
 
 const DEFAULT_START_TIMEOUT_S = 60;
 
@@ -17,6 +18,13 @@ export interface StartExternalsOpts {
   env: Record<string, string>;
   platform: Platform;
   onLog?: (svcName: string, msg: string) => void;
+  /** Filled as each external is spawned, not when they are all healthy. The
+   *  caller's teardown reads this array: waiting for a database can take a
+   *  minute, and a signal in that minute used to find nothing to stop — the
+   *  external, detached, outlived devup holding its port. */
+  into?: ExternalProc[];
+  /** Aborted by the caller's teardown: stop waiting, spawn nothing more. */
+  signal?: AbortSignal;
 }
 
 export interface StartExternalsResult {
@@ -32,10 +40,11 @@ export async function startExternals(
   externals: ExternalService[],
   opts: StartExternalsOpts,
 ): Promise<StartExternalsResult> {
-  const procs: ExternalProc[] = [];
+  const procs: ExternalProc[] = opts.into ?? [];
   const failed: string[] = [];
 
   for (const svc of externals) {
+    if (opts.signal?.aborted) break;
     const proc = spawnExternal(svc, opts);
     procs.push({ svc, proc, pid: proc.pid ?? null });
 
@@ -50,7 +59,7 @@ export async function startExternals(
     }
 
     const timeoutMs = (svc.startTimeout ?? DEFAULT_START_TIMEOUT_S) * 1000;
-    const ok = await waitHealthy(svc, timeoutMs);
+    const ok = await waitHealthy(svc, timeoutMs, opts.signal);
     if (ok) {
       opts.onLog?.(svc.name, '✅ healthy');
     } else {
@@ -74,12 +83,10 @@ export async function stopExternals(
       if (svc.stopCmd) {
         opts.onLog?.(svc.name, `🧹 ${svc.stopCmd}`);
         await new Promise<void>(resolve => {
-          const isWin = process.platform === 'win32';
-          const shell = isWin ? 'cmd.exe' : 'sh';
-          const flag = isWin ? '/c' : '-c';
           const cwd = svc.cwd ? join(opts.baseCwd, svc.cwd) : opts.baseCwd;
           const env = { ...opts.env, ...(svc.extraEnv ?? {}) };
-          const child = spawn(shell, [flag, svc.stopCmd!], { cwd, env, stdio: 'ignore' });
+          const sh = shellCommand(svc.stopCmd!, env);
+          const child = spawn(sh.file, sh.args, { cwd, env, stdio: 'ignore', windowsHide: true });
           child.on('close', () => resolve());
           child.on('error', () => resolve());
           // 10s hard cap so a hung docker stop doesn't block forever
@@ -92,14 +99,12 @@ export async function stopExternals(
 }
 
 function spawnExternal(svc: ExternalService, opts: StartExternalsOpts): ChildProcess {
-  const isWin = process.platform === 'win32';
-  const shell = isWin ? 'cmd.exe' : 'sh';
-  const flag = isWin ? '/c' : '-c';
   const cwd = svc.cwd ? join(opts.baseCwd, svc.cwd) : opts.baseCwd;
   const env = { ...opts.env, ...(svc.extraEnv ?? {}) };
 
   opts.onLog?.(svc.name, `🚀 ${svc.cmd}`);
-  const child = spawn(shell, [flag, svc.cmd], {
+  const sh = shellCommand(svc.cmd, env);
+  const child = spawn(sh.file, sh.args, {
     cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout?.on('data', (d: Buffer) => opts.onLog?.(svc.name, d.toString().trimEnd()));
@@ -108,10 +113,10 @@ function spawnExternal(svc: ExternalService, opts: StartExternalsOpts): ChildPro
   return child;
 }
 
-async function waitHealthy(svc: ExternalService, timeoutMs: number): Promise<boolean> {
+async function waitHealthy(svc: ExternalService, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   const port = svc.port!;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !signal?.aborted) {
     if ((await checkHealth(port, svc.healthCheck)).ok) return true;
     await new Promise(r => setTimeout(r, 500));
   }

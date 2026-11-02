@@ -52,9 +52,9 @@ describe('Lifecycle.stop', () => {
     assert.deepEqual(platform.kills, [999]);
   });
 
-  it('no mata el grupo de un pid muerto: un servicio crasheado conserva su pid (CLAUDE.md §2)', () => {
-    // `kill(-pid)` sobre un pid que ya salió alcanza al grupo que el sistema le
-    // haya dado después a ese número.
+  it('does not signal a dead pid\'s group: a crashed service keeps its pid (CLAUDE.md §2)', () => {
+    // `kill(-pid)` on a pid that already exited reaches whatever group the OS
+    // has since given that number.
     const deadProc = { pid: 999, killed: false, exitCode: 1, signalCode: null } as any;
     const state = new Map<string, ProcessState>([
       ['x', mkState({ proc: deadProc, pid: 999, status: 'crashed', health: 'down' })],

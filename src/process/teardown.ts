@@ -40,6 +40,12 @@ export function onFatal(teardown: () => Promise<void>, opts: OnFatalOpts = {}): 
     ?? ((sig: FatalSignal) => 128 + ((constants.signals as Record<string, number>)[sig] ?? 0));
 
   let running = false;
+  // A closed terminal turns every write into another error: Ink's next frame,
+  // the default `report` itself. Each one lands back here, so reporting has a
+  // budget and never throws — a throw inside an 'uncaughtException' listener
+  // kills the process on the spot, mid-teardown, which is the orphaning this
+  // exists to prevent.
+  let reportsLeft = 3;
   const run = (code: number) => {
     if (running) return;
     running = true;
@@ -50,9 +56,17 @@ export function onFatal(teardown: () => Promise<void>, opts: OnFatalOpts = {}): 
   const onError = (err: unknown) => {
     // Reported even when a teardown is already under way: a throw from inside
     // the teardown is the one most worth seeing.
-    report(err);
+    if (reportsLeft > 0) {
+      reportsLeft--;
+      try { report(err); } catch { /* nowhere left to say it */ }
+    }
     run(1);
   };
+  // EPIPE/EIO on our own stdio after SIGHUP is an 'error' event; without a
+  // listener it is one more uncaught exception per write.
+  const swallow = () => {};
+  const stdio = opts.host ? [] : [process.stdout, process.stderr];
+  for (const s of stdio) s.on('error', swallow);
 
   const signalListeners = SIGNALS.map(sig => [sig, () => onSignal(sig)] as const);
   for (const [sig, fn] of signalListeners) host.on(sig, fn);
@@ -63,5 +77,6 @@ export function onFatal(teardown: () => Promise<void>, opts: OnFatalOpts = {}): 
     for (const [sig, fn] of signalListeners) host.off(sig, fn);
     host.off('uncaughtException', onError);
     host.off('unhandledRejection', onError);
+    for (const s of stdio) s.off('error', swallow);
   };
 }

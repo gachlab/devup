@@ -103,7 +103,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   const lazyProxies = new Map<string, LazyProxy>();
   const remoteProxies = new Map<string, RemoteProxy>();
   const prevCpuMap = new Map<string, { time: number; cpu: number }>();
-  let externals: ExternalProc[] = [];
+  // Filled by `startExternals` as each is spawned, so a signal during the wait
+  // for a slow database still finds it; aborted first thing on teardown.
+  const externals: ExternalProc[] = [];
+  const bootAbort = new AbortController();
   let socket: SocketServerHandle | null = null;
   let healthTimer: NodeJS.Timeout | null = null;
   let proxyTimer: NodeJS.Timeout | null = null;
@@ -138,6 +141,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
   });
 
   const cleanup = async (): Promise<void> => {
+    bootAbort.abort();
     if (healthTimer) clearInterval(healthTimer);
     if (proxyTimer) clearInterval(proxyTimer);
     if (stopConfigWatcher) { try { stopConfigWatcher(); } catch { /* ignore */ } }
@@ -173,8 +177,8 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       const result = await startExternals(config.external, {
         baseCwd, env, platform,
         onLog: (svc, msg) => { logSink.write(`ext:${svc}`, msg); logBus.emit({ svc: `ext:${svc}`, text: msg }); },
+        into: externals, signal: bootAbort.signal,
       });
-      externals = result.procs;
       if (!result.allHealthy) {
         throw new Error(`externals failed: ${result.failed.join(', ')}`);
       }

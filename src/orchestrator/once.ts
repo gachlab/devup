@@ -45,6 +45,26 @@ export interface OnceReport {
 }
 
 export async function runOnce(opts: OnceOpts): Promise<number> {
+  // The body has five returns and they all tear down through `finish`; a
+  // throw has none. An unknown `--remote` environment, say, is a rejection
+  // after the externals are already up — and `main().catch` exits on it,
+  // leaving them running. This is the sixth exit, and it tears down too.
+  const exit: OnceExit = { teardown: null, dispose: null };
+  try {
+    return await runOnceBody(opts, exit);
+  } catch (e) {
+    await exit.teardown?.().catch(() => {});
+    exit.dispose?.();
+    throw e;
+  }
+}
+
+interface OnceExit {
+  teardown: (() => Promise<void>) | null;
+  dispose: (() => void) | null;
+}
+
+async function runOnceBody(opts: OnceOpts, exit: OnceExit): Promise<number> {
   const json = opts.cliArgs.onceJson;
   // With --json the summary *is* the output, so nothing else may reach stdout:
   // one `[app-api] listening` line in the middle and the caller cannot parse
@@ -76,17 +96,28 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     await mgr.cleanup();
   };
 
-  // Filled once they are up; declared here so the signal handler can reach it.
-  let externals: ExternalProc[] = [];
+  // Filled by `startExternals` as each one is spawned, not when they are all
+  // healthy: a database can take a minute to answer, and the teardown has to
+  // be able to stop it during that minute.
+  const externals: ExternalProc[] = [];
+  const abort = new AbortController();
+  // One teardown, memoised, for every way out. A Ctrl-C that lands while a
+  // normal return is already tearing down used to start a second one in
+  // parallel over the same processes.
+  let teardownRun: Promise<void> | null = null;
+  const teardownAll = (): Promise<void> => teardownRun ??= (async () => {
+    abort.abort();
+    await cleanupAll();
+    await stopExternals(externals, platform, { baseCwd, env });
+  })();
+  exit.teardown = teardownAll;
   // A Ctrl-C, or the SIGTERM a CI runner sends when a job times out, used to
   // kill only devup: every service is a detached child in its own process
   // group, so the whole stack outlived the run and held its ports for the
   // next one. The handlers go away when the run does — `finish` is the one
   // place every return passes through.
-  const disposeFatal = onFatal(async () => {
-    await cleanupAll();
-    await stopExternals(externals, platform, { baseCwd, env });
-  });
+  const disposeFatal = onFatal(teardownAll);
+  exit.dispose = disposeFatal;
 
   const reports: OnceServiceReport[] = [];
   /** Names actually spawned, so the report can tell "never launched" from
@@ -125,12 +156,11 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     const result = await startExternals(config.external, {
       baseCwd, env, platform,
       onLog: (svc, msg) => { logSink?.write(`ext:${svc}`, msg); out(`[ext:${svc}] ${msg}`); },
+      into: externals, signal: abort.signal,
     });
-    externals = result.procs;
     if (!result.allHealthy) {
       out(`✗ externals failed: ${result.failed.join(', ')}`);
-      await stopExternals(externals, platform, { baseCwd, env });
-      await cleanupAll();
+      await teardownAll();
       // Every service reports as never-started, with the real reason —
       // `finish` fills them in, so there is one place that decides what an
       // unreached service looks like.
@@ -178,8 +208,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       }
     }
     if (classification.remote.some(spec => mgr.state.get(spec.svc.name)?.health !== 'up')) {
-      await cleanupAll();
-      await stopExternals(externals, platform, { baseCwd, env });
+      await teardownAll();
       return finish(false);
     }
   }
@@ -206,8 +235,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
       if (!installed) {
         out(`✗ install failed for ${svc.name}`);
         reports.push(describe(svc, false, 'install failed'));
-        await cleanupAll();
-        await stopExternals(externals, platform, { baseCwd, env });
+        await teardownAll();
         return finish(false);
       }
       await mgr.start(svc, ci);
@@ -258,8 +286,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     }
 
     if (settled.some(r => !r.ok)) {
-      await cleanupAll();
-      await stopExternals(externals, platform, { baseCwd, env });
+      await teardownAll();
       return finish(false);
     }
   }
@@ -271,8 +298,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
   const remoteCount = remoteProxies.size;
   out(`ready: ${services.length} services in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
     + (remoteCount > 0 ? ` (${remoteCount} served from ${cliArgs.remote!.split(':')[0]})` : ''));
-  await cleanupAll();
-  await stopExternals(externals, platform, { baseCwd, env });
+  await teardownAll();
   return finish(true);
 }
 

@@ -10,7 +10,7 @@ import { startsSuspended } from '../utils/process-args.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
 import { isInspectorNotice, parseDebugPort } from './inspector.js';
-import { resolveSpawnCommand } from '../platform/command.js';
+import { resolveSpawnCommand, shellCommand } from '../platform/command.js';
 
 const CRASH_LOG_LINES = 20;
 const STARTUP_TIMEOUT_DEFAULT_MS = 45_000;
@@ -65,7 +65,7 @@ export class Spawner {
   }
 
   async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
-    if (this.closing) return;
+    if (this.closing) return this.skipForShutdown(svc, colorIdx);
     // Never spawn a process for a service that is served from a remote
     // environment, and never touch its state on the way out.
     //
@@ -133,7 +133,7 @@ export class Spawner {
     this.clearStartupTimer(svc.name);
 
     if (svc.preBuild) {
-      if (this.closing) return;
+      if (this.closing) return this.skipForShutdown(svc, colorIdx);
       const built = await this.runPreBuild(svc, cwd, colorIdx);
       if (!built) {
         this.recordCrashedState(svc, colorIdx);
@@ -156,7 +156,7 @@ export class Spawner {
     // Re-checked after every await above: shutdown can begin during the port
     // check or the pre-build, and this is the last moment before a detached
     // child exists that `cleanup` has already stopped looking for.
-    if (this.closing) return;
+    if (this.closing) return this.skipForShutdown(svc, colorIdx);
 
     const env = buildProcessEnv(svc, this.env);
     const command = resolveSpawnCommand(svc.cmd, args, { env, cwd });
@@ -193,6 +193,13 @@ export class Spawner {
     }
 
     this.log(svc.name, isRestart ? `🔄 restarted (:${svc.port})` : `🚀 started (:${svc.port})`, colorIdx);
+  }
+
+  /** Said, not silent: whoever awaited this start — a boot phase, a lazy wake —
+   *  goes on to wait for a port that will never open, and the log is the only
+   *  place that explains why. */
+  private skipForShutdown(svc: ServiceConfig, colorIdx: number): void {
+    this.log(svc.name, '⏹ start skipped — shutting down', colorIdx);
   }
 
   private scheduleStartupTimeout(svc: ServiceConfig, state: ProcessState, colorIdx: number): void {
@@ -351,11 +358,9 @@ export class Spawner {
   private runPreBuild(svc: ServiceConfig, cwd: string, colorIdx: number): Promise<boolean> {
     this.log(svc.name, `🔨 preBuild: ${svc.preBuild}`, colorIdx);
     return new Promise(res => {
-      const isWin = process.platform === 'win32';
-      const shell = isWin ? 'cmd.exe' : 'sh';
-      const shellFlag = isWin ? '/c' : '-c';
       const env = buildProcessEnv(svc, this.env);
-      const child = spawn(shell, [shellFlag, svc.preBuild!], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const sh = shellCommand(svc.preBuild!, env);
+      const child = spawn(sh.file, sh.args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       const outBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
       const errBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
       child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
@@ -371,8 +376,8 @@ export class Spawner {
 
   private spawnWatchBuild(svc: ServiceConfig, cwd: string, env: Record<string, string>, colorIdx: number): ChildProcess {
     this.log(svc.name, `👀 watchBuild: ${svc.watchBuild}`, colorIdx);
-    const isWin = process.platform === 'win32';
-    const child = spawn(isWin ? 'cmd.exe' : 'sh', [isWin ? '/c' : '-c', svc.watchBuild!], {
+    const sh = shellCommand(svc.watchBuild!, env);
+    const child = spawn(sh.file, sh.args, {
       cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     const outBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));

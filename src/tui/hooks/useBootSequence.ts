@@ -15,6 +15,9 @@ interface BootRefs {
   lazyProxies: React.RefObject<Map<string, LazyProxy>>;
   remoteProxies: React.RefObject<Map<string, RemoteProxy>>;
   externals: React.RefObject<ExternalProc[]>;
+  /** Aborted by the App's teardown, so a boot still waiting on an external
+   *  stops waiting and spawns nothing more. */
+  bootAbort: React.RefObject<AbortController>;
 }
 
 /** Orchestrates the boot:
@@ -51,8 +54,10 @@ export function useBootSequence(
         const result = await startExternals(config.external, {
           baseCwd, env, platform,
           onLog: (svc, msg) => pushLog(`ext:${svc}`, msg, 12),
+          // The App's own array, filled as each one is spawned: its teardown
+          // must be able to stop a database that is still starting.
+          into: refs.externals.current!, signal: refs.bootAbort.current!.signal,
         });
-        refs.externals.current = result.procs;
         if (!result.allHealthy) {
           pushLog('devup', `❌ external(s) failed: ${result.failed.join(', ')}. Aborting boot.`, 5);
           return;

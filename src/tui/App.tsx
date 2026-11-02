@@ -69,6 +69,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const remoteProxies = useRef<Map<string, RemoteProxy>>(new Map());
   const pm = useProcessManager(platform, baseCwd, env, logSink, lazyProxies, remoteProxies);
   const externals = useRef<ExternalProc[]>([]);
+  const bootAbort = useRef(new AbortController());
 
   const kb = useKeyBindings({
     onQuit: () => { void shutdown(); },
@@ -104,6 +105,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const teardownRun = useRef<Promise<void> | null>(null);
   const teardown = useCallback((): Promise<void> => {
     teardownRun.current ??= (async () => {
+      bootAbort.current.abort();
       lazyProxies.current.forEach(p => p.destroy());
       remoteProxies.current.forEach(p => p.destroy());
       await socketServer.current?.close();
@@ -138,7 +140,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const activeTip = useContextualTips(pm.logs.length, !!kb.searchTerm, !!kb.logFilter, pm.states);
   useProxySync(proxyProvider, proxyOpts, pm.states, kb.proxyEnabled);
   useBootSequence(pm.manager, config, services, cliArgs, platform, env, baseCwd,
-    { lazyProxies, remoteProxies, externals }, pm.pushLog);
+    { lazyProxies, remoteProxies, externals, bootAbort }, pm.pushLog);
 
   const handleFilterSelect = useCallback((name: string) => kb.setFilter(name), [kb]);
   const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);

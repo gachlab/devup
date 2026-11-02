@@ -221,3 +221,54 @@ describe('daemon E2E lifecycle', { skip: !isUnix }, () => {
     }
   });
 });
+
+describe('daemon on SIGHUP', { skip: !isUnix }, () => {
+  it('tears down its services and exits: it used to listen to SIGTERM and SIGINT only', async () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'devup-daemon-hup-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+    mkdirSync(join(tempHome, '.devup'), { recursive: true });
+
+    const port = await findFreePort();
+    const projectDir = join(tempHome, 'project');
+    mkdirSync(projectDir);
+    const configPath = join(projectDir, 'devup.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      name: 'HupDaemon',
+      services: [{
+        name: 'dummy', cwd: '.', cmd: 'node',
+        args: [join(fixtures, 'dummy-server.cjs'), String(port)],
+        type: 'api', port, phase: 0, readyPattern: 'listening:',
+      }],
+    }));
+
+    let child: ChildProcess | null = null;
+    try {
+      const repoRoot = join(__dirname, '..', '..');
+      child = spawn(process.execPath, ['--import', 'tsx', runDaemonFixture, configPath], {
+        detached: true, stdio: 'ignore', cwd: repoRoot, env: { ...process.env, HOME: tempHome },
+      });
+      const exited = new Promise<number | null>(r => child!.on('exit', code => r(code)));
+
+      const sockPath = defaultSocketPath('HupDaemon');
+      await waitFor(() => existsSync(pidPathFor('HupDaemon')), 20_000, 'pid file');
+      await waitFor(() => existsSync(sockPath), 5_000, 'socket file');
+      let svcPid = 0;
+      await waitFor(async () => {
+        const st = await rpcOnce(sockPath, { id: 1, method: 'status' });
+        svcPid = st.result.services[0]?.pid ?? 0;
+        return svcPid > 0;
+      }, 10_000, 'service pid');
+
+      process.kill(child.pid!, 'SIGHUP');
+      assert.equal(await exited, 0);
+      const alive = () => { try { process.kill(svcPid, 0); return true; } catch { return false; } };
+      await waitFor(() => !alive(), 5_000, 'service gone').catch(() => {});
+      assert.equal(alive(), false, 'the service outlived the daemon');
+    } finally {
+      if (child?.pid) { try { process.kill(child.pid, 'SIGKILL'); } catch { /* ignore */ } }
+      if (originalHome) process.env.HOME = originalHome; else delete process.env.HOME;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+});

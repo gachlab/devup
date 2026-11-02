@@ -92,3 +92,40 @@ describe('external services', { skip: !isUnix }, () => {
     (await import('node:fs')).rmSync(dir, { recursive: true });
   });
 });
+
+describe('startExternals: into and signal', { skip: !isUnix }, () => {
+  it('publishes each external to `into` when spawned, not when its wait ends', async () => {
+    // A teardown during the health wait has to find it.
+    const port = await findFreePort();
+    const into: import('../../../src/process/external.js').ExternalProc[] = [];
+    const abort = new AbortController();
+    const run = startExternals([{ name: 'slow', cmd: 'sleep 5', port, healthCheck: { type: 'tcp' }, startTimeout: 10 }], {
+      baseCwd: process.cwd(), env: { ...process.env as Record<string, string> },
+      platform: new LinuxPlatform(), into, signal: abort.signal,
+    });
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(into.length, 1, 'still waiting, and already in the list');
+    abort.abort();
+    const result = await run;
+    assert.equal(result.procs, into);
+    await stopExternals(into, new LinuxPlatform(), { baseCwd: process.cwd(), env: {} });
+  });
+
+  it('an aborted signal ends the wait and spawns nothing more', async () => {
+    const port = await findFreePort();
+    const abort = new AbortController();
+    const t0 = Date.now();
+    const run = startExternals([
+      { name: 'a', cmd: 'sleep 5', port, healthCheck: { type: 'tcp' }, startTimeout: 30 },
+      { name: 'b', cmd: 'sleep 5' },
+    ], {
+      baseCwd: process.cwd(), env: { ...process.env as Record<string, string> },
+      platform: new LinuxPlatform(), signal: abort.signal,
+    });
+    setTimeout(() => abort.abort(), 300);
+    const result = await run;
+    assert.ok(Date.now() - t0 < 5000, 'kept waiting the full 30 s');
+    assert.deepEqual(result.procs.map(p => p.svc.name), ['a']);
+    await stopExternals(result.procs, new LinuxPlatform(), { baseCwd: process.cwd(), env: {} });
+  });
+});

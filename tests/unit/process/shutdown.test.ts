@@ -45,58 +45,61 @@ async function until(pred: () => boolean, ms = 5000): Promise<void> {
   }
 }
 
-describe('un spawn que falla', () => {
-  it('un cmd inexistente queda crashed con el error, sin tumbar el proceso ni reintentar', { timeout: 10000 }, async () => {
-    // Sin listener de 'error', esto era una excepción no capturada: este test
-    // no llegaría a la siguiente línea.
+describe('a spawn that fails', () => {
+  it('a missing cmd ends up crashed with the error, without killing the process or retrying', { timeout: 10000 }, async () => {
+    // Without an 'error' listener this was an uncaught exception: this test
+    // would never reach the next line.
     const { mgr, logs } = mk();
     await mgr.start({ ...svc('ghost', ''), cmd: 'devup-definitely-not-a-command' }, 0);
     await until(() => mgr.state.get('ghost')?.status === 'crashed');
     const st = mgr.state.get('ghost')!;
     assert.match(st.crashLog?.[0] ?? '', /ENOENT/);
-    assert.equal(st.restartPendingUntil ?? null, null, 'un binario ausente no aparece en 2 s');
+    assert.equal(st.restartPendingUntil ?? null, null, 'a missing binary does not appear in 2 s');
     assert.ok(logs.some(l => l.includes('failed to start')), logs.join('\n'));
   });
 });
 
-describe('stop y apagado frente a un reinicio en cola', () => {
-  it('stop() cancela el auto-restart de un servicio crasheado', { timeout: 10000 }, async () => {
+describe('stop and shutdown against a queued restart', () => {
+  it('stop() cancels the auto-restart of a crashed service', { timeout: 10000 }, async () => {
     const { mgr } = mk();
     await mgr.start(svc('flaky', 'process.exit(1)'), 0);
     await until(() => mgr.state.get('flaky')?.restartPendingUntil != null);
     const crashed = mgr.state.get('flaky')!;
 
     mgr.stop('flaky');
-    // El primer backoff es de 2 s.
+    // The first backoff is 2 s.
     await sleep(2600);
-    assert.equal(mgr.state.get('flaky'), crashed, 'volvió a arrancar después de `stop`');
+    assert.equal(mgr.state.get('flaky'), crashed, 'it came back after `stop`');
     assert.equal(crashed.restartPendingUntil, null);
   });
 
-  it('cleanup() cancela los reinicios en cola: nada arranca durante el grace', { timeout: 10000 }, async () => {
+  it('cleanup() cancels queued restarts: nothing starts during the grace period', { timeout: 10000 }, async () => {
     const { mgr } = mk();
     await mgr.start(svc('flaky2', 'process.exit(1)'), 0);
     await until(() => mgr.state.get('flaky2')?.restartPendingUntil != null);
     const crashed = mgr.state.get('flaky2')!;
 
     await mgr.cleanup({ gracePeriodMs: 100 });
-    // Cancelado, no sólo bloqueado al disparar: un cliente que muestra la
-    // cuenta atrás tiene que enterarse ya.
+    // Cancelled, not just blocked when it fires: a client showing the
+    // countdown has to hear about it now.
     assert.equal(crashed.restartPendingUntil, null);
     await sleep(2600);
-    assert.equal(mgr.state.get('flaky2'), crashed, 'un hijo nuevo habría sobrevivido a devup');
+    assert.equal(mgr.state.get('flaky2'), crashed, 'a new child would have outlived devup');
   });
 
-  it('después de cleanup() no se lanza nada más, aunque un arranque llegue tarde', { timeout: 10000 }, async () => {
-    const { mgr } = mk();
+  it('nothing spawns after cleanup(), even a start that arrives late', { timeout: 10000 }, async () => {
+    const { mgr, logs } = mk();
     await mgr.cleanup({ gracePeriodMs: 100 });
     await mgr.start(svc('late', 'setInterval(() => {}, 1000)'), 0);
     assert.equal(mgr.state.get('late'), undefined);
+    // Said, not silent: whoever awaited this start will wait for a port that
+    // never opens, and the log is the only thing that explains why.
+    assert.ok(logs.some(l => l.includes('start skipped — shutting down')), logs.join('\n'));
   });
 });
 
-describe('estado tras un stop intencional', () => {
-  it('pasa a stopped/down cuando el proceso sale', { timeout: 10000 }, async () => {
+describe('state after an intentional stop', () => {
+  it('becomes stopped/down when the process exits', { timeout: 10000 }, async () => {
     const { mgr } = mk();
     await mgr.start(svc('calm', 'setInterval(() => {}, 1000)'), 0);
     const st = mgr.state.get('calm')!;
@@ -107,7 +110,7 @@ describe('estado tras un stop intencional', () => {
     assert.equal(st.health, 'down');
   });
 
-  it('no pisa el estado nuevo de un reinicio', { timeout: 15000 }, async () => {
+  it('does not overwrite the new state of a restart', { timeout: 15000 }, async () => {
     const { mgr } = mk();
     await mgr.start(svc('again', 'setInterval(() => {}, 1000)'), 0);
     const old = mgr.state.get('again')!;
