@@ -4,7 +4,7 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.19.2](https://github.com/gachlab/devup/releases/tag/0.19.2)** (2026-08-28) — the twelve findings of an architecture review measured against this repo's own documents, two of them live bugs.
+Last released: **[0.20.0](https://github.com/gachlab/devup/releases/tag/0.20.0)** (2026-11-02) — the ten findings of a correctness review: shutdown without orphans, config precedence, lazy lifecycle, TUI, reverse proxy, hot reload, logs and control plane, remote headers, platform and debt.
 
 Full history is in [CHANGELOG.md](CHANGELOG.md). This file is meant to hold what is *not* built yet — most of what is below is now `done`, kept because the reasoning behind each item is still the record of why it exists.
 
