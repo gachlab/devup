@@ -53,11 +53,10 @@ export function buildOriginMap(targets: Map<string, { target: string; port: numb
 /** The one origin map for a run, shared by every remote proxy in it.
  *
  *  Keyed by the run's proxy registry, so the boot and every later switch find
- *  the same `Map`. Each proxy holds a reference to it, and `refreshOriginMap`
- *  rewrites it in place: a proxy built at boot used to keep the map it was
- *  given then, so after `ctl remote app qa` the auth service's login redirect
- *  to `https://app.qa…` was no longer localized and the browser left the local
- *  stack with the fresh session. */
+ *  the same `Map`, and every proxy holds a reference to it: a proxy built at
+ *  boot used to keep the map it was given then, so after `ctl remote app qa`
+ *  the auth service's login redirect to `https://app.qa…` was no longer
+ *  localized and the browser left the local stack with the fresh session. */
 const originMaps = new WeakMap<object, Map<string, string>>();
 export function originMapFor(registry: object): Map<string, string> {
   let map = originMaps.get(registry);
@@ -65,10 +64,24 @@ export function originMapFor(registry: object): Map<string, string> {
   return map;
 }
 
-/** Replace the contents of `registry`'s shared origin map with `targets`. */
-export function refreshOriginMap(registry: object, targets: Map<string, { target: string; port: number }>): Map<string, string> {
+/** Map every service an environment can serve to its local port — local and
+ *  remote alike, and never removed.
+ *
+ *  The local port is the service's public port either way: served from the
+ *  environment, devup's proxy answers there; run here, the process (or its
+ *  lazy proxy) does. So a redirect to the environment's copy of *any* of them
+ *  belongs on localhost. Mapping only the remote ones made switching a service
+ *  back to local — to work on it — send the login redirect to QA's copy. */
+export function addEnvironmentOrigins(
+  registry: object,
+  services: Iterable<{ name: string; port: number }>,
+  env: EnvironmentConfig,
+  routes: Record<string, string> | undefined,
+): Map<string, string> {
   const map = originMapFor(registry);
-  map.clear();
-  for (const [origin, local] of buildOriginMap(targets)) map.set(origin, local);
+  for (const svc of services) {
+    const target = resolveRemoteTarget(svc.name, env, routes);
+    if (target) map.set(new URL(target).origin, `http://localhost:${svc.port}`);
+  }
   return map;
 }

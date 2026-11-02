@@ -161,7 +161,9 @@ export function localizeSetCookie(cookie: string): string {
   // browser rejects them outright, and the login silently fails. They keep it
   // — and `SameSite=None` with it — because `http://localhost` is a secure
   // context to Chrome and Firefox, which accept them as they came.
-  const prefixed = /^__(host|secure)-/i.test(parts[0] ?? '');
+  // `Partitioned` (CHIPS) cookies are in the same position: Chrome refuses one
+  // without `Secure`.
+  const prefixed = /^__(host|secure)-/i.test(parts[0] ?? '') || parts.some(p => p.toLowerCase() === 'partitioned');
 
   for (const part of parts) {
     const lower = part.toLowerCase();

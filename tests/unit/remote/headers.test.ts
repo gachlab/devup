@@ -265,4 +265,8 @@ describe('review of #142', () => {
     assert.equal(cookies.length, 2, 'repeated Set-Cookie joined into one invalid line');
     assert.ok(cookies.every(c => !/Domain=|Secure/.test(c)), cookies.join('\n'));
   });
+
+  it('keeps Secure on a Partitioned (CHIPS) cookie, which Chrome refuses without it', () => {
+    assert.match(localizeSetCookie('sid=1; Secure; SameSite=None; Partitioned; Path=/'), /Secure/);
+  });
 });

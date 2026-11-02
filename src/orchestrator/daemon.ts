@@ -211,6 +211,7 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
       startRemoteServices({
         mgr, classification, proxies: remoteProxies,
         colorIdxStart: config.services.length,
+        routes: config.proxy?.routes,
         onLog: (svc, msg) => { logSink.write(svc, msg); logBus.emit({ svc, text: msg }); },
         processEnv: env,
       });
