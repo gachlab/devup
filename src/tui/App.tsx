@@ -25,6 +25,7 @@ import { bootEnvName, resolveToggle } from '../remote/toggle.js';
 import type { LazyProxy } from '../lazy/proxy.js';
 import { stopExternals, type ExternalProc } from '../process/external.js';
 import { onFatal } from '../process/teardown.js';
+import { restartService } from '../process/restart-service.js';
 
 /** Builds the URL to open in the browser when the user picks a service.
  *  Honors the proxy + TLS settings: if --proxy is active and the service has
@@ -143,7 +144,21 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     { lazyProxies, remoteProxies, externals, bootAbort }, pm.pushLog);
 
   const handleFilterSelect = useCallback((name: string) => kb.setFilter(name), [kb]);
-  const handleRestartSelect = useCallback((name: string) => { pm.restart(name); kb.setModal('none'); }, [pm, kb]);
+  // Through `restartService`, like the control plane's `restart`. The
+  // manager's own `restart` sleeps a fixed 1.5 s, skips the port check and goes
+  // around a lazy service's proxy — whose next request then starts a second
+  // process. And its result is said: `ok: false` used to vanish.
+  const handleRestartSelect = useCallback((name: string) => {
+    kb.setModal('none');
+    const mgr = pm.manager;
+    if (!mgr) return;
+    void restartService(mgr, lazyProxies.current, name).then(res => {
+      const ci = pm.states.get(name)?.colorIdx ?? 0;
+      if (res.skippedIdle) pm.pushLog(name, '💤 idle — nothing to restart; the next request starts it', ci);
+      else if (res.skippedRemote) pm.pushLog(name, `🌐 served from ${res.skippedRemote} — nothing to restart here`, ci);
+      else if (!res.ok) pm.pushLog(name, '✗ restart failed — see the lines above', ci);
+    });
+  }, [pm, kb]);
   const handleRemoteSelect = useCallback((name: string) => {
     kb.setModal('none');
     const st = pm.states.get(name);
@@ -163,7 +178,9 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
   const handleOpenSelect = useCallback((name: string) => {
     const st = pm.states.get(name);
     if (st) {
-      const url = buildServiceUrl(name, st.svc.port, cliArgs.proxy, proxyOpts);
+      // The public port (hazard §3): a lazy service's `port` is the internal
+      // one, which refuses connections while it sleeps instead of waking it.
+      const url = buildServiceUrl(name, st.svc.originalPort ?? st.svc.port, cliArgs.proxy, proxyOpts);
       platform.openBrowser(url);
     }
     kb.setModal('none');
@@ -183,7 +200,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
         logs={pm.logs} filter={kb.logFilter} searchTerm={kb.searchTerm}
         paused={kb.logsPaused} showTimestamps={kb.showTimestamps}
         maxNameLen={maxNameLen} height={logsHeight} focused={kb.panel === 'logs'}
-        scrollOffset={kb.logsScrollOffset} resetScroll={kb.resetLogsScroll}
+        scrollOffset={kb.logsScrollOffset} resetScroll={kb.resetLogsScroll} onMaxOffset={kb.setLogsMaxOffset}
         levelFilter={kb.levelFilter}
         filteredColorIdx={kb.logFilter ? (pm.states.get(kb.logFilter)?.colorIdx ?? null) : null}
       />
@@ -191,7 +208,7 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
       <StatsPanel
         states={pm.states} stats={pm.stats} sortMode={kb.sortMode}
         maxNameLen={maxNameLen} height={statsHeight} focused={kb.panel === 'stats'}
-        scrollOffset={kb.statsScrollOffset} resetScroll={kb.resetStatsScroll}
+        scrollOffset={kb.statsScrollOffset} resetScroll={kb.resetStatsScroll} onMaxOffset={kb.setStatsMaxOffset}
         verbose={kb.verboseStats}
       />
 

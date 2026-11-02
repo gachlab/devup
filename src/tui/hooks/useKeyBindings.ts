@@ -1,5 +1,5 @@
 import { useInput } from 'ink';
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 
 export type Modal = 'none' | 'filter' | 'restart' | 'open' | 'search' | 'remote';
 export type Panel = 'logs' | 'stats';
@@ -23,27 +23,37 @@ export interface KeyState {
 
 const SORT_MODES = ['name', 'mem', 'errors'] as const;
 
-// delta < 0 = mover vista hacia arriba; delta > 0 = hacia abajo.
-// Para logs el offset crece hacia atrás (más viejo), para stats crece hacia abajo (siguientes filas).
-function scrollBy(setState: React.Dispatch<React.SetStateAction<KeyState>>, delta: number) {
+/** How far each panel can scroll, reported by the panels themselves (they are
+ *  the ones that know the line count and their height). */
+export interface ScrollLimits { logs: number; stats: number }
+
+const clamp = (n: number, max: number) => Math.max(0, Math.min(n, max));
+
+// delta < 0 moves the view up, delta > 0 down. The logs offset counts lines
+// above the bottom (0 = follow); the stats offset counts rows below the top.
+//
+// Clamped to what the panel can show. Unclamped, the offset could run past the
+// content: one ↑ with fewer lines than fit paused the logs (the pause reads the
+// raw offset) with no [SCROLL] shown, and every extra ↑ past the top had to be
+// undone by a ↓ that seemed to do nothing.
+function scrollBy(setState: React.Dispatch<React.SetStateAction<KeyState>>, limits: ScrollLimits, delta: number) {
   setState(s => {
     if (s.panel === 'logs') {
-      // up visual → más viejas → bottomOffset + |delta|
-      const next = s.logsScrollOffset - delta;
-      return { ...s, logsScrollOffset: Math.max(0, next) };
+      return { ...s, logsScrollOffset: clamp(s.logsScrollOffset - delta, limits.logs) };
     }
-    const next = s.statsScrollOffset + delta;
-    return { ...s, statsScrollOffset: Math.max(0, next) };
+    return { ...s, statsScrollOffset: clamp(s.statsScrollOffset + delta, limits.stats) };
   });
 }
 
-function scrollTo(setState: React.Dispatch<React.SetStateAction<KeyState>>, target: 'top' | 'bottom') {
+// A real offset, not a sentinel. `Number.MAX_SAFE_INTEGER` for "top" left the
+// next ↓ at MAX - 1 — no longer the sentinel, so it clamped straight back to
+// the top and ↓, `]` and Ctrl+F never moved after Home.
+function scrollTo(setState: React.Dispatch<React.SetStateAction<KeyState>>, limits: ScrollLimits, target: 'top' | 'bottom') {
   setState(s => {
     if (s.panel === 'logs') {
-      // top visual = línea más vieja = bottomOffset máximo
-      return { ...s, logsScrollOffset: target === 'top' ? Number.MAX_SAFE_INTEGER : 0 };
+      return { ...s, logsScrollOffset: target === 'top' ? limits.logs : 0 };
     }
-    return { ...s, statsScrollOffset: target === 'top' ? 0 : Number.MAX_SAFE_INTEGER };
+    return { ...s, statsScrollOffset: target === 'top' ? 0 : limits.stats };
   });
 }
 
@@ -64,21 +74,42 @@ export function useKeyBindings(opts: {
   const setFilter = useCallback((f: string | null) => setState(s => ({ ...s, logFilter: f, modal: 'none' })), []);
   const setSearch = useCallback((t: string | null) => setState(s => ({ ...s, searchTerm: t, modal: 'none' })), []);
 
+  // Infinity until a panel reports in, which keeps the old behaviour for a
+  // render that has not measured yet.
+  const limits = useRef<ScrollLimits>({ logs: Infinity, stats: Infinity });
+  // Content can shrink under the offset (`c`, a filter, a resize): clamp the
+  // stored offset too, or the logs stay paused on an offset nothing shows.
+  const setLogsMaxOffset = useCallback((max: number) => {
+    limits.current.logs = max;
+    setState(s => s.logsScrollOffset > max ? { ...s, logsScrollOffset: max } : s);
+  }, []);
+  const setStatsMaxOffset = useCallback((max: number) => {
+    limits.current.stats = max;
+    setState(s => s.statsScrollOffset > max ? { ...s, statsScrollOffset: max } : s);
+  }, []);
+
   const isActive = process.stdin.isTTY ?? false;
 
   useInput((input, key) => {
+    // Ctrl+C quits from anywhere, a modal included: Ink does not turn it into
+    // SIGINT here (`exitOnCtrlC: false`), so swallowing it left no way out but
+    // Esc first — and docs/tui.md says it always quits.
+    if (key.ctrl && input === 'c') { opts.onQuit(); return; }
     if (state.modal !== 'none') return;
 
-    if (input === 'q' || (key.ctrl && input === 'c')) opts.onQuit();
-    // ── Scroll (ctrl + tecla evaluado primero para no chocar con letras simples) ──
-    else if (key.ctrl && input === 'a') scrollTo(setState, 'top');
-    else if (key.ctrl && input === 'e') scrollTo(setState, 'bottom');
-    else if (key.ctrl && input === 'b') scrollBy(setState, -10); // PgUp
-    else if (key.ctrl && input === 'f') scrollBy(setState, +10); // PgDn
-    else if (key.upArrow)               scrollBy(setState, -1);
-    else if (key.downArrow)             scrollBy(setState, +1);
-    else if (input === '[')             scrollBy(setState, -10);
-    else if (input === ']')             scrollBy(setState, +10);
+    const l = limits.current;
+    if (input === 'q') opts.onQuit();
+    // ── Scroll (ctrl + key first, so it does not collide with plain letters) ──
+    else if (key.ctrl && input === 'a') scrollTo(setState, l, 'top');
+    else if (key.ctrl && input === 'e') scrollTo(setState, l, 'bottom');
+    else if (key.ctrl && input === 'b') scrollBy(setState, l, -10);
+    else if (key.ctrl && input === 'f') scrollBy(setState, l, +10);
+    else if (key.pageUp)                scrollBy(setState, l, -10);
+    else if (key.pageDown)              scrollBy(setState, l, +10);
+    else if (key.upArrow)               scrollBy(setState, l, -1);
+    else if (key.downArrow)             scrollBy(setState, l, +1);
+    else if (input === '[')             scrollBy(setState, l, -10);
+    else if (input === ']')             scrollBy(setState, l, +10);
     // ── Acciones ──
     else if (input === 'c') opts.onClearLogs();
     else if (key.tab) setState(s => ({ ...s, panel: s.panel === 'logs' ? 'stats' : 'logs' }));
@@ -105,5 +136,7 @@ export function useKeyBindings(opts: {
     // Funciones para resetear el scroll cuando cambia el contenido
     resetLogsScroll: useCallback(() => setState(s => ({ ...s, logsScrollOffset: 0 })), []),
     resetStatsScroll: useCallback(() => setState(s => ({ ...s, statsScrollOffset: 0 })), []),
+    setLogsMaxOffset,
+    setStatsMaxOffset,
   };
 }

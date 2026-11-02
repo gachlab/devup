@@ -54,7 +54,7 @@ export function ServiceList({ title, services, onSelect, onClose, filterType }: 
       ) : (
         names.map((name, i) => (
           <Box key={name}>
-            <Text color={i === clamped ? 'cyan' : undefined} inverse={i === clamped}> {name} :{services.get(name)!.svc.port} </Text>
+            <Text color={i === clamped ? 'cyan' : undefined} inverse={i === clamped}> {name} :{services.get(name)!.svc.originalPort ?? services.get(name)!.svc.port} </Text>
           </Box>
         ))
       )}

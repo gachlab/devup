@@ -14,6 +14,8 @@ interface Props {
   focused: boolean;
   scrollOffset: number;
   resetScroll: () => void;
+  /** Told how far this panel can scroll, so the key handler can clamp to it. */
+  onMaxOffset?: (max: number) => void;
   verbose?: boolean;
 }
 
@@ -60,7 +62,7 @@ function Row({ name, st, stat, ml, verbose }: { name: string; st: ProcessState; 
   if (!verbose) {
     return (
       <Text>
-        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped || (!!remote && !remote.readOnly)}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.originalPort ?? st.svc.port).padStart(5)} <Text color={sc} bold={looped || (!!remote && !remote.readOnly)}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
       </Text>
     );
   }
@@ -71,7 +73,7 @@ function Row({ name, st, stat, ml, verbose }: { name: string; st: ProcessState; 
     return (
       <Box flexDirection="column">
         <Text>
-          {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={!remote.readOnly}>{statusLabel.padEnd(8)}</Text> {'-'.padStart(6)} {'-'.padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+          {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.originalPort ?? st.svc.port).padStart(5)} <Text color={sc} bold={!remote.readOnly}>{statusLabel.padEnd(8)}</Text> {'-'.padStart(6)} {'-'.padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
         </Text>
         <Text dimColor>   → {remote.target}{remote.readOnly ? ' (read-only)' : ''}</Text>
       </Box>
@@ -85,7 +87,7 @@ function Row({ name, st, stat, ml, verbose }: { name: string; st: ProcessState; 
   return (
     <Box flexDirection="column">
       <Text>
-        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
+        {indicator} <Text color={color}>{name.padEnd(ml)}</Text> {String(st.svc.originalPort ?? st.svc.port).padStart(5)} <Text color={sc} bold={looped}>{statusLabel.padEnd(8)}</Text> {(stat?.cpu ?? '-').padStart(6)} {(stat?.mem ?? '-').padStart(8)} {String(st.errors).padStart(3)} {String(st.restarts).padStart(3)} {up.padStart(6)}
       </Text>
       <Text dimColor>   cmd: {st.svc.cmd} {resolvedArgs}</Text>
       {envStr && <Text dimColor>   env: {envStr}</Text>}
@@ -97,7 +99,7 @@ function ColHeader({ ml }: { ml: number }) {
   return <Text bold>H {'Service'.padEnd(ml)} {'Port'.padStart(5)} {'Status'.padEnd(8)} {'CPU'.padStart(6)} {'Mem'.padStart(8)} Err Rst {'Up'.padStart(6)}</Text>;
 }
 
-export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focused, scrollOffset, resetScroll, verbose = false }: Props) {
+export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focused, scrollOffset, resetScroll, onMaxOffset, verbose = false }: Props) {
   const names = [...states.keys()];
   const stObj = Object.fromEntries([...states].map(([k, v]) => [k, { errors: v.errors }]));
   const statsObj = Object.fromEntries([...stats].map(([k, v]) => [k, v]));
@@ -135,6 +137,7 @@ export function StatsPanel({ states, stats, sortMode, maxNameLen, height, focuse
     : Math.min(scrollOffset, maxRows);
   const apiStartIndex = Math.min(effectiveOffset, Math.max(0, apis.length - rowsPerCol));
   const webStartIndex = Math.min(effectiveOffset, Math.max(0, webs.length - rowsPerCol));
+  useEffect(() => { onMaxOffset?.(maxRows); }, [maxRows, onMaxOffset]);
 
   const visibleApis = apis.slice(apiStartIndex, apiStartIndex + rowsPerCol);
   const visibleWebs = webs.slice(webStartIndex, webStartIndex + rowsPerCol);
