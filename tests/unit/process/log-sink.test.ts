@@ -90,7 +90,10 @@ describe('LogSink', () => {
 });
 
 describe('LogSink: review of #141', () => {
-  it('rotation keeps the buffered lines and logs no write errors', async () => {
+  // POSIX only: Windows cannot rename over a `.prev` whose handle the previous
+  // rotation is still flushing, so a burst rotates once and the rest stays in
+  // `.log` — nothing is lost, but `.prev` is not the window this checks.
+  it('rotation keeps the buffered lines and logs no write errors', { skip: process.platform === 'win32' }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'devup-sink-'));
     const sink = new LogSink({ projectName: 'rot', rootDir: root, maxLogBytes: 2000 });
     for (let i = 0; i < 200; i++) sink.write('svc', `line ${i}`);
@@ -120,7 +123,8 @@ describe('LogSink: review of #141', () => {
 });
 
 describe('LogSink: a write that fails while closing', () => {
-  it('is not reported into a reopened devup.log, which would rotate the session away', async () => {
+  // The failing path is a dangling symlink, which needs a privilege on Windows.
+  it('is not reported into a reopened devup.log, which would rotate the session away', { skip: process.platform === 'win32' }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'devup-sink-'));
     const sink = new LogSink({ projectName: 'p', rootDir: root });
     sink.write('devup', 'session line');
