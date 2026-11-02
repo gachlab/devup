@@ -415,3 +415,17 @@ describe('validateConfig: settings a flag can also set', () => {
     assert.deepEqual(fieldErrors(base({ proxy: { ...proxy, tls: false, entrypoint: 'web' } }), 'proxy.tls'), []);
   });
 });
+
+describe('validateConfig: Traefik router names', () => {
+  it('rejects two routes that become the same router', () => {
+    const cfg: DevStackConfig = {
+      ...minimal(),
+      services: [
+        { name: 'api_v1', cwd: '.', cmd: 'node', args: [], type: 'api', port: 3000, phase: 0 },
+        { name: 'api.v1', cwd: '.', cmd: 'node', args: [], type: 'api', port: 3001, phase: 0 },
+      ],
+      proxy: { provider: 'traefik', routes: { api_v1: 'a', 'api.v1': 'b' } },
+    };
+    assert.equal(validateConfig(cfg, tmp).filter(e => e.field === 'proxy.routes').length, 1);
+  });
+});

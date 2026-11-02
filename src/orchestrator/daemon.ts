@@ -34,6 +34,7 @@ import { startService } from '../process/start-service.js';
 import { restartService } from '../process/restart-service.js';
 import { debugService } from '../process/debug-service.js';
 import { onFatal } from '../process/teardown.js';
+import { ProxySync } from '../proxy-config/sync.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
 const sanitize = (n: string) => n.replace(SAFE, '_').replace(/^_+|_+$/g, '') || 'devup';
@@ -267,19 +268,10 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
 
     // ── Proxy sync (write traefik/nginx/caddy config when state changes) ──
     if (proxyProvider && proxyOpts && cliArgs.proxy) {
-      let lastContent: string | null = null;
-      const sync = () => {
-        const svcStates = new Map<string, ServiceState>();
-        for (const [n, st] of mgr.state) {
-          svcStates.set(n, { port: st.svc.port, health: st.health, realPort: st.svc.realPort });
-        }
-        const content = proxyProvider.generate(svcStates, proxyOpts);
-        if (content === lastContent) return;
-        lastContent = content;
-        try { proxyProvider.write(content, proxyOpts); } catch { /* ignore — best-effort */ }
-      };
-      sync();
-      proxyTimer = setInterval(sync, 3000);
+      const proxySync = new ProxySync(proxyProvider, proxyOpts, () => mgr.state, msg => writeDevupLog(msg),
+        name => lazyProxies.get(name)?.server.listening ?? false);
+      proxySync.sync();
+      proxyTimer = setInterval(() => proxySync.sync(), 3000);
     }
 
     // ── Hot-reload watcher (opt-in via --watch-config) ──

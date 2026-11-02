@@ -96,3 +96,15 @@ describe('LogsPanel reports its limit to the key handler', () => {
     r.unmount();
   });
 });
+
+describe('proxy sync with --proxy', () => {
+  function ProxyHarness({ initial }: { initial?: boolean }) {
+    const kb = useKeyBindings({ onQuit: () => {}, onClearLogs: () => {}, onToggleProxy: () => {}, initialProxyEnabled: initial });
+    return <Text>proxy={String(kb.proxyEnabled)}</Text>;
+  }
+  it('starts enabled when asked: `devup --proxy` writes the file without pressing T', () => {
+    const r = render(<ProxyHarness initial />);
+    assert.match(r.lastFrame() ?? '', /proxy=true/);
+    r.unmount();
+  });
+});

@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { writeConfigFile } from './write.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
 
 const EMPTY_CONFIG = '# devup: no healthy services\n';
@@ -18,7 +17,7 @@ export class CaddyProvider implements ProxyConfigProvider {
       if (sub === undefined) continue;
 
       const host = sub ? `${sub}.${opts.domain}` : opts.domain;
-      const port = st.realPort ?? st.port;
+      const port = st.port;
       const siteAddr = opts.tls ? host : `http://${host}`;
 
       blocks.push(
@@ -33,9 +32,7 @@ export class CaddyProvider implements ProxyConfigProvider {
   }
 
   write(content: string, opts: ProxyOpts): void {
-    const dir = dirname(opts.confPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(opts.confPath, content);
+    writeConfigFile(opts.confPath, content);
   }
 
   clear(opts: ProxyOpts): void {

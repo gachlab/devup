@@ -180,6 +180,10 @@ export interface ProxyConfig {
   host?: string;
   tls?: boolean;
   entrypoint?: string;
+  /** Base domain for the routes. Default: `$DOMAIN` from the env, else `localhost`. */
+  domain?: string;
+  /** Traefik certificate resolver for TLS routers. Default: `le`. */
+  certResolver?: string;
 }
 
 export interface ExternalService {

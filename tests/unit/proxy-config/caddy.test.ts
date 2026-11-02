@@ -12,9 +12,9 @@ const baseOpts: ProxyOpts = {
   tls: true, entrypoint: 'websecure', confPath: '/tmp/devup.Caddyfile',
 };
 
-function states(arr: Array<{ name: string; port: number; health?: 'up' | 'down'; realPort?: number }>) {
+function states(arr: Array<{ name: string; port: number; health?: 'up' | 'down' }>) {
   const m = new Map<string, ServiceState>();
-  for (const s of arr) m.set(s.name, { port: s.port, health: s.health ?? 'up', realPort: s.realPort });
+  for (const s of arr) m.set(s.name, { port: s.port, health: s.health ?? 'up' });
   return m;
 }
 
@@ -52,14 +52,6 @@ describe('CaddyProvider', () => {
       baseOpts,
     );
     assert.ok(!out.includes('api.dev.local'));
-  });
-
-  it('uses realPort when present (lazy mode)', () => {
-    const out = new CaddyProvider().generate(
-      states([{ name: 'api', port: 3000, realPort: 13000 }]),
-      baseOpts,
-    );
-    assert.match(out, /reverse_proxy host\.docker\.internal:13000/);
   });
 
   it('empty placeholder when no healthy services', () => {

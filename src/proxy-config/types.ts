@@ -2,8 +2,9 @@ import type { HealthStatus } from '../process/types.js';
 
 export interface ServiceState {
   port: number;
+  /** The port to route to. For a lazy service that is its public port —
+   *  see `routableStates`. */
   health: HealthStatus;
-  realPort?: number;
 }
 
 export interface ProxyOpts {
@@ -13,6 +14,8 @@ export interface ProxyOpts {
   tls: boolean;
   entrypoint: string;
   confPath: string;
+  /** Traefik `certResolver` for TLS routers. Default: `le`. */
+  certResolver?: string;
 }
 
 export interface ProxyConfigProvider {

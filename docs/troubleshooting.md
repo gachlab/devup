@@ -93,7 +93,7 @@ If services ARE healthy but the file is still empty:
 
 - Confirm `--proxy` is passed (without it, devup never writes the file).
 - Confirm `proxy.routes` includes the services you expect.
-- Confirm the project root has `DOMAIN` (or `GUESTHUB_DOMAIN`) in env or `.env`. devup falls back to `localhost` otherwise.
+- Confirm `proxy.domain` is set in the config, or `DOMAIN` in the env / `.env`. devup falls back to `localhost` otherwise. (`GUESTHUB_DOMAIN` is still read — ahead of `DOMAIN` — with a deprecation warning.)
 
 ### Browser opens to `http://localhost:<port>` instead of `https://<sub>.<domain>`
 
@@ -107,7 +107,7 @@ Otherwise devup falls back to localhost.
 
 ### "Generated config wrong port for lazy service"
 
-Expected behavior: lazy services use `port + 10000` (the real port) as the proxy upstream so the reverse proxy talks directly to the service. devup's own TCP relay sits on the public port for non-proxy traffic. See [Lazy mode](./lazy-mode.md).
+Expected behavior since 0.20.0: lazy services use their **public** port — devup's lazy proxy — as the upstream, so a request by domain wakes a sleeping service. If you see `port + 10000`, you are on an older devup. See [Lazy mode](./lazy-mode.md).
 
 ## TUI problems
 

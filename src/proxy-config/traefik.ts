@@ -1,6 +1,12 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { writeConfigFile } from './write.js';
 import type { ProxyConfigProvider, ProxyOpts, ServiceState } from './types.js';
+
+/** A service name as a Traefik router/service key. Lower-cased first: the old
+ *  `/[^a-z0-9-]/` turned every capital into `-`, so `Api` became `-pi`. Two
+ *  names can still meet (`api_v1`, `api.v1`); the validator rejects that. */
+export function routerName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+}
 
 const EMPTY_CONFIG = 'http:\n  routers: {}\n  services: {}\n';
 
@@ -17,11 +23,11 @@ export class TraefikProvider implements ProxyConfigProvider {
       if (sub === undefined) continue;
 
       const rule = sub ? `Host(\`${sub}.${opts.domain}\`)` : `Host(\`${opts.domain}\`)`;
-      const safe = name.replace(/[^a-z0-9-]/g, '-');
-      const port = st.realPort ?? st.port;
+      const safe = routerName(name);
+      const port = st.port;
 
       let router = `    ${safe}:\n      rule: "${rule}"\n      service: ${safe}\n      entryPoints:\n        - ${opts.entrypoint}`;
-      if (opts.tls) router += `\n      tls:\n        certResolver: le`;
+      if (opts.tls) router += `\n      tls:\n        certResolver: ${opts.certResolver ?? 'le'}`;
       routers.push(router);
 
       svcs.push(`    ${safe}:\n      loadBalancer:\n        servers:\n          - url: "http://${opts.host}:${port}"`);
@@ -32,9 +38,7 @@ export class TraefikProvider implements ProxyConfigProvider {
   }
 
   write(content: string, opts: ProxyOpts): void {
-    const dir = dirname(opts.confPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(opts.confPath, content);
+    writeConfigFile(opts.confPath, content);
   }
 
   clear(opts: ProxyOpts): void {

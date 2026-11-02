@@ -106,8 +106,10 @@ proxy: {
 | `host` | `string` | | Target host for proxy URLs. Default: auto-detected per platform (`172.17.0.1` on Linux, `host.docker.internal` on macOS/Windows) |
 | `tls` | `boolean` | | Generate TLS config. Default: `true`. `--proxy-tls` / `--no-proxy-tls` override it |
 | `entrypoint` | `string` | | Traefik entrypoint name. Default: `'websecure'`. `--proxy-entrypoint` overrides it. Ignored for Nginx/Caddy |
+| `domain` | `string` | | Base domain for the routes. Default: `$DOMAIN` from the env, else `localhost` |
+| `certResolver` | `string` | | Traefik certificate resolver for TLS routers. Default: `'le'`. Ignored for Nginx/Caddy |
 
-The proxy config file is only written when `--proxy` is passed on the CLI. Only services with `health === 'up'` appear in the generated config. See [Reverse proxy](./proxy.md).
+The proxy config file is only written when `--proxy` is passed on the CLI. Services with `health === 'up'` appear in the generated config, and lazy services always do (routed to their lazy proxy, which wakes them). See [Reverse proxy](./proxy.md).
 
 ## `HealthCheckConfig`
 

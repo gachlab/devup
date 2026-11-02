@@ -97,12 +97,11 @@ export function renderDryRun(opts: DryRunOpts): string {
   if (proxyProvider && proxyOpts) {
     lines.push('');
     lines.push(`Proxy:    ${proxyProvider.name} → ${proxyOpts.confPath}`);
-    // Simulamos todas las rutas como "up" para mostrar el output
+    // Every route shown as up. Each one points at the service's configured
+    // port: for a lazy service that is its proxy, which is where the live
+    // config routes it too (see `routableStates`).
     const svcStates = new Map<string, ServiceState>();
-    for (const svc of services) {
-      const real = lazyMode && !alwaysOn.includes(svc) ? getLazyRealPort(svc.port) : undefined;
-      svcStates.set(svc.name, { port: svc.port, health: 'up', realPort: real });
-    }
+    for (const svc of services) svcStates.set(svc.name, { port: svc.port, health: 'up' });
     const content = proxyProvider.generate(svcStates, proxyOpts);
     lines.push('');
     lines.push('--- generated config ---');
