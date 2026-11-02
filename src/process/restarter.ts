@@ -3,6 +3,7 @@ import type { ProcessState, ProcessManagerEvents } from './types.js';
 import type { Spawner } from './spawner.js';
 import type { Lifecycle } from './lifecycle.js';
 import { MAX_RESTARTS, BACKOFF_BASE_MS } from './internals.js';
+import { isRunning } from './liveness.js';
 
 interface RestarterOpts {
   state: Map<string, ProcessState>;
@@ -40,7 +41,8 @@ export class Restarter {
     this.lifecycle.stop(name);
     // Manual restart: reset auto-restart counter so user gets a fresh budget
     st.restarts = 0;
-    const delay = st.proc ? 1500 : 100;
+    // Liveness, not `proc`: an idle lazy service keeps its dead process.
+    const delay = isRunning(st) ? 1500 : 100;
     await new Promise(r => setTimeout(r, delay));
     // A config reload can drop the service inside that settle. Spawner guards
     // its own awaits, but it captures its baseline on entry — by then the

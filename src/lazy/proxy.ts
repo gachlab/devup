@@ -42,6 +42,10 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
   /** Our side of every relayed connection, so `destroy()` closes those too —
    *  it used to leave them open, holding the service's sockets. */
   const targetConns = new Set<net.Socket>();
+  /** Set by `destroy()`. A start already in flight finishes after it, and used
+   *  to re-arm the idle timer — whose `onIdleStop` then hit whatever holds the
+   *  name by then: the proxy that replaced this one, or a remote. */
+  let destroyed = false;
 
   function bumpActivity() {
     lastActivity = Date.now();
@@ -49,7 +53,7 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
 
   function scheduleIdleCheck() {
     if (idleTimer) clearTimeout(idleTimer);
-    if (timeoutMin <= 0) return;
+    if (timeoutMin <= 0 || destroyed) return;
     const periodMs = timeoutMin * 60_000;
     idleTimer = setTimeout(() => {
       const elapsed = Date.now() - lastActivity;
@@ -77,6 +81,7 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
         scheduleIdleCheck();
         return;
       }
+      if (destroyed) return;
       serviceReady = false;
       onLog?.(`💤 idle ${timeoutMin}min — stopping`);
       onIdleStop();
@@ -137,15 +142,14 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
           ok = typeof started === 'boolean'
             ? started
             : await waitForPort(targetPort, { timeout: 45000, interval: 500 });
-          if (ok) {
-            serviceReady = true;
-            // Re-arm: scheduleIdleCheck stops rescheduling itself once it fires
-            // onIdleStop, so without this a service brought back never idles
-            // again and holds its memory for the rest of the session.
-            scheduleIdleCheck();
-          } else {
-            onLog?.('⚠ timeout waiting for service');
-          }
+          if (ok && !destroyed) serviceReady = true;
+          if (!ok) onLog?.('⚠ timeout waiting for service');
+          // Armed whether or not it became reachable: a start that timed out
+          // can still be running (a cold `ng serve` past 45 s) and must idle
+          // like any other. `onIdleStop` on a process that died is harmless.
+          // scheduleIdleCheck stops rescheduling itself once it fires, so
+          // without this a service brought back never idles again.
+          scheduleIdleCheck();
         } catch (e: unknown) {
           onLog?.(`❌ start failed: ${(e as Error).message}`);
         }
@@ -213,6 +217,7 @@ export function createLazyProxy(opts: LazyProxyOpts): LazyProxy {
     resetTimer: bumpActivity,
     ensureStarted,
     destroy: () => {
+      destroyed = true;
       if (idleTimer) clearTimeout(idleTimer);
       pendingConns.forEach(s => s.destroy());
       activeConns.forEach(s => s.destroy());

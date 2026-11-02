@@ -20,6 +20,8 @@ const READY_TIMEOUT_MS = 45_000;
 /** How long a wake waits for an idle-stop that is still draining. Same budget
  *  the spawner gives a stop in flight. */
 const STOP_GRACE_MS = 5_000;
+/** After SIGKILL. */
+const KILL_GRACE_MS = 2_000;
 
 export interface BootOpts {
   mgr: ProcessManager;
@@ -133,7 +135,19 @@ export function registerLazy(
           // Woken while the idle-stop is still draining. Starting now races the
           // dying process for the port: an API reads "port in use" and is
           // recorded as crashed, a web gets EADDRINUSE or moves to port + 1.
-          await waitForExit(prev, STOP_GRACE_MS);
+          //
+          // Bounded, then forced: a service that drains for 8 s (Spring, Nest,
+          // terminus) — or ignores SIGTERM — has closed its listener and will
+          // not reopen it. Waiting it out leaves the request hanging on a port
+          // nobody serves; reusing it leaves a "stopped" process running.
+          if (!await waitForExit(prev, STOP_GRACE_MS)) {
+            onLog?.(`⚠ still draining after ${STOP_GRACE_MS / 1000}s — killing it to serve the request`);
+            mgr.forceStop(svc.name);
+            if (!await waitForExit(prev, KILL_GRACE_MS)) {
+              onLog?.('❌ the previous process survived SIGKILL — not starting a second one');
+              return false;
+            }
+          }
         }
         // Otherwise it is already running — a previous wake that outlived its
         // 45 s wait (a cold `ng serve`), or a restart that got there first.
@@ -162,14 +176,18 @@ export function registerLazy(
       return ok;
     },
     onIdleStop: () => {
-      mgr.stop(svc.name);
       const st = mgr.state.get(svc.name);
       if (!st) return;
+      // Switched to an environment since this proxy armed its timer: the row
+      // is the remote's now, not ours to put to sleep.
+      if (st.remote) return;
+      mgr.stop(svc.name);
       st.status = 'idle'; st.health = 'idle';
-      // `proc` is kept (CLAUDE.md §2): `stop` only sends SIGTERM, and a service
-      // that drains is still alive for a while. Nulling it made that process
-      // invisible to the next wake, which then started a second one on top.
-      st.pid = null; st.startedAt = null; st.debugPort = null;
+      // `proc` and `pid` are kept (CLAUDE.md §2): `stop` only sends SIGTERM,
+      // and a service that drains is still alive for a while. Nulling `proc`
+      // hid it from the next wake, which started a second process on top;
+      // nulling `pid` made every later `stop` a no-op on it.
+      st.startedAt = null; st.debugPort = null;
       // Announced, not just written. This is made from outside the manager,
       // and a `status.follow` client has no other way to learn a service went
       // to sleep — the snapshot is right either way, which is what made the

@@ -141,6 +141,59 @@ describe('lazy wake and idle', { skip: !isUnix }, () => {
   });
 });
 
+describe('lazy wake: review of #147', { skip: !isUnix }, () => {
+  it('a drain longer than the grace is killed so the wake still serves', { timeout: 30000 }, async () => {
+    // An API that closes its listener on SIGTERM and exits 8 s later. The
+    // wake used to give up waiting, skip the start, and wait 45 s on a port
+    // nobody would reopen.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-lazy-'));
+    const pids = join(dir, 'pids');
+    const port = await lazyPort();
+    const { mgr } = mk();
+    const lazy = new Map<string, LazyProxy>();
+    const slowDrain = `require('fs').appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n');` +
+      `const s = require('net').createServer(c => { c.on('error', () => {}); c.end('ok'); }).listen(+process.env.PORT_OVERRIDE);` +
+      `process.on('SIGTERM', () => { s.close(); setTimeout(() => process.exit(0), 8000); });`;
+    registerLazy(mgr, svcOf('slowdrain', port, slowDrain), 0, 0.02, lazy);
+    const proxy = lazy.get('slowdrain')!; proxies.push(proxy);
+
+    assert.equal(await proxy.ensureStarted(), true);
+    const first = mgr.state.get('slowdrain')!;
+    await until(() => first.status === 'idle', 5000);
+    // pid is kept (hazard §2): a later stop must still be able to reach it.
+    assert.ok(first.pid, 'idle-stop cleared the pid');
+
+    const t0 = Date.now();
+    assert.equal(await proxy.ensureStarted(), true);
+    assert.ok(Date.now() - t0 < 12000, `took ${Date.now() - t0} ms`);
+    assert.equal(isRunning(first), false, 'the old process was left running');
+    assert.equal(pidsIn(pids).length, 2);
+  });
+
+  it('a wake does not spawn alongside an auto-restart that already fired', { timeout: 30000 }, async () => {
+    // The restart's timer has fired and its start sits in preBuild: nothing
+    // is pending to cancel and nothing is running yet. Both used to spawn.
+    const dir = mkdtempSync(join(tmpdir(), 'devup-lazy-'));
+    const pids = join(dir, 'pids');
+    const marker = join(dir, 'crashed-once');
+    const port = await lazyPort();
+    const { mgr } = mk();
+    const lazy = new Map<string, LazyProxy>();
+    const crashFirst = `if (!require('fs').existsSync(${JSON.stringify(marker)})) { require('fs').writeFileSync(${JSON.stringify(marker)}, ''); require('fs').appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n'); process.exit(1); }`;
+    const svc: ServiceConfig = { ...svcOf('prebuilt', port, server(pids, 0, crashFirst), 'web'), preBuild: 'sleep 1.5' };
+    registerLazy(mgr, svc, 0, 10, lazy);
+    const proxy = lazy.get('prebuilt')!; proxies.push(proxy);
+
+    await mgr.start(rewriteServicePort(svc), 0);
+    await until(() => mgr.state.get('prebuilt')?.restartPendingUntil != null, 8000);
+    // Past the 2 s backoff, inside the 1.5 s pre-build of the restart.
+    await sleep(2500);
+    assert.equal(await proxy.ensureStarted(), true);
+    await sleep(500);
+    assert.equal(pidsIn(pids).length, 2, `spawned ${pidsIn(pids).length - 1} servers`);
+  });
+});
+
 describe('lazy proxy internals', () => {
   it('the idle check does not stop a service while a start is in flight', { timeout: 5000 }, async () => {
     const listenPort = await findFreePort();
@@ -159,6 +212,39 @@ describe('lazy proxy internals', () => {
     alive = false; slow = true;
     await proxy.ensureStarted();
     assert.equal(idleStops, 0, 'idle-stopped mid-start');
+  });
+
+  it('a start that finishes after destroy() does not arm an idle stop', { timeout: 5000 }, async () => {
+    // Replaced by a config reload, or switched to a remote, mid-wake: the old
+    // proxy's timer used to stop whatever held the name afterwards.
+    const listenPort = await findFreePort();
+    let idleStops = 0;
+    const proxy = createLazyProxy({
+      listenPort, targetPort: 1, timeoutMin: 0.001,
+      onDemandStart: async () => { await sleep(200); return true; },
+      onIdleStop: () => { idleStops++; },
+      isAlive: () => true,
+    });
+    const started = proxy.ensureStarted();
+    proxy.destroy();
+    await started;
+    await sleep(300);
+    assert.equal(idleStops, 0);
+  });
+
+  it('a start that timed out still idles: the process may well be running', { timeout: 5000 }, async () => {
+    const listenPort = await findFreePort();
+    let idleStops = 0;
+    const proxy = createLazyProxy({
+      listenPort, targetPort: 1, timeoutMin: 0.001,
+      onDemandStart: async () => false,
+      onIdleStop: () => { idleStops++; },
+      isAlive: () => false,
+    });
+    proxies.push(proxy);
+    assert.equal(await proxy.ensureStarted(), false);
+    await sleep(300);
+    assert.ok(idleStops >= 1, 'a cold start past its wait ran for the rest of the session');
   });
 
   it('destroy() closes the target side of a relayed connection too', { timeout: 5000 }, async () => {
