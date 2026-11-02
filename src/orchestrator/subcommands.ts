@@ -795,8 +795,9 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
   }
   if (sub === 'install') {
     out('Usage: devup install');
-    out('  Run `npm install` across every service.cwd in parallel (max 4 at a time).');
-    out('  Skips services whose .install-stamp matches package.json hash.');
+    out('  Install dependencies for every service (max 4 at a time), with the');
+    out('  package manager the lockfile names, at the workspace root for members.');
+    out('  Skips what is unchanged since the last install (package.json + lockfile).');
     return 0;
   }
   if (sub === 'status') {
@@ -900,7 +901,7 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
   }
   out('Subcommands:');
   out('  devup logs <service> [--follow]   Read the persisted log file');
-  out('  devup install                     Concurrent npm install across services');
+  out('  devup install                     Install dependencies across services');
   out('  devup status                      Health check every service in config');
   out('  devup up -d                       Boot the stack in detached/daemon mode');
   out('  devup exec -- <cmd>               Boot if needed, wait, run <cmd>, tear down');

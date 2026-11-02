@@ -5,6 +5,8 @@ export interface ProcessRow {
   ppid: number;
   rss: number;        // KB
   cpuSeconds: number;
+  /** Start time, any monotonic unit, when the platform reports it. */
+  started?: number;
 }
 
 /** Stats for each root pid, summed over its whole process tree.
@@ -36,7 +38,13 @@ export function sumProcessTrees(rows: ProcessRow[], roots: number[]): Map<number
       seen.add(r.pid);
       rss += r.rss;
       cpuSeconds += r.cpuSeconds;
-      for (const c of children.get(r.pid) ?? []) if (c.pid !== r.pid) stack.push(c);
+      for (const c of children.get(r.pid) ?? []) {
+        if (c.pid === r.pid) continue;
+        // A "child" older than its parent is a stale link to a recycled pid
+        // (Windows never updates ParentProcessId), not a child.
+        if (c.started !== undefined && r.started !== undefined && c.started < r.started) continue;
+        stack.push(c);
+      }
     }
     out.set(root, { rss, cpuSeconds });
   }

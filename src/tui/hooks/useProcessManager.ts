@@ -139,6 +139,10 @@ export function useProcessManager(
           next.set(name, { cpu: cpuPct.toFixed(1) + '%', mem: (data.rss / 1024).toFixed(1) + ' MB' });
         }
         setStats(next);
+      } else {
+        // Nothing alive to sample: clear the columns rather than leave the
+        // last figures of services that have since stopped on screen.
+        setStats(prev => prev.size ? new Map() : prev);
       }
     }, 3000);
     return () => clearInterval(id);

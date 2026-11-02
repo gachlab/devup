@@ -212,7 +212,14 @@ export async function resolvePortConflicts(
   return await killAll(conflicts, out);
 }
 
-async function killAll(conflicts: PortConflict[], out: (l: string) => void): Promise<boolean> {
+/** Kill every holder, once per process, and confirm each port came free.
+ *  Exported, with the kill and the port check injectable, for the tests. */
+export async function killAll(
+  conflicts: PortConflict[],
+  out: (l: string) => void,
+  kill: (pid: number) => Promise<boolean> = killHolder,
+  portFree: (port: number) => Promise<boolean> = isPortBindable,
+): Promise<boolean> {
   let allOk = true;
   // One kill per process. A leftover holding two configured ports used to be
   // killed on the first and then reported as "survived SIGKILL" on the second
@@ -225,14 +232,21 @@ async function killAll(conflicts: PortConflict[], out: (l: string) => void): Pro
       continue;
     }
     let pending = results.get(c.holder.pid);
-    if (!pending) { pending = killHolder(c.holder.pid); results.set(c.holder.pid, pending); }
+    if (!pending) { pending = kill(c.holder.pid); results.set(c.holder.pid, pending); }
     const ok = await pending;
-    if (ok) {
-      out(`✓ :${c.port} ${c.service}: killed pid=${c.holder.pid}`);
-    } else {
+    if (!ok) {
       out(`✗ :${c.port} ${c.service}: pid=${c.holder.pid} survived SIGKILL`);
       allOk = false;
+      continue;
     }
+    // A killed (or already gone) pid is not a free port: a supervisor may have
+    // a new process on it already. Said here, not later as an EADDRINUSE.
+    if (!await portFree(c.port)) {
+      out(`✗ :${c.port} ${c.service}: pid=${c.holder.pid} is gone but the port is still held — by a restarted process?`);
+      allOk = false;
+      continue;
+    }
+    out(`✓ :${c.port} ${c.service}: killed pid=${c.holder.pid}`);
   }
   return allOk;
 }

@@ -20,7 +20,10 @@ export function sortServiceNames(
  *  elapsed since the previous sample. */
 export function calcCpuPercent(totalCpuSec: number, prevCpu: number, prevTime: number): number {
   const elapsed = (Date.now() - prevTime) / 1000;
-  const cpuDelta = totalCpuSec - prevCpu;
+  // Never below zero. A service's CPU time is summed over its process tree,
+  // and a child that exits (nodemon restarting, a build worker finishing)
+  // takes its time out of the sum: the next sample read about -1000%.
+  const cpuDelta = Math.max(0, totalCpuSec - prevCpu);
   return elapsed > 0 ? (cpuDelta / elapsed) * 100 : 0;
 }
 

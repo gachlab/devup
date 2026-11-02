@@ -188,18 +188,27 @@ describe('killing port holders: review of #143', () => {
     assert.equal(await killHolder(2_147_483_000), true);
   });
 
-  it('one process holding two ports is killed once and reported fine for both', async () => {
-    const { resolvePortConflicts } = await import('../../../src/process/port-conflicts.js');
-    const { spawn } = await import('node:child_process');
-    const p = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-    await new Promise(r => setTimeout(r, 200));
-    const holder = { pid: p.pid!, command: 'node' };
+  it('one process holding two ports is killed once', async () => {
+    const { killAll } = await import('../../../src/process/port-conflicts.js');
+    const holder = { pid: 4242, command: 'node' };
+    let kills = 0;
     const lines: string[] = [];
-    const ok = await resolvePortConflicts(
+    const ok = await killAll(
       [{ service: 'a', port: 1, holder }, { service: 'b', port: 2, holder }],
-      { autoKill: true, out: l => lines.push(l) },
+      l => lines.push(l), async () => { kills++; return kills === 1; }, async () => true,
     );
+    assert.equal(kills, 1, 'killed twice');
     assert.equal(ok, true, lines.join('\n'));
-    assert.equal(lines.filter(l => l.includes('survived')).length, 0);
   });
+
+  it('a holder gone while the port is still taken is a failure, not "killed"', async () => {
+    // pm2 / nodemon may already have a new process on the port.
+    const { killAll } = await import('../../../src/process/port-conflicts.js');
+    const lines: string[] = [];
+    const ok = await killAll([{ service: 'a', port: 3000, holder: { pid: 1, command: 'x' } }],
+      l => lines.push(l), async () => true, async () => false);
+    assert.equal(ok, false);
+    assert.match(lines.join('\n'), /still held/);
+  });
+
 });

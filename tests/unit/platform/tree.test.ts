@@ -69,3 +69,23 @@ describe('LinuxPlatform.getProcessStats on a real tree', { skip: !isUnix }, () =
     }
   });
 });
+
+describe('review of #154', () => {
+  it('a "child" that started before its parent is a recycled-pid link, not a child', () => {
+    const rows = [
+      { pid: 10, ppid: 1, rss: 10, cpuSeconds: 0, started: 100 },
+      { pid: 20, ppid: 10, rss: 999, cpuSeconds: 0, started: 50 },
+    ];
+    assert.deepEqual(sumProcessTrees(rows, [10]).get(10), { rss: 10, cpuSeconds: 0 });
+  });
+
+  it('the CIM CSV carries the creation time', () => {
+    const csv = '"ProcessId","ParentProcessId","WorkingSetSize","KernelModeTime","UserModeTime","Created"\r\n"10","4","1024","0","0","133000000000000000"\r\n';
+    assert.equal(parseCimCsv(csv)[0]!.started, 133000000000000000);
+  });
+
+  it('CPU% never goes negative when a child leaves the tree', async () => {
+    const { calcCpuPercent } = await import('../../../src/utils/stats.js');
+    assert.equal(calcCpuPercent(0.1, 2, Date.now() - 3000), 0);
+  });
+});
