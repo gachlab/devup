@@ -49,3 +49,26 @@ export function buildOriginMap(targets: Map<string, { target: string; port: numb
   }
   return map;
 }
+
+/** The one origin map for a run, shared by every remote proxy in it.
+ *
+ *  Keyed by the run's proxy registry, so the boot and every later switch find
+ *  the same `Map`. Each proxy holds a reference to it, and `refreshOriginMap`
+ *  rewrites it in place: a proxy built at boot used to keep the map it was
+ *  given then, so after `ctl remote app qa` the auth service's login redirect
+ *  to `https://app.qa…` was no longer localized and the browser left the local
+ *  stack with the fresh session. */
+const originMaps = new WeakMap<object, Map<string, string>>();
+export function originMapFor(registry: object): Map<string, string> {
+  let map = originMaps.get(registry);
+  if (!map) { map = new Map(); originMaps.set(registry, map); }
+  return map;
+}
+
+/** Replace the contents of `registry`'s shared origin map with `targets`. */
+export function refreshOriginMap(registry: object, targets: Map<string, { target: string; port: number }>): Map<string, string> {
+  const map = originMapFor(registry);
+  map.clear();
+  for (const [origin, local] of buildOriginMap(targets)) map.set(origin, local);
+  return map;
+}

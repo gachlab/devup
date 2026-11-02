@@ -6,7 +6,7 @@ import { startService } from '../process/start-service.js';
 import { releaseLazyProxy } from '../lazy/classifier.js';
 import { releaseRemoteProxy } from './classifier.js';
 import { createRemoteProxy, type RemoteProxy } from './proxy.js';
-import { buildOriginMap, resolveRemoteTarget } from './target.js';
+import { refreshOriginMap, resolveRemoteTarget } from './target.js';
 
 /** How long to wait for a port to come free after stopping what held it.
  *
@@ -156,6 +156,9 @@ async function toLocal(deps: SwitchDeps, name: string, svc: ServiceConfig): Prom
   // Before anything else: the proxy holds the port the process is about to
   // want, and it answers for the service until it is destroyed.
   releaseRemoteProxy(remoteProxies, name);
+  // Its origin leaves the shared map with it: the other proxies must stop
+  // localizing redirects to a service that is no longer served from there.
+  currentOriginMap(deps);
   if (!await waitForPortFree(svc.port)) {
     return fail(`:${svc.port} did not come free after releasing the ${from} proxy`);
   }
@@ -196,11 +199,13 @@ function currentOriginMap(
 ): Map<string, string> {
   const entries = new Map<string, { target: string; port: number }>();
   for (const [name, proxy] of deps.remoteProxies) {
+    if (extra && name === extra.name) continue;
     const st = deps.mgr.state.get(name);
     if (st) entries.set(name, { target: proxy.target, port: st.svc.port });
   }
   if (extra) entries.set(extra.name, { target: extra.target, port: extra.port });
-  return buildOriginMap(entries);
+  // In place, so every proxy already running sees the change too.
+  return refreshOriginMap(deps.remoteProxies, entries);
 }
 
 async function waitForPortFree(port: number): Promise<boolean> {

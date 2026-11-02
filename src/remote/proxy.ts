@@ -5,8 +5,7 @@ import type { EnvironmentConfig } from '../config/types.js';
 import { redactUrl } from '../utils/redact.js';
 import {
   buildUpstreamHeaders, resolveHeaderValues, transformResponseHeaders,
-  type RemoteContext,
-} from './headers.js';
+  type RemoteContext, upgradeResponseLines } from './headers.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PROBE_INTERVAL_MS = 30_000;
@@ -163,8 +162,7 @@ export function createRemoteProxy(opts: RemoteProxyOpts): RemoteProxy {
       inFlight.delete(upstream);
       upgraded.add(client);
       upgraded.add(upSocket);
-      const headers = Object.entries(upRes.headers)
-        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`);
+      const headers = upgradeResponseLines(upRes.headers, ctx, asString(req.headers.origin));
       client.write(`HTTP/1.1 101 Switching Protocols\r\n${headers.join('\r\n')}\r\n\r\n`);
       // Bytes each side had already read past the handshake. Dropping them
       // loses the first frame, which on an HMR channel is the one that says

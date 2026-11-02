@@ -2,7 +2,7 @@ import type { ProcessManager } from '../process/manager.js';
 import type { ProcessState } from '../process/types.js';
 import type { RemoteClassification, RemoteSpec } from './classifier.js';
 import { createRemoteProxy, type RemoteProxy } from './proxy.js';
-import { buildOriginMap } from './target.js';
+import { refreshOriginMap } from './target.js';
 
 export interface StartRemoteOpts {
   mgr: ProcessManager;
@@ -56,7 +56,7 @@ export function startRemoteServices(opts: StartRemoteOpts): number {
     return colorIdx;
   }
 
-  const originMap = buildOriginMap(new Map(
+  const originMap = refreshOriginMap(opts.proxies, new Map(
     remote.map(r => [r.svc.name, { target: r.target, port: r.svc.port }]),
   ));
 
