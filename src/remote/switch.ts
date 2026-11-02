@@ -6,7 +6,7 @@ import { startService } from '../process/start-service.js';
 import { releaseLazyProxy } from '../lazy/classifier.js';
 import { releaseRemoteProxy } from './classifier.js';
 import { createRemoteProxy, type RemoteProxy } from './proxy.js';
-import { buildOriginMap, resolveRemoteTarget } from './target.js';
+import { addEnvironmentOrigins, resolveRemoteTarget } from './target.js';
 
 /** How long to wait for a port to come free after stopping what held it.
  *
@@ -103,7 +103,7 @@ async function toRemote(
     // Rebuilt from what is remote *now*, this service included: a redirect
     // that crosses to another remote service is only localized if that
     // service's origin is in the map.
-    originMap: currentOriginMap(deps, { name, target, port: svc.port }),
+    originMap: addEnvironmentOrigins(remoteProxies, deps.config.services, env, deps.config.proxy?.routes),
     processEnv: deps.processEnv,
     onLog: msg => onLog(name, msg, st.colorIdx),
     onUpstreamError: () => { const s = mgr.state.get(name); if (s) s.errors++; },
@@ -186,21 +186,6 @@ async function toLocal(deps: SwitchDeps, name: string, svc: ServiceConfig): Prom
   // person just asked for.
   const ok = await startService(mgr, undefined, name);
   return ok ? { ok: true, remote: null } : fail(`${name} did not come up locally`);
-}
-
-/** Every remote origin currently served, with `extra` folded in — used when
- *  building a proxy for a service that is not in the map yet. */
-function currentOriginMap(
-  deps: SwitchDeps,
-  extra?: { name: string; target: string; port: number },
-): Map<string, string> {
-  const entries = new Map<string, { target: string; port: number }>();
-  for (const [name, proxy] of deps.remoteProxies) {
-    const st = deps.mgr.state.get(name);
-    if (st) entries.set(name, { target: proxy.target, port: st.svc.port });
-  }
-  if (extra) entries.set(extra.name, { target: extra.target, port: extra.port });
-  return buildOriginMap(entries);
 }
 
 async function waitForPortFree(port: number): Promise<boolean> {

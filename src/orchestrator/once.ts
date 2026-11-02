@@ -186,6 +186,7 @@ async function runOnceBody(opts: OnceOpts, exit: OnceExit): Promise<number> {
     startRemoteServices({
       mgr, classification, proxies: remoteProxies,
       colorIdxStart: config.services.length,
+      routes: config.proxy?.routes,
       onLog: (svc, msg) => { logSink?.write(svc, msg); out(`[${svc}] ${msg}`); },
       processEnv: env,
     });

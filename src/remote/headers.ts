@@ -157,12 +157,19 @@ export function localizeSetCookie(cookie: string): string {
   const parts = cookie.split(';').map(p => p.trim()).filter(Boolean);
   const kept: string[] = [];
   let sameSiteNone = false;
+  // `__Host-` and `__Secure-` cookies *must* carry `Secure`: without it the
+  // browser rejects them outright, and the login silently fails. They keep it
+  // — and `SameSite=None` with it — because `http://localhost` is a secure
+  // context to Chrome and Firefox, which accept them as they came.
+  // `Partitioned` (CHIPS) cookies are in the same position: Chrome refuses one
+  // without `Secure`.
+  const prefixed = /^__(host|secure)-/i.test(parts[0] ?? '') || parts.some(p => p.toLowerCase() === 'partitioned');
 
   for (const part of parts) {
     const lower = part.toLowerCase();
-    if (lower === 'secure') continue;
+    if (lower === 'secure' && !prefixed) continue;
     if (lower.startsWith('domain=')) continue;
-    if (lower === 'samesite=none') { sameSiteNone = true; continue; }
+    if (lower === 'samesite=none' && !prefixed) { sameSiteNone = true; continue; }
     kept.push(part);
   }
 
@@ -224,4 +231,29 @@ function rewriteReferer(value: string, origin: string): string {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
   if (url.origin === origin) return value;
   return `${origin}${url.pathname}${url.search}${url.hash}`;
+}
+
+/** The header lines of a `101 Switching Protocols` relayed to the client.
+ *
+ *  The same treatment as any other response — cookies localized, `Location`
+ *  and allow-origin rewritten — except that `Connection` and `Upgrade`, which
+ *  are hop-by-hop everywhere else, are what this response is about. And one
+ *  line per value: joining repeated `Set-Cookie`s with `, ` makes one invalid
+ *  header that splits wrongly on the comma inside `Expires=`. */
+export function upgradeResponseLines(
+  upstream: IncomingHttpHeaders,
+  ctx: RemoteContext,
+  requestOrigin: string | undefined,
+): string[] {
+  const out = transformResponseHeaders(upstream, ctx, requestOrigin);
+  for (const key of ['connection', 'upgrade']) {
+    const v = upstream[key];
+    if (v !== undefined) out[key] = v;
+  }
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(out)) {
+    if (value === undefined) continue;
+    for (const v of Array.isArray(value) ? value : [value]) lines.push(`${key}: ${v}`);
+  }
+  return lines;
 }

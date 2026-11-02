@@ -77,6 +77,7 @@ export function useBootSequence(
           mgr, classification,
           proxies: refs.remoteProxies.current!,
           colorIdxStart: config.services.length,
+          routes: config.proxy?.routes,
           onLog: pushLog,
           processEnv: env,
         });

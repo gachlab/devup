@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildUpstreamHeaders, localizeLocation, localizeSetCookie,
-  resolveHeaderValues, transformResponseHeaders, type RemoteContext,
+  resolveHeaderValues, transformResponseHeaders, upgradeResponseLines, type RemoteContext,
 } from '../../../src/remote/headers.js';
 import type { EnvironmentConfig } from '../../../src/config/types.js';
 
@@ -243,5 +243,30 @@ describe('transformResponseHeaders', () => {
     const url = 'https://check-in-api.qa.norelian.com/next';
     const out = transformResponseHeaders({ location: url }, ctx({ location: 'passthrough' }), undefined);
     assert.equal(out.location, url);
+  });
+});
+
+describe('review of #142', () => {
+  it('keeps Secure (and SameSite=None) on __Host- and __Secure- cookies, which require it', () => {
+    // Without Secure the browser must reject them: the login fails silently.
+    assert.equal(localizeSetCookie('__Host-session=abc; Secure; Path=/; SameSite=None'), '__Host-session=abc; Secure; Path=/; SameSite=None');
+    assert.match(localizeSetCookie('__Secure-id=1; Domain=qa.example.com; Secure'), /Secure/);
+    assert.doesNotMatch(localizeSetCookie('__Secure-id=1; Domain=qa.example.com; Secure'), /Domain=/);
+  });
+
+  it('a 101 gets the usual treatment, one line per header value, and keeps Upgrade/Connection', () => {
+    const lines = upgradeResponseLines({
+      upgrade: 'websocket', connection: 'Upgrade',
+      'set-cookie': ['a=1; Domain=qa.example.com; Secure; Expires=Wed, 21 Oct 2026 07:28:00 GMT', 'b=2; Secure'],
+    }, ctx({ domain: 'qa.example.com' }), undefined);
+    assert.ok(lines.includes('upgrade: websocket'));
+    assert.ok(lines.includes('connection: Upgrade'));
+    const cookies = lines.filter(l => l.startsWith('set-cookie: '));
+    assert.equal(cookies.length, 2, 'repeated Set-Cookie joined into one invalid line');
+    assert.ok(cookies.every(c => !/Domain=|Secure/.test(c)), cookies.join('\n'));
+  });
+
+  it('keeps Secure on a Partitioned (CHIPS) cookie, which Chrome refuses without it', () => {
+    assert.match(localizeSetCookie('sid=1; Secure; SameSite=None; Partitioned; Path=/'), /Secure/);
   });
 });

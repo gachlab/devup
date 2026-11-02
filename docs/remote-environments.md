@@ -141,13 +141,24 @@ same-site does not look at the port.
 `SameSite=None` is dropped along with `Secure`, since the two are only valid
 together; it becomes `Lax`.
 
+The exception is a `__Host-` or `__Secure-` cookie, or a `Partitioned` one:
+browsers reject those without `Secure`, so they keep it (and `SameSite=None`). Chrome and Firefox
+treat `http://localhost` as a secure context and accept them as they came.
+
+The same treatment applies to the response that upgrades a WebSocket (the
+`101`), cookies included.
+
 ### Redirects
 
 `localize` rewrites a redirect pointing at **any** environment origin this run
 serves, not only the service's own. A login answers with a 302 to the app, not
 to itself, and a redirect left pointing at the environment walks the browser
 out of the local stack exactly when it is carrying a fresh session. A host
-devup does not serve — an identity provider, say — is left untouched.
+devup does not serve — an identity provider, say — is left untouched. Every
+service the environment can serve is mapped to its local port — local ones
+too, since they answer on that same port — and switching a service with
+`devup ctl remote` / the `e` key updates the map for every proxy already
+running.
 
 ## Writes reach the environment
 

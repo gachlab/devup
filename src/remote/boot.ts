@@ -2,7 +2,7 @@ import type { ProcessManager } from '../process/manager.js';
 import type { ProcessState } from '../process/types.js';
 import type { RemoteClassification, RemoteSpec } from './classifier.js';
 import { createRemoteProxy, type RemoteProxy } from './proxy.js';
-import { buildOriginMap } from './target.js';
+import { addEnvironmentOrigins } from './target.js';
 
 export interface StartRemoteOpts {
   mgr: ProcessManager;
@@ -13,6 +13,9 @@ export interface StartRemoteOpts {
   colorIdxStart: number;
   onLog: (svc: string, msg: string, colorIdx: number) => void;
   processEnv?: Record<string, string | undefined>;
+  /** `proxy.routes`, to map the environment origins of the *local* services
+   *  too. Without it only the remote ones are mapped. */
+  routes?: Record<string, string>;
 }
 
 /** Register the remote services and put their proxies on the configured ports.
@@ -56,9 +59,10 @@ export function startRemoteServices(opts: StartRemoteOpts): number {
     return colorIdx;
   }
 
-  const originMap = buildOriginMap(new Map(
-    remote.map(r => [r.svc.name, { target: r.target, port: r.svc.port }]),
-  ));
+  // The environment's whole map, local services included — see
+  // `addEnvironmentOrigins`. Remote specs carry their resolved target already.
+  const originMap = addEnvironmentOrigins(proxies, classification.local, remote[0]!.env, opts.routes);
+  for (const r of remote) originMap.set(new URL(r.target).origin, `http://localhost:${r.svc.port}`);
 
   const envName = remote[0]!.envName;
   const writable = remote.filter(r => !r.env.readOnly);
