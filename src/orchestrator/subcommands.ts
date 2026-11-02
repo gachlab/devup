@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { checkHealth } from '../process/health.js';
-import { needsInstall, writeInstallStamp } from '../utils.js';
+import { installService } from '../process/installer.js';
 import { sendRpc, openStream, resolveSocket, assertSocketExists, createClient } from '../control-plane/client.js';
 import {
   waitForServices, selectServices, forEachInPhaseOrder, DEFAULT_WAIT_TIMEOUT_MS,
@@ -22,7 +22,6 @@ import { validateConfig, formatValidationErrors, collectWarnings, formatValidati
 import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
 import type { RemoteResult, ServiceSnapshot } from '../control-plane/types.js';
-import { resolveSpawnCommand } from '../platform/command.js';
 import { projectDirOf, serviceDir } from '../config/paths.js';
 
 const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config', 'exec']);
@@ -201,20 +200,10 @@ export async function runInstall(opts: SubOpts & { concurrency?: number }): Prom
   return 0;
 }
 
+/** The same install the boot runs — one implementation, so `devup install`
+ *  and a boot agree on what "installed" means and where it happens. */
 function installOne(cwd: string, env: Record<string, string>): Promise<boolean> {
-  if (!existsSync(cwd)) return Promise.resolve(false);
-  if (!needsInstall(cwd)) return Promise.resolve(true);
-  return new Promise(resolve => {
-    const command = resolveSpawnCommand('npm', ['install'], { env, cwd });
-    const proc = spawn(command.file, command.args, {
-      cwd, env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
-      windowsVerbatimArguments: command.windowsVerbatimArguments,
-    });
-    proc.on('close', code => {
-      if (code === 0) { writeInstallStamp(cwd); resolve(true); } else resolve(false);
-    });
-    proc.on('error', () => resolve(false));
-  });
+  return installService(cwd, env);
 }
 
 // ── devup status ──
@@ -806,8 +795,9 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
   }
   if (sub === 'install') {
     out('Usage: devup install');
-    out('  Run `npm install` across every service.cwd in parallel (max 4 at a time).');
-    out('  Skips services whose .install-stamp matches package.json hash.');
+    out('  Install dependencies for every service (max 4 at a time), with the');
+    out('  package manager the lockfile names, at the workspace root for members.');
+    out('  Skips what is unchanged since the last install (package.json + lockfile).');
     return 0;
   }
   if (sub === 'status') {
@@ -911,7 +901,7 @@ export function runHelp(argv: string[], opts: { out?: (l: string) => void } = {}
   }
   out('Subcommands:');
   out('  devup logs <service> [--follow]   Read the persisted log file');
-  out('  devup install                     Concurrent npm install across services');
+  out('  devup install                     Install dependencies across services');
   out('  devup status                      Health check every service in config');
   out('  devup up -d                       Boot the stack in detached/daemon mode');
   out('  devup exec -- <cmd>               Boot if needed, wait, run <cmd>, tear down');

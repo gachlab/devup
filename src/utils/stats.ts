@@ -20,7 +20,10 @@ export function sortServiceNames(
  *  elapsed since the previous sample. */
 export function calcCpuPercent(totalCpuSec: number, prevCpu: number, prevTime: number): number {
   const elapsed = (Date.now() - prevTime) / 1000;
-  const cpuDelta = totalCpuSec - prevCpu;
+  // Never below zero. A service's CPU time is summed over its process tree,
+  // and a child that exits (nodemon restarting, a build worker finishing)
+  // takes its time out of the sum: the next sample read about -1000%.
+  const cpuDelta = Math.max(0, totalCpuSec - prevCpu);
   return elapsed > 0 ? (cpuDelta / elapsed) * 100 : 0;
 }
 
@@ -52,7 +55,11 @@ export function nextRamBannerVisibility(
  *  else starts at zero, because a service that is running but whose pid the
  *  platform could not sample this round is a different thing from one that has
  *  no pid to sample. */
-export function seedServiceStats<T extends { pid: number | null; remote?: unknown }>(
+export function seedServiceStats<T extends {
+  pid: number | null;
+  remote?: unknown;
+  proc?: { exitCode: number | null; signalCode: unknown } | null;
+}>(
   states: Iterable<[string, T]>,
 ): { services: Record<string, { cpu: number; memMB: number }>; pids: number[]; pidToName: Map<number, string> } {
   const services: Record<string, { cpu: number; memMB: number }> = {};
@@ -61,7 +68,13 @@ export function seedServiceStats<T extends { pid: number | null; remote?: unknow
   for (const [name, st] of states) {
     if (st.remote) continue;
     services[name] = { cpu: 0, memMB: 0 };
-    if (st.pid) { pids.push(st.pid); pidToName.set(st.pid, name); }
+    // Only a live process (CLAUDE.md §2): a stopped or crashed service keeps
+    // its dead pid, and once the OS reuses it this reported somebody else's
+    // memory under the service's name.
+    const live = st.proc === undefined
+      ? true
+      : !!st.proc && st.proc.exitCode === null && st.proc.signalCode === null;
+    if (st.pid && live) { pids.push(st.pid); pidToName.set(st.pid, name); }
   }
   return { services, pids, pidToName };
 }

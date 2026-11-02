@@ -261,7 +261,7 @@ If the file doesn't exist yet, `--follow` waits for it to appear.
 
 ### `devup install`
 
-Run `npm install` across every service's `cwd` in parallel (max 4 at a time):
+Install dependencies for every service in parallel (max 4 at a time), with the package manager each lockfile names, at the workspace root for workspace members (once per root):
 
 ```bash
 $ devup install
@@ -272,7 +272,7 @@ $ devup install
 12 services up to date
 ```
 
-Skips services whose `.install-stamp` matches the current `package.json` hash (the same mechanism devup uses internally on boot). Useful after `git clone` or a branch switch.
+Skips roots whose `.install-stamp` matches the current `package.json` *and* lockfile (the same mechanism devup uses on boot), and services with no `package.json`. Useful after `git clone` or a branch switch.
 
 Exit code 0 only if every install succeeded; 1 if any failed.
 
