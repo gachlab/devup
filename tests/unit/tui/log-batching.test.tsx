@@ -61,3 +61,33 @@ describe('useProcessManager', () => {
     }
   });
 });
+
+describe('pause and the flush queue', () => {
+  it('keeps order across pause/resume and flushes what was queued before the pause', async () => {
+    // Queued lines used to stay on their 50 ms timer: they landed after a
+    // resume's backlog (B before A), or after the pause (moving the view under
+    // someone who had just scrolled up).
+    let api: ReturnType<typeof useProcessManager> | null = null;
+    function Probe() {
+      api = useProcessManager(platform, process.cwd(), env);
+      return <Text>{api.logs.map(l => l.text).join(',')}</Text>;
+    }
+    const r = render(<Probe />);
+    try {
+      await sleep(10);
+      api!.pushLog('svc', 'A');
+      api!.setPaused(true);
+      await sleep(5);
+      assert.match(r.lastFrame() ?? '', /^A$/, 'A was queued before the pause and must be on screen');
+      api!.pushLog('svc', 'B');
+      await sleep(LOG_FLUSH_MS * 2);
+      assert.match(r.lastFrame() ?? '', /^A$/, 'nothing lands while paused');
+      api!.setPaused(false);
+      api!.pushLog('svc', 'C');
+      await sleep(LOG_FLUSH_MS * 2);
+      assert.equal(r.lastFrame(), 'A,B,C');
+    } finally {
+      r.unmount();
+    }
+  });
+});

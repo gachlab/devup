@@ -153,20 +153,25 @@ export function useProcessManager(
     enqueueLog({ svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) });
   }, [enqueueLog]);
 
+  /** Pause or resume the panel. Lines already queued for the next flush go
+   *  out *now*, ahead of anything that arrives later: left on their timer they
+   *  landed after a resume's backlog (out of order), or after the pause itself
+   *  — moving the view under someone who just scrolled up to read it. */
   const setPaused = useCallback((paused: boolean) => {
+    if (paused === pausedRef.current) return;
+    if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
+    const queued = incomingRef.current;
+    incomingRef.current = [];
     pausedRef.current = paused;
-    if (!paused && pendingLogsRef.current.length) {
-      const flush = pendingLogsRef.current;
-      pendingLogsRef.current = [];
-      setLogs(prev => capped(prev.concat(flush)));
-    }
+    const backlog = paused ? [] : pendingLogsRef.current;
+    if (!paused) pendingLogsRef.current = [];
+    if (queued.length || backlog.length) setLogs(prev => capped(prev.concat(queued, backlog)));
   }, []);
 
   return {
     states, logs, stats,
     start: useCallback((svc: ServiceConfig, colorIdx: number) => mgr?.start(svc, colorIdx), [mgr]),
     stop: useCallback((name: string) => mgr?.stop(name), [mgr]),
-    restart: useCallback((name: string) => mgr?.restart(name), [mgr]),
     install: useCallback((svc: ServiceConfig, colorIdx: number) => mgr?.install(svc, colorIdx), [mgr]),
     cleanup: useCallback(() => mgr?.cleanup(), [mgr]),
     clearLogs,

@@ -5,6 +5,8 @@ import React, { useEffect } from 'react';
 import { Text } from 'ink';
 import { useKeyBindings } from '../../../src/tui/hooks/useKeyBindings.js';
 import { detectLogLevel } from '../../../src/utils.js';
+import { LogsPanel } from '../../../src/tui/LogsPanel.js';
+import type { LogEntry } from '../../../src/tui/hooks/useProcessManager.js';
 
 process.stdin.isTTY = true;
 
@@ -69,5 +71,28 @@ describe('detectLogLevel and Node deprecations', () => {
   it('classes a DeprecationWarning as a warning, so the L filter shows it', () => {
     assert.equal(detectLogLevel('(node:123) [DEP0040] DeprecationWarning: The `punycode` module is deprecated.'), 'warn');
     assert.equal(detectLogLevel('this API is deprecated'), 'warn');
+  });
+});
+
+describe('LogsPanel reports its limit to the key handler', () => {
+  it('one ↑ with fewer lines than fit leaves the offset at 0 (so the logs do not pause)', async () => {
+    // The real wiring, as App has it: the panel measures, the hook clamps.
+    const logs: LogEntry[] = ['a', 'b', 'c'].map((text, i) => ({ svcName: 'svc', text, colorIdx: 0, ts: i, level: 'info' }));
+    function App() {
+      const kb = useKeyBindings({ onQuit: () => {}, onClearLogs: () => {}, onToggleProxy: () => {} });
+      return (
+        <>
+          <Text>offset={kb.logsScrollOffset}</Text>
+          <LogsPanel logs={logs} filter={null} searchTerm={null} paused={false} showTimestamps={false}
+            maxNameLen={5} height={20} focused scrollOffset={kb.logsScrollOffset}
+            resetScroll={kb.resetLogsScroll} onMaxOffset={kb.setLogsMaxOffset} />
+        </>
+      );
+    }
+    const r = render(<App />);
+    await tick();
+    r.stdin.write(UP); await tick();
+    assert.equal(offsetOf(r.lastFrame()), 0);
+    r.unmount();
   });
 });

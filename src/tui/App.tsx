@@ -152,12 +152,16 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
     kb.setModal('none');
     const mgr = pm.manager;
     if (!mgr) return;
+    const ci = pm.states.get(name)?.colorIdx ?? 0;
+    // Caught: a rejection left unhandled reaches `onFatal`, which tears the
+    // whole stack down over one service's restart.
     void restartService(mgr, lazyProxies.current, name).then(res => {
-      const ci = pm.states.get(name)?.colorIdx ?? 0;
       if (res.skippedIdle) pm.pushLog(name, '💤 idle — nothing to restart; the next request starts it', ci);
       else if (res.skippedRemote) pm.pushLog(name, `🌐 served from ${res.skippedRemote} — nothing to restart here`, ci);
-      else if (!res.ok) pm.pushLog(name, '✗ restart failed — see the lines above', ci);
-    });
+      // The causes that log nothing of their own are the timeouts: it did not
+      // exit within 5 s of SIGTERM, or did not open its port within 45 s.
+      else if (!res.ok) pm.pushLog(name, `✗ restart failed — it did not stop within 5 s, or did not come up; \`devup logs ${name}\` has the rest`, ci);
+    }, (e: unknown) => pm.pushLog(name, `✗ restart failed: ${(e as Error).message}`, ci));
   }, [pm, kb]);
   const handleRemoteSelect = useCallback((name: string) => {
     kb.setModal('none');
@@ -173,6 +177,8 @@ export function App({ config, services, cliArgs, platform, env, baseCwd, proxyPr
       onLog: pm.pushLog,
     }, name, target.envName).then(res => {
       if (!res.ok) pm.pushLog(name, `✗ ${res.error ?? 'switch failed'}`, st.colorIdx);
+    }, (e: unknown) => {
+      pm.pushLog(name, `✗ switch failed: ${(e as Error).message}`, st.colorIdx);
     });
   }, [pm, kb, config, cliArgs.remote, env]);
   const handleOpenSelect = useCallback((name: string) => {
