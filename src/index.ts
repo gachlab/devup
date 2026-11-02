@@ -74,14 +74,19 @@ async function main() {
   // `ownArgs` above already stopped at `--` for exec: everything after it
   // belongs to the command. See `execOwnArgs`.
   let cliArgs = parseCliArgs(ownArgs);
-  if (cliArgs.errors?.length) {
-    for (const e of cliArgs.errors) console.error(`❌ ${e}`);
+  // The plain boot path, as typed by a person. A subcommand parses its own
+  // flags out of the same argv — `ctl wait --timeout 2.5` means seconds — and
+  // the daemon child is handed its parent's argv, exec's own flags
+  // (`--fail-on-crash`, `--wait-timeout`) included, already checked upstream.
+  const bootPath = !subcmd && process.env.DEVUP_DAEMON_CHILD !== '1';
+  const fatal = [...(cliArgs.errors ?? []), ...(bootPath ? cliArgs.bootErrors ?? [] : [])];
+  if (fatal.length) {
+    for (const e of fatal) console.error(`❌ ${e}`);
     process.exit(1);
   }
-  // Only on the plain boot path: every subcommand parses its own flags out of
-  // the same argv. A typo used to be ignored — `--watch-confg` booted without
-  // hot reload, and nothing said so.
-  if (!subcmd && cliArgs.unknown?.length) {
+  // A typo used to be ignored — `--watch-confg` booted without hot reload,
+  // and nothing said so.
+  if (bootPath && cliArgs.unknown?.length) {
     console.error(`❌ unknown option${cliArgs.unknown.length > 1 ? 's' : ''}: ${cliArgs.unknown.join(', ')} — see devup --help`);
     process.exit(1);
   }
@@ -114,7 +119,7 @@ async function main() {
   // `devup config` reports on the config itself — including one that fails to
   // load — so it goes before the load below, which would otherwise print a raw
   // stack from `main().catch` instead of a validation report (or JSON).
-  if (subcmd === 'config') process.exit(await runConfig(raw.slice(1), { cwd, configPath: cliArgs.configPath }));
+  if (subcmd === 'config') process.exit(await runConfig(raw.slice(1), { cwd, configPath: cliArgs.configPath, envFile: envOverride }));
 
   if (subcmd) {
     const subArgs = raw.slice(1);
@@ -231,10 +236,9 @@ async function main() {
   const envFile = envOverride ?? resolve(projectDir, config.envFile ?? '.env');
   const env = parseEnvFile(envFile, process.env as Record<string, string>);
   if (config.env) {
-    // Presence, not truthiness: `FOO=` set empty in the shell is a value, and
-    // `config.env` must not replace it.
+    // Fills what is unset *or empty* — see `parseEnvFile`.
     for (const [k, v] of Object.entries(config.env)) {
-      if (!(k in env)) env[k] = v;
+      if (!env[k]) env[k] = v;
     }
   }
 

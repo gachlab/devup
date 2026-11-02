@@ -20,11 +20,30 @@ describe('parseEnvContent', () => {
   });
 });
 
+describe('parseEnvContent: quotes that do not close at the end', () => {
+  it('keeps escaped quotes, and never cuts a value at an inner quote', () => {
+    const got = Object.fromEntries(parseEnvContent([
+      'JSON="{\\"a\\":1}"',
+      'ARGS="--foo" "--bar"',
+      "SQ='it''s'",
+      'export\tTABBED=1',
+      'COMMENTED="{\\"b\\":2}" # service account',
+    ].join('\n')));
+    assert.equal(got.COMMENTED, '{\\"b\\":2}');
+    assert.equal(got.JSON, '{\\"a\\":1}');
+    assert.equal(got.ARGS, '--foo" "--bar');
+    assert.equal(got.SQ, "it''s");
+    assert.equal(got.TABBED, '1');
+  });
+});
+
 describe('parseEnvFile', () => {
-  it('an empty value already in the base env is kept, not replaced by the file', () => {
+  it('an empty value in the base env is filled from the file — a missing CI secret', () => {
     const dir = mkdtempSync(join(tmpdir(), 'devup-env-'));
     const f = join(dir, '.env');
-    writeFileSync(f, 'FOO=from-file\n');
-    assert.equal(parseEnvFile(f, { FOO: '' }).FOO, '');
+    writeFileSync(f, 'FOO=from-file\nBAR=from-file\n');
+    const env = parseEnvFile(f, { FOO: '', BAR: 'shell' });
+    assert.equal(env.FOO, 'from-file');
+    assert.equal(env.BAR, 'shell');
   });
 });

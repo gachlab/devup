@@ -56,6 +56,10 @@ export interface CliArgs {
    *  mean something else in silence — auto-discover the config, run every
    *  service, swallow the next flag, or a 10-minute timeout. */
   errors?: string[];
+  /** Errors that only mean something when booting: `--timeout` is lazy
+   *  minutes there but seconds to `ctl wait`, and `--profile` with
+   *  `--services` only matters to the boot's selection. */
+  bootErrors?: string[];
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
@@ -197,8 +201,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
   args.given = given;
   const unknown: string[] = [];
   const errors: string[] = [];
+  const bootErrors: string[] = [];
   args.unknown = unknown;
   args.errors = errors;
+  args.bootErrors = bootErrors;
 
   for (let i = 0; i < argv.length; i++) {
     let arg = argv[i]!;
@@ -226,7 +232,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       const v = value();
       if (v === undefined) return undefined;
       const n = Number(v);
-      if (!Number.isInteger(n) || n < min) { errors.push(`${arg} needs a whole number${min > 0 ? ` of at least ${min}` : ' (0 or more)'}, got "${v}"`); return undefined; }
+      if (!Number.isInteger(n) || n < min) { bootErrors.push(`${arg} needs a whole number${min > 0 ? ` of at least ${min}` : ' (0 or more)'}, got "${v}"`); return undefined; }
       return n;
     };
 
@@ -307,7 +313,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
 
   // `--profile` wins in `filterServices`, so the other two were ignored.
   if (args.profile !== undefined && (args.services || args.only)) {
-    errors.push('--profile cannot be combined with --services or --only');
+    bootErrors.push('--profile cannot be combined with --services or --only');
   }
 
   return args;

@@ -12,11 +12,14 @@ describe('parseCliArgs: malformed flags are errors, not silent defaults', () => 
     assert.equal(b.configPath, undefined);
   });
 
-  it('a timeout that is not a whole number is an error, not 10', () => {
-    assert.match(parseCliArgs(['--timeout', 'abc']).errors![0]!, /--timeout needs a whole number/);
-    assert.match(parseCliArgs(['--once-timeout', '0']).errors![0]!, /at least 1/);
+  it('a timeout that is not a whole number is a boot error, not 10', () => {
+    // Boot-only: to `ctl wait`, `--timeout 2.5` is seconds and valid.
+    const bad = parseCliArgs(['--timeout', 'abc']);
+    assert.deepEqual(bad.errors, []);
+    assert.match(bad.bootErrors![0]!, /--timeout needs a whole number/);
+    assert.match(parseCliArgs(['--once-timeout', '0']).bootErrors![0]!, /at least 1/);
     const zero = parseCliArgs(['--timeout', '0']);
-    assert.deepEqual(zero.errors, []);
+    assert.deepEqual(zero.bootErrors, []);
     assert.equal(zero.lazyTimeout, 0);
   });
 
@@ -25,6 +28,6 @@ describe('parseCliArgs: malformed flags are errors, not silent defaults', () => 
   });
 
   it('--profile with --services or --only is an error, since the profile silently won', () => {
-    assert.match(parseCliArgs(['--profile', 'x', '--services', 'a']).errors![0]!, /cannot be combined/);
+    assert.match(parseCliArgs(['--profile', 'x', '--services', 'a']).bootErrors![0]!, /cannot be combined/);
   });
 });

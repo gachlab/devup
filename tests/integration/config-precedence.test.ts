@@ -132,3 +132,26 @@ describe('CLI hygiene', () => {
     assert.match(parsed.errors[0], /failed to load config/);
   });
 });
+
+describe('devup config with --env', () => {
+  it('show evaluates the config against the --env file, like the run would', () => {
+    const dir = project({
+      'devup.config.js': `export default { name: 'c', envFile: '.env', env: { MODE: process.env.DEVUP_TEST_DB ?? 'unset' },
+        services: [{ name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api', port: 41030, phase: 0 }] };`,
+      'package.json': '{"type":"module"}', '.env': 'DEVUP_TEST_DB=dev-db\n', '.env.test': 'DEVUP_TEST_DB=test-db\n',
+    });
+    const env: NodeJS.ProcessEnv = { ...process.env, NODE_NO_WARNINGS: '1' };
+    delete env.DEVUP_TEST_DB;
+    const r = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), entry, 'config', 'show', '--env', '.env.test'], { cwd: dir, env, encoding: 'utf8', timeout: 30_000 });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /test-db/);
+    assert.doesNotMatch(r.stdout, /dev-db/);
+  });
+
+  it('`ctl wait --timeout 2.5` is not rejected by the boot parser (seconds there)', () => {
+    const dir = project({ 'devup.config.json': JSON.stringify({ name: 'w', services: [{ name: 'api', cwd: '.', cmd: 'node', args: [], type: 'api', port: 41031, phase: 0 }] }) });
+    const env: NodeJS.ProcessEnv = { ...process.env, NODE_NO_WARNINGS: '1', HOME: dir };
+    const r = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), entry, 'ctl', 'wait', '--timeout', '2.5'], { cwd: dir, env, encoding: 'utf8', timeout: 30_000 });
+    assert.doesNotMatch(`${r.stdout}${r.stderr}`, /needs a whole number/);
+  });
+});
