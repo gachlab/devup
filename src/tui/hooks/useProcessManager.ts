@@ -17,6 +17,13 @@ export interface LogEntry {
   level: LogLevel;
 }
 
+/** Lines kept in memory for the panel. */
+export const LOG_CAP = 5000;
+/** How long lines pile up before one render shows them all. */
+export const LOG_FLUSH_MS = 50;
+
+const capped = (lines: LogEntry[]) => lines.length > LOG_CAP ? lines.slice(-LOG_CAP) : lines;
+
 export interface ServiceStats {
   cpu: string;
   mem: string;
@@ -34,9 +41,40 @@ export function useProcessManager(
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [stats, setStats] = useState<Map<string, ServiceStats>>(new Map());
   const mgrRef = useRef<ProcessManager | null>(null);
+  // State, not only the ref: reading a ref during render saw `null` until some
+  // unrelated update happened to re-render, so the boot effect — which waits
+  // for the manager — only ran once a panel's mount effect forced a second
+  // render. That was luck, not design.
+  const [manager, setManager] = useState<ProcessManager | null>(null);
   const prevCpu = useRef<Map<string, { time: number; cpu: number }>>(new Map());
   const pausedRef = useRef(false);
   const pendingLogsRef = useRef<LogEntry[]>([]);
+  // Lines waiting for the next flush. Every line used to call `setLogs` on its
+  // own: a copy of up to 5000 entries and a full render per line, which a
+  // chatty dev server (vite, webpack) turned into a pinned CPU.
+  const incomingRef = useRef<LogEntry[]>([]);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushIncoming = useCallback(() => {
+    flushTimer.current = null;
+    const batch = incomingRef.current;
+    if (!batch.length) return;
+    incomingRef.current = [];
+    setLogs(prev => capped(prev.concat(batch)));
+  }, []);
+
+  /** One path for every line, from a service or from devup itself. */
+  const enqueueLog = useCallback((entry: LogEntry) => {
+    if (pausedRef.current) {
+      pendingLogsRef.current.push(entry);
+      if (pendingLogsRef.current.length > LOG_CAP) pendingLogsRef.current = pendingLogsRef.current.slice(-LOG_CAP);
+      return;
+    }
+    incomingRef.current.push(entry);
+    if (incomingRef.current.length > LOG_CAP) incomingRef.current = incomingRef.current.slice(-LOG_CAP);
+    flushTimer.current ??= setTimeout(flushIncoming, LOG_FLUSH_MS);
+  }, [flushIncoming]);
+  useEffect(() => () => { if (flushTimer.current) clearTimeout(flushTimer.current); }, []);
   const sinkRef = useRef<LogSink | null>(logSink);
   sinkRef.current = logSink;
 
@@ -52,18 +90,7 @@ export function useProcessManager(
         onLog: (svcName, text, colorIdx) => {
           sinkRef.current?.write(svcName, text);
           logBus.current.emit({ svc: svcName, text });
-          const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) };
-          if (pausedRef.current) {
-            pendingLogsRef.current.push(entry);
-            if (pendingLogsRef.current.length > 5000) {
-              pendingLogsRef.current = pendingLogsRef.current.slice(-5000);
-            }
-            return;
-          }
-          setLogs(prev => {
-            const next = prev.concat(entry);
-            return next.length > 5000 ? next.slice(-5000) : next;
-          });
+          enqueueLog({ svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) });
         },
         onStateChange: (name, state) => {
           stateBus.current.emit({ name, state });
@@ -81,8 +108,9 @@ export function useProcessManager(
       },
     });
     mgrRef.current = mgr;
-    return () => { mgr.cleanup(); };
-  }, [baseCwd, env, platform]);
+    setManager(mgr);
+    return () => { mgrRef.current = null; setManager(null); mgr.cleanup(); };
+  }, [baseCwd, env, platform, enqueueLog]);
 
   // Health + stats polling
   useEffect(() => {
@@ -114,45 +142,36 @@ export function useProcessManager(
     return () => clearInterval(id);
   }, [platform]);
 
-  const mgr = mgrRef.current;
+  const mgr = manager;
 
-  const clearLogs = useCallback(() => { pendingLogsRef.current = []; setLogs([]); }, []);
+  const clearLogs = useCallback(() => { pendingLogsRef.current = []; incomingRef.current = []; setLogs([]); }, []);
 
   /** Push a log line not tied to a ProcessManager-managed service (e.g. externals). */
   const pushLog = useCallback((svcName: string, text: string, colorIdx = 0) => {
     sinkRef.current?.write(svcName, text);
     logBus.current.emit({ svc: svcName, text });
-    const entry: LogEntry = { svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) };
-    if (pausedRef.current) {
-      pendingLogsRef.current.push(entry);
-      if (pendingLogsRef.current.length > 5000) {
-        pendingLogsRef.current = pendingLogsRef.current.slice(-5000);
-      }
-      return;
-    }
-    setLogs(prev => {
-      const next = prev.concat(entry);
-      return next.length > 5000 ? next.slice(-5000) : next;
-    });
-  }, []);
+    enqueueLog({ svcName, text, colorIdx, ts: Date.now(), level: detectLogLevel(text) });
+  }, [enqueueLog]);
 
+  /** Pause or resume the panel. Lines already queued for the next flush go
+   *  out *now*, ahead of anything that arrives later: left on their timer they
+   *  landed after a resume's backlog (out of order), or after the pause itself
+   *  — moving the view under someone who just scrolled up to read it. */
   const setPaused = useCallback((paused: boolean) => {
+    if (paused === pausedRef.current) return;
+    if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
+    const queued = incomingRef.current;
+    incomingRef.current = [];
     pausedRef.current = paused;
-    if (!paused && pendingLogsRef.current.length) {
-      const flush = pendingLogsRef.current;
-      pendingLogsRef.current = [];
-      setLogs(prev => {
-        const next = prev.concat(flush);
-        return next.length > 5000 ? next.slice(-5000) : next;
-      });
-    }
+    const backlog = paused ? [] : pendingLogsRef.current;
+    if (!paused) pendingLogsRef.current = [];
+    if (queued.length || backlog.length) setLogs(prev => capped(prev.concat(queued, backlog)));
   }, []);
 
   return {
     states, logs, stats,
     start: useCallback((svc: ServiceConfig, colorIdx: number) => mgr?.start(svc, colorIdx), [mgr]),
     stop: useCallback((name: string) => mgr?.stop(name), [mgr]),
-    restart: useCallback((name: string) => mgr?.restart(name), [mgr]),
     install: useCallback((svc: ServiceConfig, colorIdx: number) => mgr?.install(svc, colorIdx), [mgr]),
     cleanup: useCallback(() => mgr?.cleanup(), [mgr]),
     clearLogs,

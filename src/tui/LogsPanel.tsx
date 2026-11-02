@@ -26,13 +26,15 @@ interface Props {
   focused: boolean;
   scrollOffset: number;
   resetScroll: () => void;
+  /** Told how far this panel can scroll, so the key handler can clamp to it. */
+  onMaxOffset?: (max: number) => void;
   levelFilter?: 'all' | 'error' | 'warn';
   /** When non-null, used to tint the panel border with the filtered service's tag color
    *  (subtle reinforcement of "you're seeing only this service"). */
   filteredColorIdx?: number | null;
 }
 
-export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll, levelFilter = 'all', filteredColorIdx = null }: Props) {
+export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, maxNameLen, height, focused, scrollOffset, resetScroll, onMaxOffset, levelFilter = 'all', filteredColorIdx = null }: Props) {
   const byService = filter ? logs.filter(l => l.svcName === filter) : logs;
   const filtered = levelFilter === 'all'
     ? byService
@@ -48,6 +50,7 @@ export function LogsPanel({ logs, filter, searchTerm, paused, showTimestamps, ma
     ? maxOffset
     : Math.min(scrollOffset, maxOffset);
   const startIndex = Math.max(0, totalLines - contentHeight - effectiveOffset);
+  useEffect(() => { onMaxOffset?.(maxOffset); }, [maxOffset, onMaxOffset]);
   const endIndex = Math.min(startIndex + contentHeight, totalLines);
   const visible = filtered.slice(startIndex, endIndex);
 

@@ -28,10 +28,10 @@ Top: project header. Middle: split panes (Logs above, Stats below). Bottom: stat
 
 | Key | Action |
 |---|---|
-| `q` / `Ctrl+C` | Quit. Stops every spawned process (kill-tree). Hits the cleanup grace window (3 s) before SIGKILL |
+| `q` / `Ctrl+C` | Quit. Stops every spawned process (kill-tree). Hits the cleanup grace window (3 s) before SIGKILL. `Ctrl+C` works with a modal open too |
 | `Tab` | Switch focus between Logs and Stats |
 | `↑` / `↓` | Scroll the focused panel by 1 line/row |
-| `[` / `]` (or `Ctrl+B` / `Ctrl+F`) | Page up / page down |
+| `PgUp` / `PgDn` (or `[` / `]`, `Ctrl+B` / `Ctrl+F`) | Page up / page down (10 lines) |
 | `Ctrl+A` / `Ctrl+E` | Jump to top / bottom of the focused panel |
 | `f` | Open the service-filter modal (logs panel) |
 | `L` | Cycle log level filter: `all → error → warn+error → all` |
@@ -63,7 +63,7 @@ Behaviors:
 - **Auto-pause**: scrolling up automatically pauses the log stream so the line you're reading doesn't jump under your cursor. Returning to the bottom (`Ctrl+E`) resumes.
 - **Filter by service** (`f`): pick from a fuzzy-filterable modal. The panel border tints to that service's color so you remember context after `Tab`'ing away.
 - **Filter by level** (`L`): cycle through all → error → warn+error → all. Error keywords include `error`, `fail(ed|ure)`, `fatal`, `exception`, `crash(ed)`, plus devup's own `❌`/`✗`/`⛔` markers.
-- **Search** (`/`): substring by default, vim-style regex when you wrap the term in slashes (`/error: \w+/`). Invalid regex falls back to substring and surfaces `(invalid regex)` in the header.
+- **Search** (`/`): substring by default, vim-style regex when you wrap the term in slashes (`/error: \w+/`). Invalid regex falls back to a substring search for the pattern and surfaces `(invalid regex)` in the header. The `g` and `y` flags are ignored: they would make matching stateful.
 - **Clear** (`c`): truncates the in-memory buffer (keeps the persistent log files on disk intact).
 
 ## Stats panel
@@ -113,7 +113,7 @@ Each tip shows at most once per session and auto-clears after 12 s. They're mean
 
 ## What devup does on quit
 
-- `q` or `Ctrl+C` triggers cleanup.
+- `q` or `Ctrl+C` triggers cleanup — and so do closing the terminal (SIGHUP), a `kill` (SIGTERM) and an uncaught error.
 - Every spawned process gets a `kill -<pid>` (process-group kill on Unix, `taskkill /T /F` on Windows).
 - devup waits up to 3 s for the processes to exit.
 - After that grace, sends SIGKILL to anything still alive.
@@ -123,7 +123,7 @@ Each tip shows at most once per session and auto-clears after 12 s. They're mean
 - Log file streams are flushed and closed.
 - Then `process.exit(0)`.
 
-If something is misbehaving and devup itself hangs during cleanup, hit `Ctrl+C` again — Node's default handler will force-exit.
+Cleanup runs once, however many ways it is triggered: a second `Ctrl+C` or signal is ignored rather than force-exiting, because exiting mid-cleanup is what leaves detached services running. Every step is bounded (3 s grace + 1 s after SIGKILL, 10 s per `stopCmd`). If devup itself is wedged, `kill -9` it and check for leftovers with `devup status`.
 
 ## Resizing the terminal
 

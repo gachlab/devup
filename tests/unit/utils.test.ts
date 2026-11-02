@@ -118,10 +118,22 @@ describe('compileSearchPattern', () => {
   });
 
   it('honors explicit flags after the closing slash', () => {
-    const m = compileSearchPattern('/error/g')!;
+    const m = compileSearchPattern('/error/m')!;
     assert.ok(m.regex);
     assert.ok(m.regex!.flags.includes('i')); // i is added if missing
-    assert.ok(m.regex!.flags.includes('g'));
+    assert.ok(m.regex!.flags.includes('m'));
+  });
+
+  it('drops g and y, which make test() stateful and match every other line', () => {
+    const m = compileSearchPattern('/err/g')!;
+    assert.deepEqual(['err a', 'err b', 'err c', 'err d'].map(l => m.test(l)), [true, true, true, true]);
+    assert.ok(!m.regex!.flags.includes('g'));
+  });
+
+  it('the invalid-regex fallback searches for the pattern, not the slashes around it', () => {
+    const m = compileSearchPattern('/foo(/')!;
+    assert.equal(m.invalid, true);
+    assert.equal(m.test('call foo( here'), true);
   });
 
   it('falls back to substring on invalid regex and reports invalid', () => {
