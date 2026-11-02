@@ -22,6 +22,7 @@ import { validateConfig, formatValidationErrors, collectWarnings, formatValidati
 import { redactSecrets } from '../utils.js';
 import type { DevStackConfig } from '../config/types.js';
 import type { RemoteResult, ServiceSnapshot } from '../control-plane/types.js';
+import { resolveSpawnCommand } from '../platform/command.js';
 
 const KNOWN = new Set(['logs', 'install', 'status', 'help', 'ctl', 'up', 'down', 'config', 'exec']);
 
@@ -203,8 +204,11 @@ function installOne(cwd: string, env: Record<string, string>): Promise<boolean> 
   if (!existsSync(cwd)) return Promise.resolve(false);
   if (!needsInstall(cwd)) return Promise.resolve(true);
   return new Promise(resolve => {
-    const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const proc = spawn(command, ['install'], { cwd, env, stdio: ['ignore', 'ignore', 'pipe'] });
+    const command = resolveSpawnCommand('npm', ['install'], { env, cwd });
+    const proc = spawn(command.file, command.args, {
+      cwd, env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
+      windowsVerbatimArguments: command.windowsVerbatimArguments,
+    });
     proc.on('close', code => {
       if (code === 0) { writeInstallStamp(cwd); resolve(true); } else resolve(false);
     });

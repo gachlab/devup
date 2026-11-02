@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { needsInstall, writeInstallStamp } from '../utils.js';
+import { resolveSpawnCommand } from '../platform/command.js';
 
 export function installService(
   cwd: string, env: Record<string, string>,
@@ -16,9 +17,13 @@ export function installService(
   }
   onLog?.('📦 npm install...');
   return new Promise(resolve => {
-    // En Windows, npm es usualmente npm.cmd
-    const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const proc = spawn(command, ['install'], { cwd, env, stdio: ['ignore', 'ignore', 'pipe'] });
+    // `npm` is a .cmd shim on Windows, which Node no longer spawns without a
+    // shell (CVE-2024-27980) — see resolveSpawnCommand.
+    const command = resolveSpawnCommand('npm', ['install'], { env, cwd });
+    const proc = spawn(command.file, command.args, {
+      cwd, env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
+      windowsVerbatimArguments: command.windowsVerbatimArguments,
+    });
     let stderr = '';
     proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
     proc.on('close', code => {

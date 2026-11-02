@@ -5,6 +5,16 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Un `cmd` que no existe tumbaba devup y dejaba el stack huérfano** (#135). El spawn principal no escuchaba `'error'`: un ENOENT era una excepción no capturada que se llevaba el TUI o el daemon, y cada hijo `detached` seguía vivo con su puerto. Ahora el servicio queda `crashed` con el error en su `crashLog`, y no se reintenta: un binario que no está no aparece en 2 s.
+- **Apagar no esperaba a los reinicios en cola.** Un crash, su auto-restart a 2 s y un `q` en medio: el timer disparaba durante el grace de `cleanup`, spawneaba, y el hijo sobrevivía a devup. `cleanup` cancela los timers y el spawner no lanza nada más una vez que empezó el apagado — tampoco un despertar lazy o una fase de boot que llegue tarde.
+- **`ctl stop` sobre un servicio crasheado lo resucitaba** dos segundos después, y además mandaba la señal al grupo de su pid muerto. `stop` cancela el reinicio pendiente y decide con `isRunning`, no con `pid` (hazard §2).
+- **Un servicio parado seguía diciendo `running`.** El close handler volvía temprano en un stop intencional; ahora pasa a `stopped`/`down`, salvo que el estado ya no sea de ese proceso (un reinicio, un switch a remoto, un lazy dormido).
+- **Cerrar la terminal, un `kill`, o un SIGTERM de CI dejaban el stack vivo.** El TUI sólo salía por teclado y `--once` no tenía ningún handler. TUI, `--once` y daemon manejan SIGINT/SIGTERM/SIGHUP y las excepciones no capturadas con el mismo teardown.
+- **Windows: `npm install` y los servicios con `cmd: 'npm' | 'npx'` no arrancaban.** Node rechaza lanzar shims `.cmd` sin shell desde 18.20.2 / 20.12.2 (CVE-2024-27980). Se resuelven en el `PATH` y van por `cmd.exe` con los argumentos citados. Los procesos `detached` ya no abren una consola cada uno (`windowsHide`).
+
 ## [0.19.2] — 2026-08-27
 
 Los doce hallazgos de una revisión de arquitectura contra los propios

@@ -23,8 +23,8 @@ announcing the removal, never after.
 
 ## 2. `pid` is never cleared
 
-`Spawner`'s close handler returns early on an intentional stop and otherwise
-only touches `status`/`health`. **A stopped or crashed service keeps a dead
+`Spawner`'s close handler only ever touches `status`/`health` (an intentional
+stop becomes `stopped`). **A stopped or crashed service keeps a dead
 `pid`.** Never use `st.pid` as a liveness test — it silently makes the branch
 a permanent no-op. Check the child process (`exitCode`/`signalCode`) instead.
 

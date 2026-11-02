@@ -30,6 +30,7 @@ src/
     restarter.ts             the auto-restart budget and its queued timers
     health-poller.ts         one probe round across state
     lifecycle.ts             stop, kill-tree, watchBuild teardown, cleanup
+    teardown.ts              onFatal: signals + uncaught errors → one teardown
     liveness.ts              isRunning / waitForExit — never trust `pid`
     boot.ts                  bootStack: phases + lazy registration, shared by
                              the daemon and the TUI
@@ -57,6 +58,7 @@ src/
     types.ts                 Platform interface (kill, stats, openBrowser)
     detect.ts                platform-specific impl loader
     linux.ts / darwin.ts / win32.ts
+    command.ts               resolveSpawnCommand: .cmd shims via cmd.exe on Windows
   proxy-config/
     types.ts                 ProxyConfigProvider, ProxyOpts, ServiceState
     detect.ts                registry: 'traefik' / 'nginx' / 'caddy'
@@ -211,7 +213,7 @@ Three implementations of `Platform`:
 - **DarwinPlatform** extends Linux with macOS-specific quirks (mostly browser opening with `open`).
 - **Win32Platform** uses `wmic` for stats, `taskkill /T /F` for kill-tree, `cmd /c start` for browser.
 
-Integration tests are skipped on Windows where they'd rely on Unix-specific shell behavior (sleep, single-quote strings). The features themselves work on Windows because the runtime code path routes through `cmd /c`. Only the test fixtures are awkward to write cross-platform.
+Integration tests are skipped on Windows where they'd rely on Unix-specific shell behavior (sleep, single-quote strings). Shell hooks (`preBuild`, `watchBuild`, externals) run through `cmd /c`; a service `cmd` that resolves to a `.cmd`/`.bat` shim on `PATH` (`npm`, `npx`, `pnpm`) goes through `cmd.exe /d /s /c` with its arguments quoted (`platform/command.ts`), because Node refuses to spawn shims without a shell since CVE-2024-27980. Only the test fixtures are awkward to write cross-platform.
 
 ## Tests
 

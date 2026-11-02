@@ -100,7 +100,7 @@ function spawnExternal(svc: ExternalService, opts: StartExternalsOpts): ChildPro
 
   opts.onLog?.(svc.name, `🚀 ${svc.cmd}`);
   const child = spawn(shell, [flag, svc.cmd], {
-    cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout?.on('data', (d: Buffer) => opts.onLog?.(svc.name, d.toString().trimEnd()));
   child.stderr?.on('data', (d: Buffer) => opts.onLog?.(svc.name, d.toString().trimEnd()));

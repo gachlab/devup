@@ -33,6 +33,7 @@ import type { ProcessState } from '../process/types.js';
 import { startService } from '../process/start-service.js';
 import { restartService } from '../process/restart-service.js';
 import { debugService } from '../process/debug-service.js';
+import { onFatal } from '../process/teardown.js';
 
 const SAFE = /[^a-zA-Z0-9._-]+/g;
 const sanitize = (n: string) => n.replace(SAFE, '_').replace(/^_+|_+$/g, '') || 'devup';
@@ -157,14 +158,13 @@ export async function daemonBody(opts: DaemonOpts): Promise<void> {
     if (existsSync(pidPath)) { try { unlinkSync(pidPath); } catch { /* ignore */ } }
   };
 
-  let shuttingDown = false;
-  const onSignal = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    cleanup().then(() => process.exit(0), () => process.exit(1));
-  };
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
+  // SIGTERM is how `devup down` stops the daemon, so a signal exits 0. SIGHUP
+  // and a crash in the daemon's own code take the same path: before, a throw
+  // here left every child it had spawned running, holding its port.
+  onFatal(cleanup, {
+    signalExitCode: () => 0,
+    report: (err) => writeDevupLog(`❌ ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
+  });
 
   try {
     // ── Externals (DBs, queues) — must be healthy before phase 0 ──
@@ -361,6 +361,7 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
   // Preserve any node-level args (e.g. --loader tsx in dev) so the child can be re-executed.
   const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, ...filteredArgs], {
     detached: true,
+    windowsHide: true,
     stdio: 'ignore',
     env: { ...process.env, DEVUP_DAEMON_CHILD: '1' },
     cwd: opts.baseCwd,

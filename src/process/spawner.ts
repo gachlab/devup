@@ -10,6 +10,7 @@ import { startsSuspended } from '../utils/process-args.js';
 import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.js';
 import type { Lifecycle } from './lifecycle.js';
 import { isInspectorNotice, parseDebugPort } from './inspector.js';
+import { resolveSpawnCommand } from '../platform/command.js';
 
 const CRASH_LOG_LINES = 20;
 const STARTUP_TIMEOUT_DEFAULT_MS = 45_000;
@@ -41,6 +42,11 @@ export class Spawner {
   private readonly onCrash: SpawnerOpts['onCrash'];
   private readonly startupTimers = new Map<string, NodeJS.Timeout>();
   private readonly removals: Map<string, number>;
+  /** Set by `close()`. Once shutdown has begun, nothing may spawn: `cleanup`
+   *  only kills what is in `procs` when it starts, so a queued restart or a
+   *  lazy wake that spawns during its grace period leaves a detached child
+   *  running after devup exits. */
+  private closing = false;
 
   constructor(opts: SpawnerOpts) {
     this.baseCwd = opts.baseCwd;
@@ -53,7 +59,13 @@ export class Spawner {
     this.onCrash = opts.onCrash;
   }
 
+  /** Refuse every spawn from now on. Called by `ProcessManager.cleanup`. */
+  close(): void {
+    this.closing = true;
+  }
+
   async start(svc: ServiceConfig, colorIdx: number, isRestart = false): Promise<void> {
+    if (this.closing) return;
     // Never spawn a process for a service that is served from a remote
     // environment, and never touch its state on the way out.
     //
@@ -121,6 +133,7 @@ export class Spawner {
     this.clearStartupTimer(svc.name);
 
     if (svc.preBuild) {
+      if (this.closing) return;
       const built = await this.runPreBuild(svc, cwd, colorIdx);
       if (!built) {
         this.recordCrashedState(svc, colorIdx);
@@ -140,9 +153,17 @@ export class Spawner {
       this.log(svc.name, '⏹ start aborted — removed while starting', colorIdx);
       return;
     }
+    // Re-checked after every await above: shutdown can begin during the port
+    // check or the pre-build, and this is the last moment before a detached
+    // child exists that `cleanup` has already stopped looking for.
+    if (this.closing) return;
 
     const env = buildProcessEnv(svc, this.env);
-    const proc = spawn(svc.cmd, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const command = resolveSpawnCommand(svc.cmd, args, { env, cwd });
+    const proc = spawn(command.file, command.args, {
+      cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: command.windowsVerbatimArguments,
+    });
 
     const prev = this.state.get(svc.name);
     const state: ProcessState = {
@@ -257,6 +278,21 @@ export class Spawner {
   }
 
   private wireCloseHandler(proc: ChildProcess, svc: ServiceConfig, state: ProcessState, colorIdx: number): void {
+    // A spawn that fails — a `cmd` that is not on PATH, a `cwd` that does not
+    // exist — is reported as an 'error' event, then a 'close' with code -2.
+    // With no listener the 'error' is an uncaught exception: it takes down the
+    // TUI or the daemon, and every detached child it started is left running.
+    let spawnError: Error | null = null;
+    proc.on('error', err => {
+      // An 'error' after a successful spawn (a failed kill, say) is not a
+      // reason to call the service dead; its 'close' will say what happened.
+      if (proc.pid !== undefined) {
+        this.log(svc.name, `⚠ ${err.message}`, colorIdx);
+        return;
+      }
+      spawnError = err;
+    });
+
     proc.on('close', code => {
       this.procs.delete(proc);
       this.lifecycle.stopWatchProc(state);
@@ -264,7 +300,37 @@ export class Spawner {
       // The inspector went with the process; leaving the port set points a
       // client at a dead endpoint for the whole restart window.
       state.debugPort = null;
-      if (state.intentionalStop) { state.intentionalStop = false; return; }
+      if (spawnError) {
+        state.status = 'crashed'; state.health = 'down';
+        state.crashes = (state.crashes ?? 0) + 1;
+        state.crashLog = [spawnError.message];
+        state.intentionalStop = false;
+        // Not handed to the restarter: a binary that is not there will not be
+        // there in 2 s either, and three identical failures only bury the one
+        // line that says what is wrong.
+        this.log(svc.name, `❌ failed to start: ${spawnError.message}`, colorIdx);
+        this.events.onStateChange(svc.name, state);
+        return;
+      }
+      if (state.intentionalStop) {
+        state.intentionalStop = false;
+        // Without this a stopped service reads `running` for the rest of the
+        // session: only the health poller noticed, and it touches `health`.
+        // Only while this state still describes *this* process. A restart has
+        // usually installed a new state object by now, and announcing the old
+        // one would put a stale row in every `status.follow` client; a switch
+        // to a remote environment and a lazy idle-stop both reuse the object
+        // but detach `proc` — the service is `running` from QA, or `idle`,
+        // and neither is ours to overwrite.
+        if (
+          this.state.get(svc.name) === state && state.proc === proc
+          && (state.status === 'starting' || state.status === 'running' || state.status === 'timeout')
+        ) {
+          state.status = 'stopped'; state.health = 'down';
+          this.events.onStateChange(svc.name, state);
+        }
+        return;
+      }
       if (code === 0) {
         state.status = 'stopped'; state.health = 'down';
         this.events.onStateChange(svc.name, state);
@@ -307,7 +373,7 @@ export class Spawner {
     this.log(svc.name, `👀 watchBuild: ${svc.watchBuild}`, colorIdx);
     const isWin = process.platform === 'win32';
     const child = spawn(isWin ? 'cmd.exe' : 'sh', [isWin ? '/c' : '-c', svc.watchBuild!], {
-      cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     const outBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
     const errBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));

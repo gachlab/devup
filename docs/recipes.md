@@ -225,15 +225,15 @@ export default defineConfig({
   services: [
     {
       name: 'api',
-      cmd: isWin ? 'npm.cmd' : 'npm',
-      args: ['run', 'dev'],
+      cmd: 'node',
+      args: isWin ? ['--max-old-space-size=4096', 'dist/main.js'] : ['dist/main.js'],
       // ...
     },
   ],
 });
 ```
 
-In practice you rarely need this — devup spawns through the OS without a shell, so paths and binaries usually just work.
+You do **not** need this for `npm`, `npx` or `pnpm`. On Windows those are `.cmd` shims, which Node refuses to spawn without a shell; devup finds the shim on `PATH` and runs it through `cmd.exe` with the arguments quoted, so `cmd: 'npm'` works on every OS.
 
 ## CI smoke test
 

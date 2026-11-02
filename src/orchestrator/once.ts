@@ -9,6 +9,7 @@ import type { CliArgs } from '../config/cli.js';
 import type { Platform } from '../platform/types.js';
 import type { LogSink } from '../process/log-sink.js';
 import { startExternals, stopExternals, type ExternalProc } from '../process/external.js';
+import { onFatal } from '../process/teardown.js';
 
 export interface OnceOpts {
   config: DevStackConfig;
@@ -75,6 +76,18 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     await mgr.cleanup();
   };
 
+  // Filled once they are up; declared here so the signal handler can reach it.
+  let externals: ExternalProc[] = [];
+  // A Ctrl-C, or the SIGTERM a CI runner sends when a job times out, used to
+  // kill only devup: every service is a detached child in its own process
+  // group, so the whole stack outlived the run and held its ports for the
+  // next one. The handlers go away when the run does — `finish` is the one
+  // place every return passes through.
+  const disposeFatal = onFatal(async () => {
+    await cleanupAll();
+    await stopExternals(externals, platform, { baseCwd, env });
+  });
+
   const reports: OnceServiceReport[] = [];
   /** Names actually spawned, so the report can tell "never launched" from
    *  "launched but never reached". */
@@ -85,6 +98,7 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
     ...(reason ? { reason } : {}),
   });
   const finish = (ok: boolean): number => {
+    disposeFatal();
     if (json) {
       // Everything selected, not only what was reached: a service that never
       // got its turn because an earlier phase failed is not "ready", and
@@ -106,7 +120,6 @@ export async function runOnce(opts: OnceOpts): Promise<number> {
 
 
   // External dependencies (DBs, queues, etc.) before phase 0.
-  let externals: ExternalProc[] = [];
   if (config.external?.length) {
     out(`▶ externals (${config.external.length})`);
     const result = await startExternals(config.external, {
