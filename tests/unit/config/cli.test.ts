@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCliArgs, filterServices, USAGE, nothingToRun } from '../../../src/config/cli.js';
+import { parseCliArgs, filterServices, USAGE, nothingToRun, applyConfigDefaults } from '../../../src/config/cli.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 
 const svc = (name: string, type: 'api' | 'web' = 'api'): ServiceConfig => ({
@@ -253,5 +253,41 @@ describe('nothingToRun', () => {
     // thing that lets it through: `--remote` with no value is a mistake, and
     // treating it as "remote mode" would boot an empty stack in silence.
     assert.equal(nothingToRun([], { remote: '' }), true);
+  });
+});
+
+describe('applyConfigDefaults', () => {
+  const config = (over: object = {}) => ({ name: 'x', services: [], ...over }) as never;
+
+  it('takes lazy.timeout, proxy.tls and proxy.entrypoint from the config when no flag was given', () => {
+    const out = applyConfigDefaults(parseCliArgs([]), config({
+      lazy: { alwaysOn: [], timeout: 25 },
+      proxy: { provider: 'traefik', routes: {}, tls: false, entrypoint: 'web' },
+    }));
+    assert.equal(out.lazyTimeout, 25);
+    assert.equal(out.proxyTls, false);
+    assert.equal(out.proxyEntrypoint, 'web');
+  });
+
+  it('a typed flag beats the config', () => {
+    const out = applyConfigDefaults(parseCliArgs(['--timeout', '3', '--proxy-tls', '--proxy-entrypoint', 'websecure']), config({
+      lazy: { alwaysOn: [], timeout: 25 },
+      proxy: { provider: 'traefik', routes: {}, tls: false, entrypoint: 'web' },
+    }));
+    assert.equal(out.lazyTimeout, 3);
+    assert.equal(out.proxyTls, true);
+    assert.equal(out.proxyEntrypoint, 'websecure');
+  });
+
+  it('--no-proxy-tls beats a config that turns TLS on', () => {
+    const out = applyConfigDefaults(parseCliArgs(['--no-proxy-tls']), config({ proxy: { provider: 'traefik', routes: {}, tls: true } }));
+    assert.equal(out.proxyTls, false);
+  });
+
+  it('keeps the built-in defaults when neither sets them', () => {
+    const out = applyConfigDefaults(parseCliArgs([]), config());
+    assert.equal(out.lazyTimeout, 10);
+    assert.equal(out.proxyTls, true);
+    assert.equal(out.proxyEntrypoint, 'websecure');
   });
 });

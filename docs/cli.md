@@ -34,7 +34,7 @@ devup --help
 |---|---|
 | `--lazy` | Enable lazy mode (default if `lazy` is in config) |
 | `--no-lazy` | Disable lazy mode — start every service immediately |
-| `--timeout <minutes>` | Idle timeout for lazy services. Default: `10` |
+| `--timeout <minutes>` | Idle timeout for lazy services. Overrides `lazy.timeout`. Default: `10` |
 
 ### Reverse proxy
 
@@ -45,7 +45,7 @@ devup --help
 | `--proxy-conf <path>` | Override the generated config file path |
 | `--proxy-tls` | Enable TLS in the generated config (default) |
 | `--no-proxy-tls` | Disable TLS |
-| `--proxy-entrypoint <n>` | Traefik entrypoint name. Default: `'websecure'`. Ignored for Nginx/Caddy |
+| `--proxy-entrypoint <n>` | Traefik entrypoint name. Overrides `proxy.entrypoint`. Default: `'websecure'`. Ignored for Nginx/Caddy |
 
 See [Reverse proxy](./proxy.md) for the generated formats.
 
@@ -194,7 +194,7 @@ silence; it now says so.
 
 | Flag | Description |
 |---|---|
-| `--env <path>` | Read this `.env` instead of `config.envFile` / `.env` |
+| `--env <path>` | Read this `.env` instead of `config.envFile` / `.env`. Loaded before the config is evaluated, so a `.ts` config reading `process.env` sees it too |
 
 For one run against a test database without editing a versioned config file:
 

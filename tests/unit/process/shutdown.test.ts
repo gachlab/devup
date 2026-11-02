@@ -4,6 +4,9 @@ import { ProcessManager } from '../../../src/process/manager.js';
 import type { Platform } from '../../../src/platform/types.js';
 import type { ServiceConfig } from '../../../src/config/types.js';
 import { isRunning, waitForExit } from '../../../src/process/liveness.js';
+import { mkdtempSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function testPlatform(): Platform {
   return {
@@ -120,5 +123,16 @@ describe('state after an intentional stop', () => {
     await waitForExit(old, 5000);
     await sleep(100);
     assert.notEqual(fresh.status, 'stopped');
+  });
+});
+
+describe('an absolute service cwd', () => {
+  it('runs the service there, not at baseCwd + path', { timeout: 10000 }, async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'devup-abs-cwd-')));
+    const out = join(dir, 'cwd.txt');
+    const { mgr } = mk();
+    await mgr.start({ ...svc('abs', `require('fs').writeFileSync(${JSON.stringify(out)}, process.cwd())`), cwd: dir }, 0);
+    await until(() => existsSync(out));
+    assert.equal(realpathSync(readFileSync(out, 'utf8')), dir);
   });
 });

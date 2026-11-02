@@ -16,7 +16,7 @@ devup found something it considers blocking. The output lists each problem with 
 
 Fix each, save, rerun. Common ones:
 
-- **Directory not found** — the `cwd` in your config doesn't exist relative to the project root.
+- **Directory not found** — the `cwd` in your config doesn't exist relative to the directory that holds the config file.
 - **Port already used by X** — two services share a `port`.
 - **Lazy real port collides with X** — `port + 10000` of one service matches another's `port`. Renumber.
 - **Unknown service in profiles / lazy.alwaysOn / proxy.routes** — referenced a service name that doesn't exist.

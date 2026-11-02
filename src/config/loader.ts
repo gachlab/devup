@@ -56,18 +56,35 @@ function loadEnvFile(envFilePath: string): void {
   } catch { /* ignore unreadable env file */ }
 }
 
-export async function loadConfig(configPath: string): Promise<DevStackConfig> {
+export interface LoadConfigOpts {
+  /** `--env`, already resolved to an absolute path. Loaded **instead of** the
+   *  config's own `envFile`, and before the config is evaluated.
+   *
+   *  It used to be the other way round: the config's `envFile` went into
+   *  `process.env` first, and since an env file never overrides what is
+   *  already set, `--env .env.test` could not change a single key the dev
+   *  file had defined — the suite ran against the development database, the
+   *  one thing `--env` exists to prevent. A `.ts` config reading
+   *  `process.env.DB_URL` now sees the test value too. */
+  envFile?: string;
+}
+
+export async function loadConfig(configPath: string, opts: LoadConfigOpts = {}): Promise<DevStackConfig> {
   const configDir = dirname(configPath);
 
   // Auto-load envFile before evaluating the config so env vars are available
   // during dynamic import (e.g. `process.env.DB_URL` in a .ts config file).
-  try {
-    const raw = readFileSync(configPath, 'utf8');
-    const envFileRelPath = extractEnvFilePath(configPath, raw);
-    if (envFileRelPath) {
-      loadEnvFile(resolve(configDir, envFileRelPath));
-    }
-  } catch { /* ignore — full error will surface below */ }
+  if (opts.envFile) {
+    loadEnvFile(opts.envFile);
+  } else {
+    try {
+      const raw = readFileSync(configPath, 'utf8');
+      const envFileRelPath = extractEnvFilePath(configPath, raw);
+      if (envFileRelPath) {
+        loadEnvFile(resolve(configDir, envFileRelPath));
+      }
+    } catch { /* ignore — full error will surface below */ }
+  }
 
   if (configPath.endsWith('.json')) {
     const raw = await readFile(configPath, 'utf8');

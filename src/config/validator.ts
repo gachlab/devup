@@ -57,6 +57,12 @@ export function formatValidationWarnings(warnings: ValidationWarning[]): string 
   return warnings.map(w => `  ⚠ ${w.field}: ${w.message}`).join('\n');
 }
 
+const MAX_PORT = 65535;
+
+function isValidPort(port: unknown): port is number {
+  return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= MAX_PORT;
+}
+
 export function validateConfig(config: DevStackConfig, cwd: string): ValidationError[] {
   const errors: ValidationError[] = [];
 
@@ -127,10 +133,13 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
         errors.push({ field: `services[${svc.name}].debug`, message: `debug is set but cmd is "${svc.cmd}" — the Node inspector only applies to node` });
       }
     }
-    if (typeof svc.port !== 'number' || svc.port <= 0) {
-      errors.push({ field: `services[${svc.name}].port`, message: `Invalid port: ${svc.port}` });
+    // `isValidPort`, not `typeof === 'number' && > 0`: `NaN <= 0` is false, so
+    // `port: Number(process.env.API_PORT)` with the variable unset validated
+    // and spawned the service with PORT=NaN.
+    if (!isValidPort(svc.port)) {
+      errors.push({ field: `services[${svc.name}].port`, message: `Invalid port: ${svc.port} (must be an integer from 1 to ${MAX_PORT})` });
     }
-    if (typeof svc.phase !== 'number' || svc.phase < 0) {
+    if (typeof svc.phase !== 'number' || !Number.isInteger(svc.phase) || svc.phase < 0) {
       errors.push({ field: `services[${svc.name}].phase`, message: `Invalid phase: ${svc.phase}` });
     }
 
@@ -209,6 +218,16 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
     for (const svc of config.services) {
       if (alwaysOn.has(svc.name)) continue;
       const realPort = svc.port + LAZY_PORT_OFFSET;
+      // A lazy service runs on port + offset. Past 65535 the child cannot bind
+      // and its proxy forwards to a port that cannot exist. Only checked for a
+      // valid port: an invalid one already has its own error above.
+      if (isValidPort(svc.port) && realPort > MAX_PORT) {
+        errors.push({
+          field: `services[${svc.name}].port`,
+          message: `Lazy real port ${realPort} (= ${svc.port}+${LAZY_PORT_OFFSET}) is above ${MAX_PORT} — use a port below ${MAX_PORT - LAZY_PORT_OFFSET + 1}, or list it in lazy.alwaysOn`,
+        });
+        continue;
+      }
       const conflict = portToSvc.get(realPort);
       if (conflict && conflict !== svc.name) {
         errors.push({
@@ -239,7 +258,7 @@ export function validateConfig(config: DevStackConfig, cwd: string): ValidationE
         if (hc.type !== 'tcp' && hc.type !== 'http') {
           errors.push({ field: `external[${ext.name}].healthCheck.type`, message: `Invalid healthCheck.type: ${hc.type}` });
         }
-        if ((hc.type === 'tcp' || hc.type === 'http') && (typeof ext.port !== 'number' || ext.port <= 0)) {
+        if ((hc.type === 'tcp' || hc.type === 'http') && !isValidPort(ext.port)) {
           errors.push({ field: `external[${ext.name}].port`, message: `port is required when healthCheck is set (got ${ext.port})` });
         }
         if (hc.type === 'http' && hc.path && !hc.path.startsWith('/')) {

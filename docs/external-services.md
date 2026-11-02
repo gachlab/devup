@@ -48,7 +48,7 @@ export default defineConfig({
 |---|---|---|---|
 | `name` | `string` | ✅ | Friendly name. Logs use the prefix `ext:<name>` and persist to `~/.devup/logs/<proj>/ext_<name>.log` |
 | `cmd` | `string` | ✅ | Shell command (passed through `sh -c` / `cmd /c`) |
-| `cwd` | `string` | | Working directory relative to project root. Default: project root |
+| `cwd` | `string` | | Working directory, relative to the config file's directory (absolute paths are used as-is). Default: that directory |
 | `extraEnv` | `Record<string, string>` | | Extra env vars merged on top of project env |
 | `healthCheck` | `HealthCheckConfig` | | Readiness probe (TCP or HTTP) |
 | `port` | `number` | ✅ when `healthCheck` is set | Port to probe |

@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A stopped service kept reading `running`.** The close handler returned early on an intentional stop; it now becomes `stopped`/`down`, unless the state no longer belongs to that process (a restart, a switch to a remote, a lazy service put to sleep).
 - **Closing the terminal, a `kill`, or a CI SIGTERM left the stack running.** The TUI only exited from the keyboard and `--once` had no handler at all. The TUI, `--once` and the daemon handle SIGINT/SIGTERM/SIGHUP and uncaught errors with one teardown, which runs once however many ways in. Externals are tracked as they spawn, so a signal while a database is still starting stops it too, and a `--once` that throws tears down as well.
 - **Windows: `npm install` and services with `cmd: 'npm' | 'npx'` did not start.** Node refuses to spawn `.cmd` shims without a shell since 18.20.2 / 20.12.2 (CVE-2024-27980). They are resolved on `PATH` (quoted entries included) and run through `cmd.exe` with their arguments quoted. Detached processes no longer open a console window each (`windowsHide`), and every shell hook uses the same `ComSpec`.
+- **`--env` could not override a key the config's `envFile` also set** (#136). The loader put the config's `envFile` into `process.env` before evaluating the config, and an env file never overrides what is already set — so `--env .env.test` kept `DB_URL` from `.env` and the suite ran against the development database. `--env` is now loaded *instead of* the config's `envFile`, before the config is evaluated, so a `.ts` config reading `process.env` sees it too.
+- **`proxy.tls`, `proxy.entrypoint` and `lazy.timeout` in a config were ignored.** The CLI parser filled defaults for them, so `cliArgs.x ?? config.x` never reached the config. Precedence is now explicit: a typed flag > the config > the default.
+- **An absolute service `cwd` validated, then ran at `baseCwd + /abs/path`.** Every service and external directory goes through one `resolve`-based helper.
+- **The validator accepted `NaN`, non-integer and out-of-range ports** — `port: Number(process.env.API_PORT)` with the variable unset spawned with `PORT=NaN` — and lazy services whose real port (`port + 10000`) passes 65535.
+
+### Changed
+- **Paths in a config are relative to the config file**, not the shell's cwd: service and external `cwd`, and `envFile`. Running from the directory that holds the config — the default — behaves exactly as before; `--config ../stack/devup.config.ts` now finds what the file describes.
 
 ## [0.19.2] — 2026-08-27
 

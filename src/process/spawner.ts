@@ -11,6 +11,7 @@ import { lineBuffer, compileReadyPattern, extractWatchPaths } from './internals.
 import type { Lifecycle } from './lifecycle.js';
 import { isInspectorNotice, parseDebugPort } from './inspector.js';
 import { resolveSpawnCommand, shellCommand } from '../platform/command.js';
+import { serviceDir } from '../config/paths.js';
 
 const CRASH_LOG_LINES = 20;
 const STARTUP_TIMEOUT_DEFAULT_MS = 45_000;
@@ -89,7 +90,7 @@ export class Spawner {
       );
       return;
     }
-    const cwd = join(this.baseCwd, svc.cwd);
+    const cwd = serviceDir(this.baseCwd, svc.cwd);
     // start() awaits the port check and the pre-build, and a caller may have
     // awaited before that (Restarter settles 1500 ms, a lazy proxy awaits
     // onDemandStart). A removal landing in any of those windows has to win:

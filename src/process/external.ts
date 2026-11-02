@@ -4,6 +4,7 @@ import type { ExternalService } from '../config/types.js';
 import type { Platform } from '../platform/types.js';
 import { checkHealth } from './health.js';
 import { shellCommand } from '../platform/command.js';
+import { serviceDir } from '../config/paths.js';
 
 const DEFAULT_START_TIMEOUT_S = 60;
 
@@ -83,7 +84,7 @@ export async function stopExternals(
       if (svc.stopCmd) {
         opts.onLog?.(svc.name, `🧹 ${svc.stopCmd}`);
         await new Promise<void>(resolve => {
-          const cwd = svc.cwd ? join(opts.baseCwd, svc.cwd) : opts.baseCwd;
+          const cwd = serviceDir(opts.baseCwd, svc.cwd);
           const env = { ...opts.env, ...(svc.extraEnv ?? {}) };
           const sh = shellCommand(svc.stopCmd!, env);
           const child = spawn(sh.file, sh.args, { cwd, env, stdio: 'ignore', windowsHide: true });
@@ -99,7 +100,7 @@ export async function stopExternals(
 }
 
 function spawnExternal(svc: ExternalService, opts: StartExternalsOpts): ChildProcess {
-  const cwd = svc.cwd ? join(opts.baseCwd, svc.cwd) : opts.baseCwd;
+  const cwd = serviceDir(opts.baseCwd, svc.cwd);
   const env = { ...opts.env, ...(svc.extraEnv ?? {}) };
 
   opts.onLog?.(svc.name, `🚀 ${svc.cmd}`);

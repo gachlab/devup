@@ -20,7 +20,7 @@ The top-level export of your config file.
 |---|---|---|---|
 | `name` | `string` | ✅ | Project name shown in the TUI header and in `~/.devup/logs/<name>/` |
 | `icon` | `string` | | Emoji shown before the project name. Default: `📦` |
-| `envFile` | `string` | | Path to `.env` file relative to project root. Default: `.env` |
+| `envFile` | `string` | | Path to a `.env` file, relative to the config file. Loaded before the config is evaluated. Replaced, not merged, by `--env`. Default: `.env` |
 | `env` | `Record<string, string>` | | Extra environment variables. Won't overwrite vars already present in `process.env` |
 | `services` | `ServiceConfig[]` | ✅ | The list of services devup manages |
 | `lazy` | `LazyConfig` | | Lazy mode configuration (see [Lazy mode](./lazy-mode.md)) |
@@ -36,7 +36,7 @@ One per service.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | `string` | ✅ | Unique within the config |
-| `cwd` | `string` | ✅ | Working directory relative to project root |
+| `cwd` | `string` | ✅ | Working directory, relative to the config file's directory. An absolute path is used as-is |
 | `cmd` | `string` | ✅ | Command to spawn (`node`, `npx`, etc.) |
 | `args` | `string[]` | ✅ | Command arguments |
 | `type` | `'api' \| 'web'` | ✅ | APIs are health-checked between phases; webs are assumed ready shortly after spawn |
@@ -78,7 +78,7 @@ lazy: {
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `alwaysOn` | `string[]` | ✅ | Services that always start immediately (use this for your gateway / entry-points) |
-| `timeout` | `number` | | Minutes of inactivity before an idle service shuts down. Default: `10`. A service running under the debugger is exempt — see [lazy mode](lazy-mode.md) |
+| `timeout` | `number` | | Minutes of inactivity before an idle service shuts down. Default: `10`. `--timeout` overrides it. A service running under the debugger is exempt — see [lazy mode](lazy-mode.md) |
 
 See [Lazy mode](./lazy-mode.md) for the on-demand spawning details.
 
@@ -104,8 +104,8 @@ proxy: {
 | `routes` | `Record<string, string>` | ✅ | Map of service name → subdomain. Empty string = root domain |
 | `confPath` | `string` | | Path to write the generated config. Defaults to `~/.traefik/traefik_conf.yaml` or `~/.devup/<provider>.conf` |
 | `host` | `string` | | Target host for proxy URLs. Default: auto-detected per platform (`172.17.0.1` on Linux, `host.docker.internal` on macOS/Windows) |
-| `tls` | `boolean` | | Generate TLS config. Default: `true` |
-| `entrypoint` | `string` | | Traefik entrypoint name. Default: `'websecure'`. Ignored for Nginx/Caddy |
+| `tls` | `boolean` | | Generate TLS config. Default: `true`. `--proxy-tls` / `--no-proxy-tls` override it |
+| `entrypoint` | `string` | | Traefik entrypoint name. Default: `'websecure'`. `--proxy-entrypoint` overrides it. Ignored for Nginx/Caddy |
 
 The proxy config file is only written when `--proxy` is passed on the CLI. Only services with `health === 'up'` appear in the generated config. See [Reverse proxy](./proxy.md).
 
@@ -130,7 +130,7 @@ See [External services](./external-services.md). Summary:
 |---|---|---|---|
 | `name` | `string` | ✅ | Friendly name; logs tagged `ext:<name>` |
 | `cmd` | `string` | ✅ | Shell command. Pipes and `&&` work |
-| `cwd` | `string` | | Working directory relative to project root |
+| `cwd` | `string` | | Working directory, relative to the config file's directory. An absolute path is used as-is |
 | `extraEnv` | `Record<string, string>` | | Extra env vars |
 | `healthCheck` | `HealthCheckConfig` | | Readiness probe; devup waits for it before phase 0 |
 | `port` | `number` | required if `healthCheck` set | Port to probe |

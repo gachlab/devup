@@ -10,6 +10,9 @@ import type { DevStackConfig, ServiceConfig } from './types.js';
  *  Node 26 with both `--env-file x` and `--env-file=x`.
  *
  *  Do not "fix" this back to the obvious name. */
+/** Settings that both a flag and the config can set. */
+export type ConfigurableFlag = 'lazyTimeout' | 'proxyTls' | 'proxyEntrypoint';
+
 export interface CliArgs {
   configPath?: string;
   only?: string;
@@ -38,6 +41,13 @@ export interface CliArgs {
    *  `--remote`, which index.ts rejects — falling through to "no remote" would
    *  leave the services it was meant to cover silently absent. */
   remote?: string;
+  /** Which of the settings a config can also set were typed on the command
+   *  line. `parseCliArgs` fills defaults so the rest of the code can read a
+   *  plain value, and that made `cliArgs.x ?? config.x` dead: the left side was
+   *  never undefined, so `proxy.tls: false`, `proxy.entrypoint` and
+   *  `lazy.timeout` in a config were silently ignored. `applyConfigDefaults`
+   *  reads this to decide who wins. */
+  given?: ReadonlySet<ConfigurableFlag>;
 }
 
 const DEFAULT_LAZY_TIMEOUT = 10;
@@ -145,6 +155,20 @@ export function flagValue(argv: string[], flag: string): string | undefined {
   return next === undefined || next.startsWith('-') ? '' : next;
 }
 
+/** Fill what the command line left unset from the config, in one place:
+ *  a flag that was typed > the config > the built-in default.
+ *
+ *  Returns a copy; call it once, right after the config is loaded, and pass
+ *  the result everywhere `cliArgs` goes. */
+export function applyConfigDefaults(args: CliArgs, config: DevStackConfig): CliArgs {
+  const given = args.given ?? new Set<ConfigurableFlag>();
+  const out: CliArgs = { ...args };
+  if (!given.has('lazyTimeout') && config.lazy?.timeout !== undefined) out.lazyTimeout = config.lazy.timeout;
+  if (!given.has('proxyTls') && config.proxy?.tls !== undefined) out.proxyTls = config.proxy.tls;
+  if (!given.has('proxyEntrypoint') && config.proxy?.entrypoint !== undefined) out.proxyEntrypoint = config.proxy.entrypoint;
+  return out;
+}
+
 export function parseCliArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     skip: [],
@@ -161,6 +185,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
     watchConfig: false,
     killPortConflicts: false,
   };
+  const given = new Set<ConfigurableFlag>();
+  args.given = given;
 
   for (let i = 0; i < argv.length; i++) {
     let arg = argv[i]!;
@@ -185,13 +211,13 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case '--profile':    args.profile = next; i++; break;
       case '--lazy':       args.lazy = true; break;
       case '--no-lazy':    args.lazy = false; break;
-      case '--timeout':    args.lazyTimeout = parseInt(next ?? '', 10) || DEFAULT_LAZY_TIMEOUT; i++; break;
+      case '--timeout':    args.lazyTimeout = parseInt(next ?? '', 10) || DEFAULT_LAZY_TIMEOUT; given.add('lazyTimeout'); i++; break;
       case '--proxy':      args.proxy = true; break;
       case '--proxy-host':       args.proxyHost = next; i++; break;
       case '--proxy-conf':       args.proxyConf = next; i++; break;
-      case '--proxy-tls':        args.proxyTls = true; break;
-      case '--no-proxy-tls':     args.proxyTls = false; break;
-      case '--proxy-entrypoint': args.proxyEntrypoint = next ?? 'websecure'; i++; break;
+      case '--proxy-tls':        args.proxyTls = true; given.add('proxyTls'); break;
+      case '--no-proxy-tls':     args.proxyTls = false; given.add('proxyTls'); break;
+      case '--proxy-entrypoint': args.proxyEntrypoint = next ?? 'websecure'; given.add('proxyEntrypoint'); i++; break;
       case '--dry-run':          args.dryRun = true; break;
       case '--once':             args.once = true; break;
       case '--once-timeout':     args.onceTimeout = parseInt(next ?? '', 10) || DEFAULT_ONCE_TIMEOUT; i++; break;
