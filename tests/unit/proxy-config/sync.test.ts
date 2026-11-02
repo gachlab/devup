@@ -60,7 +60,8 @@ describe('ProxySync', () => {
   const opts = (confPath: string): ProxyOpts => ({ host: '127.0.0.1', domain: 'dev.local', routes: { api: 'api' }, tls: false, entrypoint: 'web', confPath });
   const states = () => new Map([['api', st({ svc: svc('api', 3000) })]]);
 
-  it('a failed write is logged once, never thrown, and retried once writing works', { skip: process.getuid?.() === 0 }, () => {
+  // chmod does not stop writes on Windows, and root ignores it: no failure to provoke.
+  it('a failed write is logged once, never thrown, and retried once writing works', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
     // In the TUI it was thrown inside setInterval: an uncaught exception that
     // took the whole stack down over a config file.
     const dir = mkdtempSync(join(tmpdir(), 'devup-sync-'));
@@ -104,7 +105,8 @@ describe('ProxySync', () => {
 });
 
 describe('writeConfigFile', () => {
-  it('writes through a symlink and keeps the file mode, as a rename would not', () => {
+  // Symlinks need a privilege on Windows, and it has no POSIX mode to keep.
+  it('writes through a symlink and keeps the file mode, as a rename would not', { skip: process.platform === 'win32' }, () => {
     // A rename replaced a symlinked confPath with a plain file and reset the
     // mode; it also changed the inode, which a single-file bind mount never sees.
     const dir = mkdtempSync(join(tmpdir(), 'devup-write-'));
