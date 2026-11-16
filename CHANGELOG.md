@@ -5,7 +5,11 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.1] — 2026-11-16
+
+One crash fix (#156, shipped in #157): a `spawn EBADF` — thrown synchronously
+by Node, before any listener exists — reached `onFatal` and tore down the whole
+stack. Every spawn devup owns now survives it.
 
 ### Fixed
 - **A `spawn EBADF` took the whole stack down** (#156). Node defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to a child's `'error'` event; any other errno — EBADF, seen on macOS — is thrown synchronously out of `spawn()`/`exec()`, before any listener exists. Unhandled, it reached `onFatal`, which tears down every service. Every spawn devup owns now survives it:
