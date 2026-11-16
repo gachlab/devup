@@ -189,10 +189,24 @@ export class Spawner {
 
     const env = buildProcessEnv(svc, this.env);
     const command = resolveSpawnCommand(svc.cmd, args, { env, cwd });
-    const proc = spawn(command.file, command.args, {
-      cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      windowsVerbatimArguments: command.windowsVerbatimArguments,
-    });
+    let proc: ChildProcess;
+    try {
+      proc = spawn(command.file, command.args, {
+        cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        windowsVerbatimArguments: command.windowsVerbatimArguments,
+      });
+    } catch (err) {
+      // Not every spawn failure reaches the 'error' listener below: Node only
+      // defers EACCES/EAGAIN/EMFILE/ENFILE/ENOENT, and any other errno (EBADF,
+      // seen on macOS) is thrown from `spawn()` itself. Uncaught, it rejected
+      // this start — and from the restarter's timer, that rejection reached
+      // `onFatal` and took the whole stack down. Same outcome as a spawn
+      // 'error': crashed, with the reason, and not retried.
+      const message = (err as Error).message ?? String(err);
+      this.log(svc.name, `❌ failed to start: ${message}`, colorIdx);
+      this.recordCrashedState(svc, colorIdx, [message]);
+      return;
+    }
 
     const prev = this.state.get(svc.name);
     const state: ProcessState = {
@@ -393,7 +407,15 @@ export class Spawner {
     return new Promise(res => {
       const env = buildProcessEnv(svc, this.env);
       const sh = shellCommand(svc.preBuild!, env);
-      const child = spawn(sh.file, sh.args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let child: ChildProcess;
+      // A throw from `spawn()` itself (see startNow) is a failed build, like
+      // its 'error' event — not a rejection out of the start.
+      try {
+        child = spawn(sh.file, sh.args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (err) {
+        this.log(svc.name, `[build] ❌ ${(err as Error).message ?? String(err)}`, colorIdx);
+        return res(false);
+      }
       const outBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
       const errBuf = lineBuffer(line => this.log(svc.name, `[build] ${line}`, colorIdx));
       child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
@@ -407,12 +429,20 @@ export class Spawner {
     });
   }
 
-  private spawnWatchBuild(svc: ServiceConfig, cwd: string, env: Record<string, string>, colorIdx: number): ChildProcess {
+  private spawnWatchBuild(svc: ServiceConfig, cwd: string, env: Record<string, string>, colorIdx: number): ChildProcess | null {
     this.log(svc.name, `👀 watchBuild: ${svc.watchBuild}`, colorIdx);
     const sh = shellCommand(svc.watchBuild!, env);
-    const child = spawn(sh.file, sh.args, {
-      cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let child: ChildProcess;
+    // The service itself is already running: a watcher that cannot spawn is
+    // logged, as its 'error' event is, and the service is left alone.
+    try {
+      child = spawn(sh.file, sh.args, {
+        cwd, env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      this.log(svc.name, `[watch] ❌ ${(err as Error).message ?? String(err)}`, colorIdx);
+      return null;
+    }
     const outBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
     const errBuf = lineBuffer(line => this.log(svc.name, `[watch] ${line}`, colorIdx));
     child.stdout?.on('data', (d: Buffer) => outBuf.push(d));
@@ -421,7 +451,7 @@ export class Spawner {
     return child;
   }
 
-  private recordCrashedState(svc: ServiceConfig, colorIdx: number): void {
+  private recordCrashedState(svc: ServiceConfig, colorIdx: number, crashLog: string[] | null = null): void {
     const prev = this.state.get(svc.name);
     this.state.set(svc.name, {
       svc, proc: null, pid: null,
@@ -432,7 +462,7 @@ export class Spawner {
       startedAt: null,
       intentionalStop: false,
       colorIdx,
-      crashLog: null,
+      crashLog,
     });
     this.events.onStateChange(svc.name, this.state.get(svc.name)!);
   }

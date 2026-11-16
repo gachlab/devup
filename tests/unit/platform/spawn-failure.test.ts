@@ -2,6 +2,7 @@ import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import { EventEmitter } from 'node:events';
 import { LinuxPlatform } from '../../../src/platform/linux.js';
 import { DarwinPlatform } from '../../../src/platform/darwin.js';
 import { Win32Platform } from '../../../src/platform/win32.js';
@@ -38,6 +39,25 @@ describe('platform calls when the spawn itself throws', () => {
     it(`${name}.openBrowser does not throw`, () => {
       stub('spawn', ebadf);
       assert.doesNotThrow(() => mk().openBrowser('http://localhost'));
+    });
+  }
+
+  for (const [name, mk] of [
+    ['LinuxPlatform', () => new LinuxPlatform()],
+    ['DarwinPlatform', () => new DarwinPlatform()],
+    ['Win32Platform', () => new Win32Platform()],
+  ] as const) {
+    it(`${name}.openBrowser survives the deferred ENOENT of a missing opener`, () => {
+      // The other half: a missing xdg-open/open is not thrown but emitted as
+      // 'error' a tick later, and an EventEmitter with no 'error' listener
+      // throws it — an uncaught exception.
+      const fake = Object.assign(new EventEmitter(), { unref: () => {} });
+      let calls = 0;
+      mock.method(childProcess, 'spawn', () => { calls++; return fake; });
+      syncBuiltinESMExports();
+      mk().openBrowser('http://localhost');
+      assert.equal(calls, 1, 'the stub did not reach the src module');
+      assert.doesNotThrow(() => fake.emit('error', Object.assign(new Error('spawn xdg-open ENOENT'), { code: 'ENOENT' })));
     });
   }
 

@@ -116,9 +116,9 @@ export function useProcessManager(
   // Health + stats polling
   useEffect(() => {
     // Wrapped because `setInterval` drops the promise: a throw from either
-    // await below is an unhandled rejection, and with no handler in the
-    // process that kills the TUI — which is how one `spawn EBADF` from `ps`
-    // took the whole stack down. A failed tick just skips one refresh.
+    // await below is an unhandled rejection, which `onFatal` turns into
+    // tearing down the whole stack — which is how one `spawn EBADF` from `ps`
+    // took devup down (#156). A failed tick just skips one refresh.
     const id = setInterval(() => { void tick().catch(() => { /* next tick retries */ }); }, 3000);
     async function tick() {
       const mgr = mgrRef.current;
