@@ -71,7 +71,15 @@ export class Restarter {
       // window reading `crashed` + budget spent + nothing queued, which is
       // precisely the state a waiter now treats as terminal. A `devup exec`
       // polling every 500 ms would abort during the very restart that saves it.
-      void this.spawner.start(svc, colorIdx, true).finally(() => this.clearPending(svc.name));
+      //
+      // And caught: nobody awaits this promise, so a rejection is an
+      // `unhandledRejection`, which `onFatal` turns into tearing down the whole
+      // stack — for one service's failed restart.
+      void this.spawner.start(svc, colorIdx, true)
+        .catch((err: unknown) => {
+          this.events.onLog(svc.name, `❌ auto-restart failed: ${(err as Error)?.message ?? String(err)}`, colorIdx);
+        })
+        .finally(() => this.clearPending(svc.name));
     }, delay);
     this.pending.set(svc.name, timer);
     // Published so a client can tell "out of budget" from "about to come back".

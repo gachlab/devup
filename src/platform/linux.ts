@@ -1,5 +1,6 @@
-import { exec, spawn } from 'node:child_process';
+import { exec } from 'node:child_process';
 import type { Platform, ProcessStats } from './types.js';
+import { settleChild, spawnDetached } from './safe-spawn.js';
 import { parsePsTime, sumProcessTrees, type ProcessRow } from './tree.js';
 
 /** `ps -A -o pid=,ppid=,rss=,time=` output, one row per process. */
@@ -22,7 +23,7 @@ export class LinuxPlatform implements Platform {
   getProcessStats(pids: number[]): Promise<Map<number, ProcessStats>> {
     if (!pids.length) return Promise.resolve(new Map());
 
-    return new Promise(resolve => {
+    return settleChild(new Map<number, ProcessStats>(), resolve => {
       // Every process, not just the roots: a service's memory is in the
       // children of its `npm` / `npx` wrapper. Same flags on Linux and macOS.
       exec(
@@ -30,7 +31,7 @@ export class LinuxPlatform implements Platform {
         { encoding: 'utf8', timeout: 5000, maxBuffer: 16 * 1024 * 1024 },
         (err, stdout) => {
           if (err || !stdout) return resolve(new Map());
-          resolve(sumProcessTrees(parsePsRows(stdout), pids));
+          try { resolve(sumProcessTrees(parsePsRows(stdout), pids)); } catch { resolve(new Map()); }
         },
       );
     });
@@ -43,6 +44,6 @@ export class LinuxPlatform implements Platform {
   }
 
   openBrowser(url: string): void {
-    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+    spawnDetached('xdg-open', [url]);
   }
 }

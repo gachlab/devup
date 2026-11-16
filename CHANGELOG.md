@@ -5,6 +5,17 @@ All notable changes to `@gachlab/devup` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A `spawn EBADF` took the whole stack down** (#156). Node defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to a child's `'error'` event; any other errno — EBADF, seen on macOS — is thrown synchronously out of `spawn()`/`exec()`, before any listener exists. Unhandled, it reached `onFatal`, which tears down every service. Every spawn devup owns now survives it:
+  - the CPU/memory sample (`ps`, CIM on Windows) resolves empty for that tick, and the TUI's poll catches whatever its tick throws;
+  - a service whose spawn throws ends up `crashed` with the reason in its `crashLog`, not retried — the same outcome as a missing binary;
+  - a `preBuild` that cannot spawn is a failed build; a `watchBuild` that cannot spawn is logged and the service keeps running;
+  - a failed auto-restart is logged instead of escaping the restarter's timer;
+  - `devup up -d` reports a daemon child that cannot spawn — thrown or as a deferred `'error'` — instead of dying with a raw stack;
+  - `openBrowser` neither throws nor leaves an `'error'` without a listener (a machine without `xdg-open` crashed devup).
+
 ## [0.20.0] — 2026-11-02
 
 The ten findings of a correctness review (#135–#144), each one adversarially

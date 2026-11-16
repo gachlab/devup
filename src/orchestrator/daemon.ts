@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, totalmem, freemem, cpus } from 'node:os';
@@ -371,23 +371,40 @@ export async function runDetached(opts: DetachedOpts): Promise<number> {
   out(`⏳ starting devup in detached mode for ${describeStack(opts.config.name, opts.cliArgs.instance)}...`);
 
   // Preserve any node-level args (e.g. --loader tsx in dev) so the child can be re-executed.
-  const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, ...filteredArgs], {
-    detached: true,
-    windowsHide: true,
-    stdio: 'ignore',
-    env: { ...process.env, DEVUP_DAEMON_CHILD: '1' },
-    // The shell's cwd, not the project dir: the child re-runs the parent's
-    // argv, and `--config`, `--env` and `--log-dir` in it were typed relative
-    // to where the user is. From the project dir they resolve elsewhere, the
-    // child exits before it can write a boot-error file, and the parent waits
-    // 90 s to say only that the daemon never became ready.
-    cwd: process.cwd(),
-  });
+  //
+  // Both failure paths of a spawn are handled: a synchronous throw (EBADF and
+  // any errno Node does not defer) and the deferred 'error' event (ENOENT,
+  // EMFILE, …). Without the listener the latter was an uncaught exception that
+  // killed this parent with a raw stack instead of a one-line reason.
+  let child: ChildProcess;
+  try {
+    child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, ...filteredArgs], {
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+      env: { ...process.env, DEVUP_DAEMON_CHILD: '1' },
+      // The shell's cwd, not the project dir: the child re-runs the parent's
+      // argv, and `--config`, `--env` and `--log-dir` in it were typed relative
+      // to where the user is. From the project dir they resolve elsewhere, the
+      // child exits before it can write a boot-error file, and the parent waits
+      // 90 s to say only that the daemon never became ready.
+      cwd: process.cwd(),
+    });
+  } catch (err) {
+    out(`❌ could not start the daemon: ${(err as Error).message ?? String(err)}`);
+    return 1;
+  }
+  let spawnError = null as Error | null;
+  child.on('error', err => { spawnError = err; });
   child.unref();
 
   // Poll for the PID file (success) or boot-error file (failure). Max wait: 90s.
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
+    if (spawnError) {
+      out(`❌ could not start the daemon: ${spawnError.message}`);
+      return 1;
+    }
     if (existsSync(pidPath)) {
       const pid = Number(readFileSync(pidPath, 'utf8').trim());
       const flag = instanceFlag(opts.cliArgs.instance);
