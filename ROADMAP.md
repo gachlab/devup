@@ -4,7 +4,7 @@ Living list of proposed features for `@gachlab/devup`. This is the source of tru
 
 ## Status
 
-Last released: **[0.20.0](https://github.com/gachlab/devup/releases/tag/0.20.0)** (2026-11-02) — the ten findings of a correctness review: shutdown without orphans, config precedence, lazy lifecycle, TUI, reverse proxy, hot reload, logs and control plane, remote headers, platform and debt.
+Last released: **[0.20.1](https://github.com/gachlab/devup/releases/tag/0.20.1)** (2026-11-16) — a `spawn EBADF` no longer takes the whole stack down: every spawn devup owns survives a synchronous throw.
 
 Full history is in [CHANGELOG.md](CHANGELOG.md). This file is meant to hold what is *not* built yet — most of what is below is now `done`, kept because the reasoning behind each item is still the record of why it exists.
 
