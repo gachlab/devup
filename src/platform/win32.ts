@@ -1,5 +1,6 @@
-import { exec, execFile, spawn } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import type { Platform, ProcessStats } from './types.js';
+import { settleChild, spawnDetached } from './safe-spawn.js';
 import { sumProcessTrees, type ProcessRow } from './tree.js';
 
 // `Created` as a FILETIME integer: Windows never updates ParentProcessId and
@@ -46,7 +47,7 @@ export class Win32Platform implements Platform {
   }
 
   private sample(): Promise<ProcessRow[]> {
-    return new Promise(resolve => {
+    return settleChild<ProcessRow[]>([], resolve => {
       // CIM, not `wmic`: wmic is removed from Windows 11 24H2, which left the
       // CPU and Mem columns empty. Every process, so a service's tree — the
       // server under `cmd.exe` / an npm shim — can be summed.
@@ -56,7 +57,7 @@ export class Win32Platform implements Platform {
         { encoding: 'utf8', timeout: 8000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
         (err, stdout) => {
           if (err || !stdout) return resolve([]);
-          resolve(parseCimCsv(stdout));
+          try { resolve(parseCimCsv(stdout)); } catch { resolve([]); }
         },
       );
     });
@@ -69,6 +70,6 @@ export class Win32Platform implements Platform {
   }
 
   openBrowser(url: string): void {
-    spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+    spawnDetached('cmd', ['/c', 'start', '', url]);
   }
 }

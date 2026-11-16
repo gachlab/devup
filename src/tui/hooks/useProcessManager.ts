@@ -115,7 +115,12 @@ export function useProcessManager(
 
   // Health + stats polling
   useEffect(() => {
-    const id = setInterval(async () => {
+    // Wrapped because `setInterval` drops the promise: a throw from either
+    // await below is an unhandled rejection, and with no handler in the
+    // process that kills the TUI — which is how one `spawn EBADF` from `ps`
+    // took the whole stack down. A failed tick just skips one refresh.
+    const id = setInterval(() => { void tick().catch(() => { /* next tick retries */ }); }, 3000);
+    async function tick() {
       const mgr = mgrRef.current;
       if (!mgr) return;
       await mgr.checkAllHealth();
@@ -144,7 +149,7 @@ export function useProcessManager(
         // last figures of services that have since stopped on screen.
         setStats(prev => prev.size ? new Map() : prev);
       }
-    }, 3000);
+    }
     return () => clearInterval(id);
   }, [platform]);
 
